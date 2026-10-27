@@ -124,3 +124,66 @@ def test_job_cancel(client):
 def test_unknown_job_kind(client):
     response = client.post("/api/jobs/nope", json={"input": "x"})
     assert response.status_code == 400
+
+
+def test_api_sym_with_blob(client, fixture_bytes):
+    """The Symmetric tab: ciphertext as the input, blob as an option."""
+    import base64
+
+    payload = {
+        "data_b64": base64.b64encode(fixture_bytes("aes_cbc_keyiv_blob.bin")).decode(),
+        "name": "ct.bin",
+        "options": {"blob": fixture_bytes("key_iv_blob.b64").decode().strip()},
+    }
+    answer = client.post("/api/sym", json=payload).get_json()
+    assert "CYBN{fixture_key_iv_blob}" in answer["candidates"][0]["data_text"]
+    assert answer["candidates"][0]["params"]["mode"] == "cbc"
+
+
+def test_api_sym_openssl_file_notes_the_header(client, fixture_bytes):
+    """Without a password we must still explain what the file is."""
+    import base64
+
+    payload = {
+        "data_b64": base64.b64encode(fixture_bytes("openssl_salted_md5.bin")).decode(),
+        "options": {},
+    }
+    answer = client.post("/api/sym", json=payload).get_json()
+    assert any("Salted__" in note for note in answer["notes"])
+    assert any("--pass" in note for note in answer["notes"])
+
+
+def test_api_sym_passphrase(client, fixture_bytes):
+    import base64
+
+    payload = {
+        "data_b64": base64.b64encode(fixture_bytes("openssl_salted_md5.bin")).decode(),
+        "options": {"passphrase": "password123", "seconds": 20},
+    }
+    answer = client.post("/api/sym", json=payload).get_json()
+    assert "CYBN{fixture_openssl_md5}" in answer["candidates"][0]["data_text"]
+
+
+def test_api_sym_job(client, fixture_bytes):
+    """The browser runs Symmetric as a background job (progress + cancel)."""
+    import base64
+    import time
+
+    payload = {
+        "data_b64": base64.b64encode(fixture_bytes("aes_gcm_nonce_ct_tag.bin")).decode(),
+        "options": {"key": fixture_bytes("aes_cbc_iv_prefix.key").decode().strip()},
+    }
+    job = client.post("/api/jobs/sym", json=payload).get_json()["job"]
+    for _ in range(200):
+        status = client.get(f"/api/jobs/{job}").get_json()
+        if status["state"] != "running":
+            break
+        time.sleep(0.05)
+    assert status["state"] == "done", status
+    assert "CYBN{fixture_gcm_nonce_ct_tag}" in status["result"]["candidates"][0]["data_text"]
+
+
+def test_api_blob_needs_a_ciphertext(client):
+    response = client.post("/api/jobs/blob", json={"input": "00" * 48, "options": {}})
+    assert response.status_code == 400
+    assert "ciphertext" in response.get_json()["error"]

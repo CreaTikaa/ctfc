@@ -20,6 +20,17 @@ def load_toml(name: str) -> dict:
 
 
 @lru_cache(maxsize=1)
+def load_passwords() -> tuple[bytes, ...]:
+    """The embedded password list, in order (most common first).
+
+    Used to try passphrases offline on `openssl enc` files and KDFs. It is data,
+    not a cracker: the list is small and the tries run under a budget.
+    """
+    lines = (DATA_DIR / "passwords.txt").read_text(encoding="utf-8").splitlines()
+    return tuple(line.encode() for line in lines if line and not line.startswith("#"))
+
+
+@lru_cache(maxsize=1)
 def load_words() -> frozenset[str]:
     """Return the EN+FR word list used to recognise natural language."""
     words: set[str] = set()

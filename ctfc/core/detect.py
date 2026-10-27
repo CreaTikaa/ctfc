@@ -40,7 +40,7 @@ STANDARD_B64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/
 
 # What to do next for some file types (by extension in magic.toml).
 SIG_HINTS = {
-    "enc": "openssl enc: ctfc sym <file> --pass <password> (M3), or "
+    "enc": "openssl enc: ctfc sym <file> --pass <password> (or --passwords), or "
     "openssl enc -d -aes-256-cbc -md sha256 -pbkdf2 -in <file> -pass pass:<password>",
     "zip": "unzip -l <file>; encrypted? zip2john <file> > h && john h",
     "7z": "7z l <file>; encrypted? 7z2john.pl <file>",
@@ -503,7 +503,7 @@ def _check_ecb(data: bytes, prefix: str) -> list[Guess]:
                         f"{prefix}{repeated} repeated block(s) out of {len(blocks)}",
                         "random data almost never repeats a whole block",
                     ],
-                    next_step="ctfc sym <input> --mode ecb --key ... (M3)",
+                    next_step="ctfc sym <input> --mode ecb --key ...",
                 )
             )
             break  # 16-byte repeats imply 8-byte repeats: report only the first
@@ -534,7 +534,7 @@ def _check_lengths(data: bytes, prefix: str) -> list[Guess]:
                 label=f"{length} bytes: {KEY_SHAPES[length]}",
                 confidence=0.45,
                 reasons=[f"{prefix}length {length} matches a common key/IV layout"],
-                next_step="ctfc blob <input> --against <ciphertext> (M3)",
+                next_step="ctfc blob <input> --against <ciphertext>",
             )
         )
     if length >= 32:

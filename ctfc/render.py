@@ -65,6 +65,12 @@ def print_input_notes(console: Console, inp: Input) -> None:
         console.print(f"[cyan]note:[/] {escape(note)}")
 
 
+def print_notes(console: Console, notes: list[str]) -> None:
+    """Lines about the search itself (what was detected, what was tried, limits)."""
+    for note in notes:
+        console.print(f"[cyan]*[/] {safe(note)}")
+
+
 def print_candidates(
     console: Console,
     candidates: list[Candidate],

@@ -49,7 +49,7 @@
         <button class="tab" data-tab="detect" data-t="web_tab_detect">Detect</button>
         <button class="tab" data-tab="pipeline" data-milestone="M6" data-t="web_tab_pipeline">Pipeline</button>
         <button class="tab" data-tab="xor" data-t="web_tab_xor">XOR</button>
-        <button class="tab" data-tab="sym" data-milestone="M3" data-t="web_tab_sym">Symmetric</button>
+        <button class="tab" data-tab="sym" data-t="web_tab_sym">Symmetric</button>
         <button class="tab" data-tab="rsa" data-milestone="M5" data-t="web_tab_rsa">RSA</button>
         <button class="tab" data-tab="lens" data-milestone="M4" data-t="web_tab_lens">Code Lens</button>
         <button class="tab" data-tab="hash" data-milestone="M5" data-t="web_tab_hash">Hash</button>
@@ -66,6 +66,47 @@
           <input id="xor-crib" type="text" spellcheck="false" data-t-placeholder="web_xor_crib_ph"></label>
         <label class="wide"><span data-t="web_xor_other">second input</span>
           <textarea id="xor-other" spellcheck="false" data-t-placeholder="web_xor_other_ph"></textarea></label>
+      </div>
+      <!-- Options of the Symmetric tab: everything is optional, what is missing is guessed -->
+      <div id="options-sym" class="options hidden">
+        <label><span data-t="web_sym_key">key</span>
+          <input id="sym-key" type="text" spellcheck="false" data-t-placeholder="web_sym_key_ph"></label>
+        <label><span data-t="web_sym_iv">IV / nonce</span>
+          <input id="sym-iv" type="text" spellcheck="false" data-t-placeholder="web_sym_iv_ph"></label>
+        <label><span data-t="web_sym_blob">blob (key and/or IV)</span>
+          <input id="sym-blob" type="text" spellcheck="false" data-t-placeholder="web_sym_blob_ph"></label>
+        <label><span data-t="web_sym_pass">passphrase</span>
+          <input id="sym-pass" type="text" spellcheck="false" data-t-placeholder="web_sym_pass_ph"></label>
+        <label><span data-t="web_sym_cipher">cipher</span>
+          <select id="sym-cipher">
+            <option value="" data-t="web_sym_auto">auto (try them all)</option>
+            <option value="aes">AES</option>
+            <option value="3des">3DES</option>
+            <option value="des">DES</option>
+            <option value="blowfish">Blowfish</option>
+            <option value="chacha20">ChaCha20</option>
+            <option value="salsa20">Salsa20</option>
+            <option value="rc4">RC4</option>
+            <option value="tea">TEA</option>
+            <option value="xtea">XTEA</option>
+          </select></label>
+        <label><span data-t="web_sym_mode">mode</span>
+          <select id="sym-mode">
+            <option value="" data-t="web_sym_auto">auto (try them all)</option>
+            <option value="cbc">CBC</option>
+            <option value="ecb">ECB</option>
+            <option value="ctr">CTR</option>
+            <option value="gcm">GCM</option>
+            <option value="cfb">CFB</option>
+            <option value="cfb8">CFB8</option>
+            <option value="ofb">OFB</option>
+            <option value="cts">CBC-CTS (CS1)</option>
+            <option value="cts3">CBC-CTS (CS3)</option>
+          </select></label>
+        <label><span data-t="web_sym_seconds">time budget (s)</span>
+          <input id="sym-seconds" type="number" min="1" max="120" value="30"></label>
+        <label class="checkbox"><input id="sym-passwords" type="checkbox">
+          <span data-t="web_sym_passwords">try the embedded password list</span></label>
       </div>
       <div class="toolbar">
         <button id="run" class="primary" data-t="web_run">Run</button>

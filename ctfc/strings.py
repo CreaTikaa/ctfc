@@ -5,7 +5,7 @@ without touching the rest of the code.
 
 Usage:
     from ctfc.strings import t
-    print(t("not_yet", command="sym", milestone="M3"))
+    print(t("not_yet", command="lens", milestone="M4"))
 """
 
 from __future__ import annotations
@@ -46,9 +46,26 @@ EN: dict[str, str] = {
     "opt_xor_with": "XOR with a second input (two messages encrypted with the same key)",
     "interrupted": "interrupted (Ctrl+C)",
     "cmd_sym": "symmetric ciphers (AES, DES, ...) with the unknown-layout solver",
-    "cmd_sym_ex": "example: ctfc sym ct.bin --cipher aes --mode cbc --blob hex:00112233...",
+    "cmd_sym_ex": (
+        "examples: ctfc sym ct.bin --blob keyiv.b64  |  "
+        "ctfc sym ct.bin --key hex:00112233... --mode cbc  |  "
+        "ctfc sym secret.enc --pass password123  |  ctfc sym secret.enc --passwords"
+    ),
+    "opt_sym_cipher": (
+        "aes, 3des, des, blowfish, chacha20, salsa20, rc4, tea, xtea (default: try them all)"
+    ),
+    "opt_sym_mode": "ecb, cbc, ctr, gcm, cfb, cfb8, ofb, cts (CS1), cts3 (default: try them)",
+    "opt_sym_key": (
+        "the key: hex:..., b64:..., text:... or a file (raw and decoded forms are both tried)"
+    ),
+    "opt_sym_iv": "the IV / nonce (if you do not pass one, the usual places are tried)",
+    "opt_sym_blob": "a blob that may hold the key and/or the IV: every usual split is tried",
+    "opt_sym_pass": "passphrase: md5/sha, PBKDF2, scrypt and openssl EVP_BytesToKey are tried",
+    "opt_sym_passwords": "try the embedded password list (10000 entries, offline) as passphrases",
+    "opt_seconds": "time budget for the search, in seconds (default 30)",
     "cmd_blob": "unknown key/iv blob: test the usual splits against a ciphertext",
-    "cmd_blob_ex": "example: ctfc blob keyiv.bin --against ct.bin",
+    "cmd_blob_ex": "example: ctfc blob keyiv.b64 --against ct.bin",
+    "opt_blob_against": "the ciphertext to test the splits against (file, hex:..., b64:...)",
     "cmd_rsa": "RSA: parse keys, decrypt, weak-key attacks",
     "cmd_rsa_ex": "example: ctfc rsa --key priv.pem --decrypt ct.bin",
     "cmd_hash": "identify a hash and print the hashcat/john command",
@@ -112,6 +129,22 @@ EN: dict[str, str] = {
     "web_xor_other_ph": "hex / base64 / text of the other ciphertext",
     "web_key_lengths": "Likely key lengths (Hamming: lower is better, random ~ 4.0; "
     "coincidence ratio: higher is better)",
+    "web_sym_help": "Give what you have (key, IV, blob, passphrase): the rest is guessed. "
+    "Valid PKCS7 padding or a GCM tag tells us when the key is right.",
+    "web_sym_key": "key",
+    "web_sym_key_ph": "hex, base64 or text (both readings are tried)",
+    "web_sym_iv": "IV / nonce",
+    "web_sym_iv_ph": "empty = try the usual places",
+    "web_sym_blob": "blob (key and/or IV)",
+    "web_sym_blob_ph": "e.g. 48 bytes = key||iv, every split is tried",
+    "web_sym_pass": "passphrase",
+    "web_sym_pass_ph": "md5/sha, PBKDF2, scrypt, openssl are tried",
+    "web_sym_cipher": "cipher",
+    "web_sym_mode": "mode",
+    "web_sym_auto": "auto (try them all)",
+    "web_sym_seconds": "time budget (s)",
+    "web_sym_passwords": "try the embedded password list (10000 entries, offline)",
+    "web_blob_needs_ct": "to test a blob, also give the ciphertext it should decrypt.",
     "web_cancel": "Cancel",
     "web_cancelled": "Cancelled: partial results below.",
     "web_attempts": "attempts",

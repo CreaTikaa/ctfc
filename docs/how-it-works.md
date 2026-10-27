@@ -230,3 +230,144 @@ file or compressed stream and does not already read well. A result is kept only 
 it is readable (score >= 0.6), or if the XOR turned unreadable bytes into
 fully printable text (scripts). Repeating-key XOR is only tried when the key length
 test is convincing.
+
+## 6. Symmetric ciphers (`ctfc/core/symmetric.py`)
+
+### Block or stream?
+
+A **block cipher** (AES, DES, 3DES, Blowfish, TEA, XTEA) transforms a fixed-size
+chunk: 16 bytes for AES, 8 bytes for the others. It can only encrypt whole blocks,
+so the plaintext has to be *padded* to a multiple of the block size. Consequence
+you can use: **an AES ciphertext is almost always a multiple of 16 bytes**.
+
+A **stream cipher** (RC4, ChaCha20, Salsa20) builds a key stream, one byte at a
+time, and XORs it with the plaintext. No padding, so **the ciphertext has exactly
+the length of the plaintext**. CTR, CFB, OFB and GCM turn a block cipher into a
+stream cipher, with the same consequence.
+
+So, from a length alone:
+
+| length | likely |
+|---|---|
+| multiple of 16 | AES in ECB or CBC |
+| multiple of 8, not of 16 | DES / 3DES / Blowfish / TEA / XTEA in ECB or CBC |
+| anything else | a stream: CTR, CFB, OFB, GCM, ChaCha20, RC4... or CBC-CTS |
+
+### The modes, and what each one leaks
+
+- **ECB**: each block encrypted on its own. Two identical plaintext blocks give two
+  identical ciphertext blocks, which is why `detect` looks for repeated blocks.
+  No IV.
+- **CBC**: each plaintext block is XORed with the *previous ciphertext block*
+  before encryption (the first one with the IV). To decrypt block *n* you need
+  ciphertext block *n-1*, which you have — so **a wrong IV only breaks the first
+  block**. If your plaintext is readable except for its first 16 bytes, you have
+  the right key and the wrong IV.
+- **CTR**: encrypts a counter and XORs the result with the data. The ciphertext
+  length is the plaintext length. Beware: "the counter" is written differently by
+  different libraries (a full 16-byte block, or an 8-byte nonce plus an 8-byte
+  counter) — ctfc tries both.
+- **CFB / OFB**: two other ways to make a stream out of a block cipher. CFB comes
+  in two flavours: one segment per block (what `openssl enc -aes-256-cfb` does) and
+  one segment per byte (CFB8, the pycryptodome default). ctfc tries both.
+- **GCM**: CTR plus an *authentication tag* (16 bytes, usually glued to the end of
+  the ciphertext). The tag is computed from the key, so **if the tag verifies, the
+  key is right**. That is the strongest signal this tool can get.
+- **CBC-CTS** (ciphertext stealing): CBC for a plaintext whose length is not a
+  multiple of the block size, without padding. The short last block steals the
+  bytes it lacks from the previous ciphertext block. Two layouts exist (CS1, what
+  `openssl enc -aes-128-cbc-cts` writes, and CS3, used by Kerberos and .NET); they
+  only differ in the order of the last two pieces, and ctfc tries both.
+
+### IV or nonce?
+
+Same role, different rules. Both make the same plaintext encrypt to different
+ciphertexts, and **neither is secret** — that is why it is so often simply glued
+to the front of the ciphertext.
+
+- an **IV** (CBC, CFB, OFB) is as long as a block (16 bytes for AES) and should be
+  unpredictable;
+- a **nonce** (CTR, GCM, ChaCha20: 12 bytes, Salsa20: 8) must only never be used
+  twice with the same key. Reusing one is fatal: two messages with the same key
+  stream can be XORed together (see section 5, "two inputs").
+
+Where ctfc looks for it, in order: what you passed, the blob you passed, **the
+first 8/12/16 bytes of the ciphertext**, all zeros, the start of the key.
+
+### Padding, and why it tells you the key is right
+
+PKCS7 pads with *N* bytes all equal to *N*: one missing byte gives `01`, two give
+`02 02`, and a plaintext that already fits gets a whole extra block of `10` x16.
+So after a decryption you can simply look at the end:
+
+```
+...48 65 6c 6c 6f 0b 0b 0b 0b 0b 0b 0b 0b 0b 0b 0b   -> valid: 11 x 0x0b
+```
+
+A **wrong** key produces random bytes, which are valid PKCS7 padding only about
+once in 256 tries. That is why `ctfc` adds 0.15 to the score when the padding is
+valid and says so in the reasons: it is the cheap oracle that makes the whole
+layout search work, even when the plaintext is a binary file with no readable text.
+
+(The same property is what makes a *padding oracle attack* possible against a
+server that says "bad padding" out loud — not something this tool does, since it
+only works offline.)
+
+### Deriving a key from a passphrase (`ctfc/core/kdf.py`)
+
+When the challenge gives a *password* rather than a key, something turned the one
+into the other:
+
+| KDF | what it does | where you meet it |
+|---|---|---|
+| `md5(password)` / `sha256(password)` | one hash, no salt | hand-written scripts |
+| `EVP_BytesToKey` | `D_i = H(D_{i-1} \|\| password \|\| salt)`, concatenated, then cut into key then IV | `openssl enc` without `-pbkdf2` |
+| PBKDF2 | HMAC repeated N times (default 10000 for openssl) | `openssl enc -pbkdf2`, most modern code |
+| scrypt | PBKDF2 plus a lot of memory | modern code |
+
+An `openssl enc` file is easy to recognise: it starts with the eight bytes
+`Salted__` followed by the 8-byte salt (or with `U2FsdGVkX1` when it was written
+with `-a`, i.e. base64). ctfc prints the salt, derives key **and** IV from the
+password for every layout above, and shows the `openssl enc -d ...` command that
+reproduces the result — check it: it is the one you would paste in a write-up.
+
+With `--passwords`, the passphrase is looked for in `ctfc/data/passwords.txt`
+(10000 common passwords, offline). The cheap derivations are tried over the whole
+list before the slow ones, so the budget is not spent on PBKDF2 for the first few
+hundred entries.
+
+### The unknown-layout search
+
+`solve_symmetric()` is a few nested loops, and nothing more clever than that:
+
+```
+for cipher in (aes, 3des, des, blowfish, chacha20, salsa20, rc4, tea, xtea):
+  for key_size in that cipher's sizes:        # 32, then 16, then 24 for AES
+    for material in (the key you gave, the blob splits, the KDFs of your password):
+      for mode in that cipher's modes:        # filtered by the ciphertext length
+        for iv in (yours, from the blob, from the ciphertext, zeros, the key):
+            decrypt, strip the padding, score, keep the reasons
+```
+
+- the **key forms** tried for whatever you pass: raw, hex-decoded, base64-decoded,
+  cut to size, zero-padded to size (what CryptoJS does), and `md5`/`sha256` of it
+  (in case it was really a passphrase);
+- the **blob splits**: the whole blob as the key, `key||iv`, `iv||key`,
+  `blob[:keysize]`, `blob[-keysize:]`;
+- everything runs under a `Budget` (default 30 s) with progress and cancellation,
+  identical attempts are skipped, and the search **stops as soon as a result scores
+  0.95 or more** (a flag, or a verified tag), so it does not burn the budget after
+  it has already won.
+
+Every candidate carries the key, the IV, the KDF, the padding and a standalone
+pycryptodome script that reproduces it — the tests run those scripts and check
+their output, so what you copy really works.
+
+### TEA and XTEA (`ctfc/core/tea.py`)
+
+Two tiny ciphers, 64-bit block, 128-bit key, 32 rounds around the constant
+`delta = 0x9E3779B9` (a nice fingerprint to grep for in a binary — `detect` does).
+pycryptodome does not implement them, so ctfc does, in about ten readable lines
+each. One catch: the 8-byte block is read as two 32-bit words, and implementations
+disagree on the byte order (C on x86 is little-endian, most Python and Java code is
+big-endian). ctfc tries both and tells you which one worked.

@@ -179,3 +179,21 @@ table.facts td:first-child { color: var(--accent); }
   main { grid-template-columns: 1fr; height: auto; }
   #input-panel { border-right: none; border-bottom: 1px solid var(--border); }
 }
+
+/* Notes about the search itself (Symmetric tab): what was detected, what was tried. */
+ul.notes {
+  list-style: none;
+  margin: 0 0 12px 0;
+  padding: 8px 12px;
+  border-left: 3px solid #5fb3f9;
+  background: #1b2430;
+  font-size: 0.9em;
+}
+ul.notes li { margin: 2px 0; }
+
+/* A checkbox option sits on one line instead of label-above-field. */
+.options label.checkbox {
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+}

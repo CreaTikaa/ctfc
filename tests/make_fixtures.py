@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import hmac
 import io
 import random
 import struct
@@ -16,7 +17,7 @@ import zipfile
 import zlib
 from pathlib import Path
 
-from Crypto.Cipher import AES
+from Crypto.Cipher import AES, ChaCha20
 from Crypto.Util.Padding import pad
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -81,6 +82,48 @@ ENGLISH = (
 def xor(data: bytes, key: bytes) -> bytes:
     """Repeating-key XOR (written here independently of ctfc, to test it)."""
     return bytes(byte ^ key[i % len(key)] for i, byte in enumerate(data))
+
+
+def cbc_cts_encrypt(plain: bytes, key: bytes, iv: bytes) -> bytes:
+    """AES-CBC with ciphertext stealing, CS1 layout (what `openssl -cts` produces).
+
+    Written independently of ctfc on purpose: the test must not check the code
+    against itself. Verified against `openssl enc -aes-128-cbc-cts`.
+    """
+    tail = len(plain) % 16
+    if tail == 0:
+        return AES.new(key, AES.MODE_CBC, iv).encrypt(plain)
+    full = AES.new(key, AES.MODE_CBC, iv).encrypt(plain[: len(plain) - tail])
+    last_full = full[-16:]
+    stolen = plain[len(plain) - tail :] + bytes(16 - tail)
+    stolen_xor = bytes(a ^ b for a, b in zip(last_full, stolen, strict=True))
+    final = AES.new(key, AES.MODE_ECB).encrypt(stolen_xor)
+    # CS1: the truncated block comes first, the full one last.
+    return full[:-16] + last_full[:tail] + final
+
+
+def fernet_token(key: bytes, message: bytes, timestamp: int) -> bytes:
+    """Build a Fernet token by hand: version | timestamp | iv | AES-128-CBC | HMAC."""
+    iv = hashlib.sha256(message).digest()[:16]  # deterministic, any IV works
+    body = AES.new(key[16:], AES.MODE_CBC, iv).encrypt(pad(message, 16))
+    parts = b"\x80" + timestamp.to_bytes(8, "big") + iv + body
+    return base64.urlsafe_b64encode(parts + hmac.new(key[:16], parts, hashlib.sha256).digest())
+
+
+def xtea_encrypt_block(block: bytes, key: bytes, endian: str = "big") -> bytes:
+    """One XTEA block, written here from the published algorithm (32 rounds)."""
+    fmt = ">" if endian == "big" else "<"
+    mask, delta = 0xFFFFFFFF, 0x9E3779B9
+    v0, v1 = struct.unpack(fmt + "II", block)
+    words = struct.unpack(fmt + "4I", key)
+    total = 0
+    for _ in range(32):
+        v0 = (v0 + (((((v1 << 4) ^ (v1 >> 5)) & mask) + v1) ^ (total + words[total & 3]))) & mask
+        total = (total + delta) & mask
+        v1 = (
+            v1 + (((((v0 << 4) ^ (v0 >> 5)) & mask) + v0) ^ (total + words[(total >> 11) & 3]))
+        ) & mask
+    return struct.pack(fmt + "II", v0, v1)
 
 
 def powershell_dropper() -> str:
@@ -177,8 +220,74 @@ def main() -> None:
     short = b"Here is what you wanted: CYBN{crib_dragging_works} bye"
     write("xor_short_crib.bin", xor(short, b"Qx7#9"))
 
-    # 48-byte key||iv blob (AES-256-CBC), base64 encoded
-    write("key_iv_blob.b64", base64.b64encode(RNG.randbytes(48)) + b"\n")
+    # --- symmetric ciphers (M3) ---
+    # 48-byte key||iv blob (AES-256-CBC): the blob, and a ciphertext made with it
+    blob = RNG.randbytes(48)
+    write("key_iv_blob.b64", base64.b64encode(blob) + b"\n")
+    message = (
+        b"The archive password is hunter2 and the flag is CYBN{fixture_key_iv_blob}. "
+        b"Do not write it down anywhere else, please."
+    )
+    write(
+        "aes_cbc_keyiv_blob.bin",
+        AES.new(blob[:32], AES.MODE_CBC, blob[32:]).encrypt(pad(message, 16)),
+    )
+
+    # AES-256-CBC with the IV prepended to the ciphertext (the most common layout)
+    key = RNG.randbytes(32)
+    iv = RNG.randbytes(16)
+    secret = b"CYBN{fixture_iv_prefixed} the rest of this sentence is only here as filler."
+    write("aes_cbc_iv_prefix.bin", iv + AES.new(key, AES.MODE_CBC, iv).encrypt(pad(secret, 16)))
+    write("aes_cbc_iv_prefix.key", key.hex() + "\n")
+
+    # AES-256-GCM as nonce || ciphertext || tag (what most Python snippets write out)
+    nonce = RNG.randbytes(12)
+    gcm = AES.new(key, AES.MODE_GCM, nonce=nonce)
+    body, tag = gcm.encrypt_and_digest(b"CYBN{fixture_gcm_nonce_ct_tag}")
+    write("aes_gcm_nonce_ct_tag.bin", nonce + body + tag)
+
+    # AES-128-CBC with ciphertext stealing (CS1, what openssl's -cts does): the
+    # plaintext length is not a multiple of 16 and no padding was added
+    cts_key = RNG.randbytes(16)
+    cts_iv = RNG.randbytes(16)
+    cts_plain = b"CYBN{fixture_cts_mode} short tail here"  # 38 bytes = 2 blocks + 6
+    write("aes_cbc_cts.bin", cts_iv + cbc_cts_encrypt(cts_plain, cts_key, cts_iv))
+    write("aes_cbc_cts.key", cts_key.hex() + "\n")
+
+    # openssl enc with the modern KDF: -aes-256-cbc -pbkdf2 -iter 10000 -md sha256
+    salt = RNG.randbytes(8)
+    raw = hashlib.pbkdf2_hmac("sha256", b"infected", salt, 10000, 48)
+    padded = pad(b"CYBN{fixture_openssl_pbkdf2}\n", 16)
+    body = AES.new(raw[:32], AES.MODE_CBC, raw[32:]).encrypt(padded)
+    write("openssl_salted_pbkdf2.bin", b"Salted__" + salt + body)
+
+    # A Fernet token (built by hand, so the `cryptography` package is not needed)
+    fernet_key = RNG.randbytes(32)
+    write("fernet_key.b64", base64.urlsafe_b64encode(fernet_key) + b"\n")
+    write("fernet_token.txt", fernet_token(fernet_key, b"CYBN{fixture_fernet}", 1700000000) + b"\n")
+
+    # ChaCha20 with a 12-byte nonce prepended to the ciphertext
+    chacha_key = RNG.randbytes(32)
+    chacha_nonce = RNG.randbytes(12)
+    stream_cipher = ChaCha20.new(key=chacha_key, nonce=chacha_nonce)
+    write(
+        "chacha20_nonce_prefix.bin",
+        chacha_nonce + stream_cipher.encrypt(b"CYBN{fixture_chacha20} and some filler text here."),
+    )
+    write("chacha20_nonce_prefix.key", chacha_key.hex() + "\n")
+
+    # XTEA-CBC, big-endian words, PKCS7 padding, 16-byte key from a passphrase
+    xtea_key = hashlib.md5(b"tiny").digest()
+    xtea_iv = RNG.randbytes(8)
+    xtea_plain = pad(b"CYBN{fixture_xtea_cbc} delta is 0x9e3779b9", 8)
+    blocks = b""
+    previous = xtea_iv
+    for offset in range(0, len(xtea_plain), 8):
+        chunk = xtea_plain[offset : offset + 8]
+        block = bytes(a ^ b for a, b in zip(chunk, previous, strict=True))
+        previous = xtea_encrypt_block(block, xtea_key, "big")
+        blocks += previous
+    write("xtea_cbc.bin", xtea_iv + blocks)
 
     # Text formats recognised by prefix
     header = base64.urlsafe_b64encode(b'{"alg":"HS256","typ":"JWT"}').rstrip(b"=")

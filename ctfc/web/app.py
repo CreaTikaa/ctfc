@@ -31,6 +31,7 @@ from ctfc.core.budget import Budget
 from ctfc.core.detect import detect
 from ctfc.core.flags import build_flagset
 from ctfc.core.inputs import InputError, decode_base64, decode_hex, parse_input
+from ctfc.core.symmetric import solve_symmetric
 from ctfc.core.types import Input
 from ctfc.core.xor import guess_key_lengths, solve_xor, xor_inputs
 from ctfc.strings import EN, t
@@ -155,6 +156,49 @@ def create_app(config: Config | None = None) -> Flask:
 
             return work_xor, budget
 
+        if kind in ("sym", "blob"):
+            inp = input_from_payload(payload)
+            # The solver tries the raw bytes and their hex/base64 readings itself,
+            # so key material is taken literally here (decode_bare=False).
+            if kind == "blob":
+                blob = option_bytes(options, "blob", decode_bare=False) or inp.data
+                ciphertext = option_bytes(options, "against") or b""
+                if not ciphertext:
+                    raise InputError(t("web_blob_needs_ct"))
+                data, blob_bytes = ciphertext, blob
+                key = iv = passphrase = None
+                cipher = mode = None
+                try_passwords = False
+            else:
+                data = inp.data
+                key = option_bytes(options, "key", decode_bare=False)
+                iv = option_bytes(options, "iv", decode_bare=False)
+                blob_bytes = option_bytes(options, "blob", decode_bare=False)
+                passphrase = str(options.get("passphrase") or "").encode() or None
+                cipher = str(options.get("cipher") or "").strip() or None
+                mode = str(options.get("mode") or "").strip() or None
+                try_passwords = bool(options.get("passwords"))
+            seconds = min(float(options.get("seconds") or 30), 120)
+            budget = Budget(max_attempts=1_000_000, max_seconds=seconds)
+
+            def work_sym(budget: Budget) -> dict:
+                report = solve_symmetric(
+                    data,
+                    flagset=flagset,
+                    cipher=cipher,
+                    mode=mode,
+                    key=key,
+                    iv=iv,
+                    blob=blob_bytes,
+                    passphrase=passphrase,
+                    try_passwords=try_passwords,
+                    budget=budget,
+                    top_n=config.top_n,
+                )
+                return {"input": input_summary(inp), **report.to_dict()}
+
+            return work_sym, budget
+
         raise InputError(f"unknown tool '{kind}'")
 
     @app.get("/")
@@ -192,6 +236,11 @@ def create_app(config: Config | None = None) -> Flask:
     @app.post("/api/xor")
     def api_xor():
         work, budget = prepare("xor")
+        return jsonify(work(budget))
+
+    @app.post("/api/sym")
+    def api_sym():
+        work, budget = prepare("sym")
         return jsonify(work(budget))
 
     @app.post("/api/jobs/<kind>")

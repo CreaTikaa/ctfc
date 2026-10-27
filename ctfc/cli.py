@@ -19,14 +19,13 @@ from ctfc.core.budget import Budget
 from ctfc.core.detect import detect
 from ctfc.core.flags import FlagSet, build_flagset
 from ctfc.core.inputs import InputError, parse_input
+from ctfc.core.symmetric import CryptoError, SolveReport, solve_symmetric
 from ctfc.core.types import Input
 from ctfc.core.xor import guess_key_lengths, solve_xor, xor_inputs
 from ctfc.strings import t
 
 # Commands that exist in the interface but are built in a later milestone.
 PLANNED = {
-    "sym": "M3",
-    "blob": "M3",
     "lens": "M4",
     "rsa": "M5",
     "hash": "M5",
@@ -76,16 +75,19 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = add("sym")
     p.add_argument("input", help=t("arg_input"))
-    p.add_argument("--cipher", help="aes, des, 3des, blowfish, chacha20, salsa20, rc4, tea, xtea")
-    p.add_argument("--mode", help="ecb, cbc, ctr, cfb, ofb, gcm, cts")
-    p.add_argument("--key", help="key (hex:, b64:, text: or file)")
-    p.add_argument("--iv", help="IV / nonce (hex:, b64:, text: or file)")
-    p.add_argument("--blob", help="unknown blob that may contain key and/or iv")
-    p.add_argument("--pass", dest="passphrase", help="passphrase (KDFs are tried)")
+    p.add_argument("--cipher", help=t("opt_sym_cipher"))
+    p.add_argument("--mode", help=t("opt_sym_mode"))
+    p.add_argument("--key", help=t("opt_sym_key"))
+    p.add_argument("--iv", help=t("opt_sym_iv"))
+    p.add_argument("--blob", help=t("opt_sym_blob"))
+    p.add_argument("--pass", dest="passphrase", help=t("opt_sym_pass"))
+    p.add_argument("--passwords", action="store_true", help=t("opt_sym_passwords"))
+    p.add_argument("--seconds", type=float, default=30.0, help=t("opt_seconds"))
 
     p = add("blob")
     p.add_argument("input", help=t("arg_input"))
-    p.add_argument("--against", help="ciphertext to test the splits against")
+    p.add_argument("--against", required=True, help=t("opt_blob_against"))
+    p.add_argument("--seconds", type=float, default=30.0, help=t("opt_seconds"))
 
     p = add("rsa")
     p.add_argument("--key", help="PEM/DER key file")
@@ -204,6 +206,67 @@ def cmd_xor(args: argparse.Namespace, config: Config, console: Console) -> int:
     return 0 if candidates else 1
 
 
+def _material(spec: str | None) -> bytes | None:
+    """Read a --key / --iv / --blob option.
+
+    Bare text is *not* decoded here: the solver tries the raw bytes and their hex
+    or base64 readings itself, and says which one worked.
+    """
+    if not spec:
+        return None
+    return parse_input(spec, decode_bare=False).data
+
+
+def print_sym_report(
+    args: argparse.Namespace, inp: Input, report: SolveReport, console: Console, title: str
+) -> int:
+    """Shared output for `sym` and `blob`."""
+    if args.json:
+        print(json.dumps({"input": input_to_dict(inp), **report.to_dict()}, indent=2))
+        return 0 if report.candidates else 1
+    render.print_input_notes(console, inp)
+    render.print_notes(console, report.notes)
+    render.print_candidates(console, report.candidates, show_code=args.show_code, title=title)
+    if report.budget_summary:
+        console.print(f"[dim]{report.budget_summary}[/]")
+    return 0 if report.candidates else 1
+
+
+def cmd_sym(args: argparse.Namespace, config: Config, console: Console) -> int:
+    """Symmetric ciphers, with the unknown-layout solver."""
+    inp = parse_input(args.input)
+    budget = Budget(max_attempts=1_000_000, max_seconds=args.seconds)
+    report = solve_symmetric(
+        inp.data,
+        flagset=flagset_from(config),
+        cipher=args.cipher,
+        mode=args.mode,
+        key=_material(args.key),
+        iv=_material(args.iv),
+        blob=_material(args.blob),
+        passphrase=args.passphrase.encode() if args.passphrase else None,
+        try_passwords=args.passwords,
+        budget=budget,
+        top_n=config.top_n,
+    )
+    return print_sym_report(args, inp, report, console, "symmetric")
+
+
+def cmd_blob(args: argparse.Namespace, config: Config, console: Console) -> int:
+    """An unknown key/iv blob, tested against a ciphertext."""
+    blob = parse_input(args.input, decode_bare=False)
+    ciphertext = parse_input(args.against)
+    budget = Budget(max_attempts=1_000_000, max_seconds=args.seconds)
+    report = solve_symmetric(
+        ciphertext.data,
+        flagset=flagset_from(config),
+        blob=blob.data,
+        budget=budget,
+        top_n=config.top_n,
+    )
+    return print_sym_report(args, ciphertext, report, console, "blob splits")
+
+
 def cmd_serve(args: argparse.Namespace, config: Config) -> int:
     """Start the Flask web UI (bound to 127.0.0.1 unless --host says otherwise)."""
     from ctfc.web.app import create_app  # imported here so the CLI starts fast
@@ -241,11 +304,17 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_serve(args, config)
 
     console = Console(highlight=False)
-    commands = {"detect": cmd_detect, "auto": cmd_auto, "xor": cmd_xor}
+    commands = {
+        "detect": cmd_detect,
+        "auto": cmd_auto,
+        "xor": cmd_xor,
+        "sym": cmd_sym,
+        "blob": cmd_blob,
+    }
     if args.command in commands:
         try:
             return commands[args.command](args, config, console)
-        except InputError as exc:
+        except (InputError, CryptoError) as exc:
             print(f"{t('error_prefix')}: {exc}", file=sys.stderr)
             return 2
         except KeyboardInterrupt:

@@ -18,7 +18,10 @@ const state = {
 
 // Tabs that are built, and how they run: "sync" waits for the answer,
 // "job" runs in the background with progress and a Cancel button.
-const TOOLS = { auto: "job", detect: "sync", xor: "job" };
+const TOOLS = { auto: "job", detect: "sync", xor: "job", sym: "job" };
+
+// Tabs that have their own options panel (#options-<tab>).
+const OPTION_PANELS = ["xor", "sym"];
 
 const $ = (id) => document.getElementById(id);
 
@@ -84,15 +87,29 @@ function currentPayload() {
   return { input: $("input-text").value, format: $("format").value };
 }
 
-// Options of the active tab (only XOR has some for now).
+// Options of the active tab.
 function currentOptions() {
-  if (state.tab !== "xor") return {};
-  return {
-    key: $("xor-key").value,
-    keylen: $("xor-keylen").value,
-    crib: $("xor-crib").value,
-    other: $("xor-other").value,
-  };
+  if (state.tab === "xor") {
+    return {
+      key: $("xor-key").value,
+      keylen: $("xor-keylen").value,
+      crib: $("xor-crib").value,
+      other: $("xor-other").value,
+    };
+  }
+  if (state.tab === "sym") {
+    return {
+      key: $("sym-key").value,
+      iv: $("sym-iv").value,
+      blob: $("sym-blob").value,
+      passphrase: $("sym-pass").value,
+      cipher: $("sym-cipher").value,
+      mode: $("sym-mode").value,
+      seconds: $("sym-seconds").value,
+      passwords: $("sym-passwords").checked,
+    };
+  }
+  return {};
 }
 
 async function post(path, payload) {
@@ -196,6 +213,7 @@ function showAnswer(tab, answer) {
     setStatus("");
     return;
   }
+  if (answer.notes && answer.notes.length) renderNotes(answer.notes);
   if (answer.key_lengths && answer.key_lengths.length) renderKeyLengths(answer.key_lengths);
   renderCandidates(answer.candidates);
   setStatus(answer.cancelled ? T("web_cancelled") + " " + answer.budget : answer.budget);
@@ -216,6 +234,13 @@ function copyButton(label, getText) {
     setTimeout(() => (button.textContent = label), 1000);
   });
   return button;
+}
+
+// What the search detected and tried (header found, budget, missing material...).
+function renderNotes(notes) {
+  const list = el("ul", "notes");
+  for (const note of notes) list.append(el("li", "", note));
+  $("results").append(list);
 }
 
 function renderCandidates(candidates) {
@@ -405,7 +430,9 @@ function selectTab(button) {
   if (button.dataset.milestone) return;
   state.tab = button.dataset.tab;
   for (const tab of document.querySelectorAll(".tab")) tab.classList.toggle("active", tab === button);
-  $("options-xor").classList.toggle("hidden", state.tab !== "xor");
+  for (const name of OPTION_PANELS) {
+    $("options-" + name).classList.toggle("hidden", state.tab !== name);
+  }
   $("tab-help").textContent = T("web_" + state.tab + "_help");
   $("results").replaceChildren();
   setStatus("");

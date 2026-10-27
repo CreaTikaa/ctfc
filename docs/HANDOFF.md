@@ -1,6 +1,6 @@
 # Handoff notes (for the next agent)
 
-Last update: 2026-10-27, after milestone M2. Read `CLAUDE.md` first, then this file.
+Last update: 2026-10-27, after milestone M3. Read `CLAUDE.md` first, then this file.
 
 ## 1. Working agreement with the user
 
@@ -9,7 +9,8 @@ Last update: 2026-10-27, after milestone M2. Read `CLAUDE.md` first, then this f
   commands, commit, and **push to GitHub** (`git push origin main`, repo
   https://github.com/CreaTikaa/ctfc, `gh` is logged in as CreaTikaa; pushing is pre-authorized).
 - Commit messages end with the `Co-Authored-By` line given by the harness.
-- He likes improvement ideas: propose them at the end of a milestone (list in section 6).
+- He likes improvement ideas: propose them at the end of a milestone (list in section 6). He said
+  the remaining ideas will be done **after M3, once it is functional** - so they are open now.
 - Decisions already taken: package name `ctfc` in `~/apps/ctfc`; default flag formats = generic
   regex `[A-Za-z0-9_]{2,15}\{[^}\n]{4,}\}` + `CYBN\{[^}\n]*\}`, and `CYBN{` is also searched in
   base64 (`flag_prefixes`). No anonymized challenge samples yet (he will send some later).
@@ -21,125 +22,154 @@ Last update: 2026-10-27, after milestone M2. Read `CLAUDE.md` first, then this f
 | M0 scaffold | `a8e1937` | pyproject, Makefile, types, inputs, config, strings, argparse CLI, Flask hello |
 | M1 detect + auto | `dcd775e` | encodings, scoring, flags, magic, detect, auto, rich CLI, web UI (Auto/Detect) |
 | M2 XOR | `369bfef` | xor.py, XOR in auto, `ctfc xor`, web jobs (progress/cancel), XOR tab |
-| M3 symmetric | - | **next**, plan in section 5 (the user has NOT said OK yet: ask first) |
+| M3 symmetric | this one | symmetric.py, kdf.py, tea.py, blockmodes.py, `ctfc sym`, `ctfc blob`, web Symmetric tab |
+| M4 Code Lens | - | **next**, plan in section 5 (ask for his OK first) |
 
-114 tests pass (`.venv/bin/python -m pytest -q`, ~6 s), `ruff check .` and `ruff format --check .` clean.
+171 tests pass (`.venv/bin/python -m pytest -q`, ~9 s), `ruff check .` and `ruff format --check .`
+clean.
 
 ## 3. Environment
 
 - Python 3.11.2, virtualenv in `.venv` (`pip install -e ".[dev]"` done). Run `.venv/bin/ctfc ...`
-  or `python -m ctfc ...`.
-- External tools: `diec`, `hashcat`, `binwalk`, `openssl` present; `xortool` and `RsaCtfTool`
-  installed with pipx (`~/.local/bin`). **`john` is missing**: needs `sudo apt install john`, which
-  only the user can run (no sudo password for the agent).
-- Node 24 and `/usr/bin/chromium` exist. The UI was checked with headless Chromium driven over the
-  DevTools protocol (a small Node script using the built-in `WebSocket`: launch
-  `chromium --headless=new --remote-debugging-port=9333`, `Page.navigate`, `Runtime.evaluate` to
-  fill `#input-text`, click a tab and `#run`, then `Page.captureScreenshot`). The script lived in the
-  session scratchpad and is gone; rewrite it in the new scratchpad if needed. `node --check
-  ctfc/web/static/app.js` checks JS syntax.
+  or `python -m ctfc ...`. **Careful: the bare `python` on PATH is an old build without
+  `pathlib`** - always use `.venv/bin/python`.
+- External tools: `diec`, `hashcat`, `binwalk`, `openssl` (3.0.22) present; `xortool` and
+  `RsaCtfTool` installed with pipx (`~/.local/bin`). **`john` is missing**: needs
+  `sudo apt install john`, which only the user can run.
+- The user keeps a full `rockyou.txt` in `~/Documents/rockyou.txt` (14.3 M lines). The embedded
+  list `ctfc/data/passwords.txt` is its first 10000 entries plus 13 CTF classics
+  (`password123`, `infected`, `ctf`, `flag`...), ~80 KB, regenerate with that file if needed.
+- Node 24 and `/usr/bin/chromium` exist. The web UI was checked for real with headless Chromium
+  driven over the DevTools protocol: launch
+  `chromium --headless=new --remote-debugging-port=9333 --no-sandbox about:blank`, open the
+  WebSocket from `http://127.0.0.1:9333/json/list`, then `Page.navigate` + `Runtime.evaluate`
+  (fill `#input-text`, click a tab, click `#run`, poll until `#run` is enabled, read the cards).
+  The script lived in the session scratchpad and is gone; rewrite it when needed, it is ~40 lines.
+  `node --check ctfc/web/static/app.js` checks JS syntax.
 
 ## 4. Architecture as built (differences from CLAUDE.md section 3)
 
 Added modules (small, one responsibility each):
 - `core/budget.py`: `Budget(max_attempts, max_seconds, on_progress, cancel_event)`; loops call
-  `budget.spend()`; `summary()` for the user. Use it in every brute force (M3 layout solver too).
-- `core/flags.py`: `build_flagset(regexes, prefixes)`, `find_flags()`. Base64 forms of a prefix at
-  the 3 alignments (`Q1lCTn` / `NZQk57` / `DWUJOe` for `CYBN{`). Strengths: specific 0.97, generic
-  with CTF-like prefix 0.9, generic other prefix 0.45, garbled content 0.6, very short content <= 0.85.
-- `core/magic.py`: signatures + text prefix rules from `data/magic.toml`; embedded files; data after
-  the end marker (polyglots).
-- `core/datafiles.py`: cached loading of `ctfc/data/*`.
-- `core/auto.py`: best-first search over decoders + XOR solvers.
-- `core/xor.py`: everything XOR (see docs/how-it-works.md section 5).
-- `render.py`: rich tables; all sample data goes through `safe()` (no markup/escape injection).
-- `web/jobs.py`: background jobs (`POST /api/jobs/<kind>`, `GET /api/jobs/<id>`,
-  `POST /api/jobs/<id>/cancel`). Kinds handled in `web/app.py::prepare()` (`auto`, `xor`):
-  **add `sym` / `blob` there in M3**. Sync twins exist: `/api/auto`, `/api/xor`, `/api/detect`.
-- `core/codegen.py`: a result chain is a list of `Step(name, params)`. A decoder step has no params;
-  `Step("xor", {"key": hex, "layers": [...]})` has params. `step_code()` maps a step to
-  `StepCode(label, comment, python, imports, helper, cyberchef)`. **M3: add cipher steps here**
-  (e.g. `Step("aes", {"mode": "cbc", "key": hex, "iv": hex})`), then auto/pipeline get them for free.
+  `budget.spend()`; `summary()` for the user. Used by auto, xor and the M3 solver.
+- `core/flags.py`, `core/magic.py`, `core/datafiles.py`, `core/auto.py`, `core/xor.py`: see the
+  M2 notes in git history and `docs/how-it-works.md`.
+- `core/symmetric.py` (M3): the cipher table (`CIPHERS`), `decrypt_raw()` (one set of parameters
+  in, raw plaintext out), the material/attempt generators and `solve_symmetric()` ->
+  `SolveReport(candidates, notes, budget_summary)`. `notes` is the "what I detected and tried"
+  list that both front-ends display.
+- `core/kdf.py` (M3): `OPENSSL_LAYOUTS` = (digest, iterations) pairs, `openssl_derive()`,
+  `hash_keys()`, `salted_keys()`, `evp_bytes_to_key()`, and `EVP_HELPER` (source text for
+  generated scripts). `Derived` carries `method`, `python` and `openssl_flags`.
+- `core/blockmodes.py` (M3): hand-written ECB / CBC / CBC-CTS working on any
+  `block_decrypt(block, key, endian)` callable, plus the same code as text for generated scripts.
+- `core/tea.py` (M3): TEA and XTEA block functions (both endiannesses) + helper source text.
+- `render.py`: rich tables; all sample data goes through `safe()`. `print_notes()` added in M3.
+- `web/jobs.py`: background jobs. Kinds handled in `web/app.py::prepare()`: `auto`, `xor`, `sym`,
+  `blob`. Sync twins: `/api/auto`, `/api/xor`, `/api/detect`, `/api/sym`.
+- `core/codegen.py`: a result chain is a list of `Step(name, params)`; `step_code()` maps a step to
+  `StepCode(label, comment, python, imports, import_lines, helper, cyberchef)`. M3 added
+  `Step("cipher", params)` (`cipher_step_code`) and the `import_lines` field (for
+  `from Crypto.Cipher import AES`, since `imports` only holds module names).
 
 Conventions worth keeping:
 - `parse_input(spec, allow_files=True, decode_bare=True)`. The web always passes
-  `allow_files=False`. `detect` and `auto` pass `decode_bare=False` (they recognise encodings
-  themselves and show the full chain). `xor` decodes bare hex/base64.
-- Every candidate has reasons, a Python snippet (tests run the snippet with `python -I` and check
-  the output: keep doing that for M3) and a CyberChef string when possible.
-- Fixtures are generated by `tests/make_fixtures.py` (deterministic, seed 1337, fake flags
-  `CYBN{fixture_...}`); run `make fixtures` after editing it. Fixture files are committed.
-- CLI: `PLANNED` dict in `cli.py` lists commands not built yet (prints "planned for milestone Mx").
-  Remove the entry when a command is implemented, and remove the `(M3)` hints in
-  `core/detect.py` (`SIG_HINTS["enc"]`, ECB and key-length next steps).
+  `allow_files=False`. `detect`/`auto` pass `decode_bare=False`. **Key material
+  (`--key/--iv/--blob`) is read with `decode_bare=False`**: the solver tries the raw bytes *and*
+  their hex/base64 readings itself and says which one worked.
+- Every candidate has reasons, a Python snippet and a CyberChef string when possible. The tests
+  **run the generated snippets** with `python -I` and check their output: keep doing that.
+- Fixtures are generated by `tests/make_fixtures.py` (seed 1337, fake flags `CYBN{fixture_...}`);
+  run `make fixtures` after editing it. Fixture files are committed. The M3 generator writes its
+  own CTS / Fernet / XTEA encryptors **independently of ctfc**, so the tests do not check the
+  code against itself.
+- CLI: `PLANNED` in `cli.py` lists commands not built yet (`lens`, `rsa`, `hash`, `recipe`,
+  `tools`, `keys`). Remove the entry when implementing one, and drop the matching `(Mx)` hints in
+  `core/detect.py`.
 - Web: tabs not built have `data-milestone` in `index.html` (disabled). `TOOLS` in `app.js` lists
-  built tabs and whether they run as `sync` or `job`. Tab options live in `#options-<tab>` divs.
+  built tabs and whether they run `sync` or `job`; `OPTION_PANELS` lists tabs that have an
+  `#options-<tab>` panel.
 
 Scoring decisions (tuned against noise, keep the noise tests green):
-- `text_score = printable^6 * (0.35 + 0.40*word_rate + 0.25*frequency)`.
-- Flag score loses up to 0.15 if the text around it (flag removed) is unreadable.
-- auto: `MIN_SCORE 0.2`, outputs must beat the input's own score, stop expanding at score >= 0.9
-  (`FOUND`), `ONCE_PER_CHAIN = rot13, rot47, reverse, xor`. XOR results are kept if score >= 0.6
-  or if XOR turned unreadable bytes (>= 48) into >= 98% printable text.
-- xor: guessed file headers are masked from the score (`forced=`), flag cribs are not;
-  near-ties prefer shorter keys (0.003 per key byte).
-- `tests/test_xor.py::test_no_noise_on_random_data` and the auto noise checks guard all this.
+- `text_score = printable^6 * (0.35 + 0.40*word_rate + 0.25*frequency)`; flag score loses up to
+  0.15 if the text around the flag is unreadable.
+- auto: `MIN_SCORE 0.2`, `FOUND 0.9`, `ONCE_PER_CHAIN = rot13, rot47, reverse, xor`.
+- xor: guessed file headers are masked from the score (`forced=`); near-ties prefer shorter keys.
+- symmetric: `MIN_SCORE 0.25`, `PKCS7_BONUS 0.15`, `TAG_BONUS 0.25` (GCM tag / Fernet HMAC),
+  `STOP_AT 0.95` = stop the whole search as soon as something scores that high. When nothing
+  passes `MIN_SCORE`, the 3 least-bad are shown with a note saying so. Fernet candidates are
+  **pinned**: their verdict is always shown, even "the HMAC does NOT verify".
+
+Conventions **verified against real implementations** in M3 (tests enforce them):
+- `openssl enc -aes-256-cfb` = pycryptodome `MODE_CFB, segment_size=128`; our separate `cfb8`
+  mode is pycryptodome's default (one segment per byte).
+- `openssl enc -aes-256-ctr` = `MODE_CTR, nonce=b"", initial_value=<16-byte iv>`; the solver also
+  tries pycryptodome's half-nonce style (`ctr_style="nonce8"`).
+- `openssl enc -aes-128-cbc-cts` writes **CS1** (truncated block first); Kerberos/.NET use CS3
+  (the last two pieces swapped). Both are tried, labelled `CBC-CTS-CS1` / `CBC-CTS-CS3`.
+- `EVP_BytesToKey` matches `openssl enc -md md5 -P -S <salt>` (exact key+iv vector in the tests).
+- TEA/XTEA match the published all-zero test vectors (`41ea3a0a94baa940`, `dee9d4d8f7131ed9`).
 
 Known limitations / open points:
-- CyberChef operation strings in `encodings.py` / `codegen.py` are **not yet verified** against a
-  real CyberChef build (CLAUDE.md requires it in M6, together with the deep link format).
-- XOR: keys longer than the crib on very short data (< ~60 bytes) are not recoverable; long keys
-  (>= 24) need several hundred bytes. The two-layer split is a readability guess (ambiguous).
-- `/api/parse` (left hexdump preview) decodes bare hex/base64, while Auto/Detect keep it as text:
-  intentional, the note in the UI says it.
-- Long sync endpoints have no progress; the browser uses the job endpoints for auto/xor.
+- CyberChef operation strings in `encodings.py` / `codegen.py` are **still not verified** against
+  a real CyberChef build (CLAUDE.md requires it in M6, with the deep-link format). The cipher
+  recipes are skipped (`None`) whenever an IV is read out of the data or a header is stripped,
+  because a recipe cannot express that and would silently give a wrong result.
+- The solver tries one cipher layer. A ciphertext that is base64 **and** encrypted needs the Auto
+  tab first, or `--blob`/`--key` plus a manual decode; chaining auto -> sym is M6 (pipeline).
+- `--passwords` tries the 3 cheapest openssl KDF layouts over the whole list (EVP md5, EVP
+  sha256, PBKDF2-sha256-10000), KDF-major so one slow KDF cannot eat the budget. It does not try
+  `hash_keys`/scrypt over the list (too slow); a given `--pass` does get the full set.
+- No XChaCha20 (24-byte nonce), no AES-SIV, no DES degenerate-key handling beyond what
+  pycryptodome refuses (caught as `CryptoError` and skipped).
+- `docs/cheatsheet.md` does not exist yet (CLAUDE.md puts it in M8 with the web tab).
 
-## 5. Plan for M3 (Symmetric) - proposed to the user, waiting for his OK
+## 5. Plan for M4 (Code Lens) - propose it in French and wait for his OK
 
-1. `core/symmetric.py`: AES ECB/CBC/CTR/CFB/OFB/GCM + CBC with ciphertext stealing (CTS) for
-   non-aligned lengths; DES, 3DES, Blowfish, ChaCha20, Salsa20, RC4 via pycryptodome; TEA and XTEA
-   written by hand (pure Python, documented). Docstrings explain each mode in 1-2 lines.
-2. `core/kdf.py`: md5/sha1/sha256 of a passphrase, PBKDF2 (common iteration counts: 1, 1000, 2048,
-   10000, 100000; sha1/sha256), scrypt, openssl `EVP_BytesToKey` (md5 and sha256) with the
-   `Salted__` header; print the equivalent `openssl enc -d -<cipher> -md <md> [-pbkdf2 -iter N]
-   -in file -pass pass:...` command.
-3. Unknown-layout solver (the core feature, CLAUDE.md 4.3): ciphertext + any subset of
-   {key, iv/nonce, blob, passphrase}. Try in order of likelihood:
-   - blob splits `key||iv`, `iv||key`, key only, 16+16, 24+16, 32+16, 32+12 (nonce);
-   - key/IV encodings: raw, hex, base64, ASCII padded/truncated to 16/24/32;
-   - IV prepended to the ciphertext, `nonce||ct||tag` for GCM, IV = zeros, IV = key prefix;
-   - key from passphrase via the KDFs above;
-   - padding PKCS7 (strong signal, `score(check_padding=True)` already exists), zero, none.
-   Use `Budget` with progress, keep the top N with reasons, never print thousands of lines.
-4. Fernet tokens; `openssl enc` files (raw and base64 `U2FsdGVkX1...`).
-5. `codegen`: cipher steps -> short commented pycryptodome snippets; CyberChef `AES_Decrypt`
-   when expressible.
-6. CLI `ctfc sym` (`--cipher --mode --key --iv --blob --pass`) and `ctfc blob <blob> --against
-   <ct>`; web Symmetric tab (job-based, options panel); detect "next step" hints updated.
-7. Fixtures (tests/make_fixtures.py): 48-byte `key||iv` blob + AES-256-CBC ciphertext (the
-   `key_iv_blob.b64` fixture already exists, pair it with a ciphertext); the RSA-OAEP-wrapped
-   variant (for M5); `openssl enc` md5 (exists: `openssl_salted_md5.*`, password `password123`)
-   and pbkdf2 variants; AES-ECB (exists: `aes_ecb_repeated.bin`, key from RNG); AES-CBC with a
-   non-aligned tail (CTS); Fernet token; AES-GCM `nonce||ct||tag`. Verify the openssl fixtures
-   with the real `openssl` binary in a test (skip if missing).
-8. Optional, from the ideas list: embed a small password list (top ~1000, offline) to try
-   passphrases for openssl enc / KDFs. Ask the user (a wordlist is data, not a dependency).
-9. Docs: how-it-works sections on block vs stream ciphers, modes, IV vs nonce, padding oracle as a
-   "right key" signal, KDFs; start `docs/cheatsheet.md` decision tree if time allows.
+CLAUDE.md section 4.4. The highest-value feature for forensics, and **static analysis only**
+(hard rule 3: never execute analysed content, no `eval`, no `exec`, no `pickle`).
 
-## 6. Improvement ideas proposed to the user (no answer yet)
+1. `core/lens.py`: the shared result type, e.g. `LensReport(language, operations, artifacts,
+   reasons, inverse_script)` where `operations` is the ordered list of what the script does
+   (`base64 -> zlib -> xor`) and `artifacts` holds the extracted keys/IVs/salts/URLs/paths with
+   their line numbers.
+2. Python first, with `ast`: walk the tree, recognise `AES.new(key, AES.MODE_CBC, iv)`,
+   `Fernet(key)`, `PKCS1_OAEP`, `hashlib.*`, `base64.*`, `zlib.*`, `bytes([...])`, XOR loops
+   (`^` inside a comprehension or a for loop), `open(...).read()`. Constant-fold literals
+   (string concatenation, `*`, `[::-1]`, char-code lists) **statically**, never with `eval`.
+3. Then PowerShell, JavaScript, bash, VBS with a **rule table** (`id`, regex, explanation) kept in
+   `data/lens_rules.toml` so it is easy to extend: `-bxor`, `FromBase64String`,
+   `ConvertTo-SecureString -Key`, `System.Security.Cryptography`, `CryptoJS.AES.decrypt`,
+   `atob`, `openssl enc`, `base64 -d`, `xxd -r`...
+4. Generated **inverse script**: reuse `codegen.Step`/`chain_snippet` - the operations found are
+   already expressible as steps (`base64`, `zlib`, `xor`, `cipher`), so the inverse is the
+   reversed chain. That is why M3 put cipher steps in codegen.
+5. "Peel the layers" static view for nested obfuscation (base64 / zlib / reversed strings /
+   char-code arrays), reusing `core/auto.py` on the *extracted blob*, not on the script.
+6. CLI `ctfc lens <script>` (`--json`, `--show-code`) + web Code Lens tab (paste a script,
+   get the summary, the artifacts table and the inverse script). Remove `"lens": "M4"` from
+   `PLANNED` and the `data-milestone` on the tab.
+7. Fixtures: the PowerShell dropper already exists (`powershell_xor.b64`, and
+   `powershell_dropper()` in make_fixtures); add a Python encryptor using AES-CBC with a
+   hardcoded key, a JS one using CryptoJS, a bash one using `openssl enc`, a VBS one, and a
+   layered Python obfuscation (base64 -> zlib -> XOR). Expected outputs in the tests.
+8. Docs: a `how-it-works.md` section on how static analysis differs from running the script, and
+   what the rule table can and cannot see.
+
+## 6. Improvement ideas (the user said: after M3, if it works - so they are open)
 
 1. "Apply" buttons on Detect guesses that open the right tab pre-filled (e.g. XOR keylen 6,
-   openssl Salted__ -> Symmetric with KDF).
+   openssl `Salted__` -> Symmetric with the passphrase field focused). Now easy: both tabs exist.
 2. Custom base64 alphabet decoding: detect already finds the alphabet; feed it to auto.
-3. Batch mode `ctfc scan <folder>`: detect + auto on every extracted file (binwalk/foremost/pcap
-   objects), ranked.
-4. pcap extraction in stdlib: HTTP bodies, DNS exfiltration reassembly (base32/hex subdomains),
-   then auto.
-5. Small embedded offline password list for openssl enc / KDF / zip tries (M3).
-6. History of "Use as next input" steps, undo, export as script/recipe (leads into M6 Pipeline).
+3. Batch mode `ctfc scan <folder>`: detect + auto on every extracted file, ranked.
+4. pcap extraction in stdlib: HTTP bodies, DNS exfiltration reassembly (base32/hex subdomains).
+5. ~~Embedded password list~~ **done in M3** (`ctfc/data/passwords.txt`, `--passwords`).
+6. History of "Use as next input" steps, undo, export the whole chain as a script/recipe (leads
+   into M6 Pipeline).
 7. Stego tool suggestions (zsteg, steghide/stegseek, exiftool) through the M6 tool registry.
 8. XOR key derived from a hash of common words (md5/sha of a string), common in CTF malware.
+   Note: M3 already does this for *cipher* keys (`key_forms` hashes the given key), so the same
+   trick in `xor.py` would be a small addition.
 
 ## 7. Quick verification commands
 
@@ -149,6 +179,9 @@ make test && make lint
 ctfc auto tests/fixtures/layers_b64_zlib_hex.txt --show-code
 ctfc detect tests/fixtures/png_with_zip.png
 ctfc xor tests/fixtures/xor_two_layers.bin
-ctfc auto tests/fixtures/powershell_xor.b64
+ctfc blob tests/fixtures/key_iv_blob.b64 --against tests/fixtures/aes_cbc_keyiv_blob.bin
+ctfc sym tests/fixtures/aes_gcm_nonce_ct_tag.bin --key "$(cat tests/fixtures/aes_cbc_iv_prefix.key)" --show-code
+ctfc sym tests/fixtures/openssl_salted_pbkdf2.bin --passwords
+ctfc sym tests/fixtures/xtea_cbc.bin --pass tiny --cipher xtea
 ctfc serve   # http://127.0.0.1:8137
 ```
