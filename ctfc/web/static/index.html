@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ctfc - CTF Crypto Lab</title>
+  <style>
+    body { background: #14161a; color: #d8dee9; font-family: monospace; padding: 2rem; }
+  </style>
+</head>
+<body>
+  <h1>ctfc</h1>
+  <p>Hello from the CTF Crypto Lab. The full UI arrives in milestone M1.</p>
+  <p id="health">checking API...</p>
+  <script>
+    fetch("/api/health").then(r => r.json()).then(j => {
+      document.getElementById("health").textContent = "API ok, version " + j.version;
+    });
+  </script>
+</body>
+</html>

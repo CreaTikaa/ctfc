@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ctfc"
+version = "0.1.0"
+description = "CTF Crypto Lab: from payload / key / IV / blob to plaintext, offline and explainable."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+# Hard rule: only these three runtime dependencies (see CLAUDE.md section 2).
+dependencies = [
+    "pycryptodome>=3.18",
+    "flask>=3.0",
+    "rich>=13",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "ruff>=0.5"]
+fast = ["gmpy2>=2.1"]  # optional: faster RSA maths
+
+[project.scripts]
+ctfc = "ctfc.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["ctfc*"]
+
+[tool.setuptools.package-data]
+ctfc = ["data/*", "web/static/*", "web/static/**/*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+extend-exclude = ["*.md"]  # only Python files are linted/formatted
+
+[tool.ruff.lint]
+# E/W: style, F: real bugs, I: import order, B: common pitfalls, UP: modern syntax
+select = ["E", "W", "F", "I", "B", "UP"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

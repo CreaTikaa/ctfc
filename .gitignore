@@ -1,0 +1,11 @@
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.ruff_cache/
+# Large vendored assets are fetched by scripts/fetch_vendor.sh, not committed.
+ctfc/web/static/vendor/cyberchef/
+wheels/
