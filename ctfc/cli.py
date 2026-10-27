@@ -14,8 +14,11 @@ from rich.console import Console
 
 from ctfc import __version__, render
 from ctfc.config import Config, ConfigError, load_config
+from ctfc.core import pipeline
+from ctfc.core import tools as toolbox
 from ctfc.core.auto import auto_decode
 from ctfc.core.budget import Budget
+from ctfc.core.cyberchef import PUBLIC_URL, deep_link
 from ctfc.core.detect import detect
 from ctfc.core.flags import FlagSet, build_flagset
 from ctfc.core.hashes import identify as identify_hash
@@ -23,6 +26,7 @@ from ctfc.core.inputs import InputError, parse_input
 from ctfc.core.lens import analyse as analyse_script
 from ctfc.core.pcap import PcapError
 from ctfc.core.pcap import solve as solve_pcap
+from ctfc.core.pipeline import RecipeError
 from ctfc.core.rsa import RsaError, build_key, keys_match, parse_key, solve_rsa
 from ctfc.core.scan import scan as scan_folder
 from ctfc.core.symmetric import CryptoError, SolveReport, solve_symmetric
@@ -32,8 +36,6 @@ from ctfc.strings import t
 
 # Commands that exist in the interface but are built in a later milestone.
 PLANNED = {
-    "recipe": "M6",
-    "tools": "M6",
     "keys": "M7",
 }
 
@@ -119,9 +121,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--against", help="ciphertext to test the candidate keys against")
 
     p = add("recipe")
-    p.add_argument("action", choices=["run"])
-    p.add_argument("recipe", help="recipe.json")
+    p.add_argument("action", choices=["run", "save", "show"], help=t("arg_recipe_action"))
+    p.add_argument("recipe", help=t("arg_recipe"))
     p.add_argument("input", nargs="?", help=t("arg_input"))
+    p.add_argument("--cyberchef", action="store_true", help=t("opt_recipe_cyberchef"))
 
     p = add("pcap")
     p.add_argument("input", help=t("arg_input"))
@@ -137,6 +140,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = add("tools")
     p.add_argument("input", help=t("arg_input"))
+    p.add_argument("--list", action="store_true", help=t("opt_tools_list"))
+    p.add_argument("--run", help=t("opt_tools_run"))
+    p.add_argument("--wordlist", help=t("opt_tools_wordlist"))
 
     p = add("serve")
     p.add_argument("--port", type=int, default=None, help=t("opt_port"))
@@ -421,6 +427,112 @@ def cmd_scan(args: argparse.Namespace, config: Config, console: Console) -> int:
     return 0 if report.interesting(args.min_interest) else 1
 
 
+def cmd_recipe(args: argparse.Namespace, config: Config, console: Console) -> int:
+    """Run a saved recipe, or turn an auto result into one."""
+    if args.action == "show":
+        name, steps = pipeline.load(args.recipe)
+        print(pipeline.dump(name, steps))
+        return 0
+
+    if args.action == "save":
+        # Save what `auto` found on this input as a reusable recipe.
+        if not args.input:
+            raise RecipeError("recipe save needs an input: ctfc recipe save out.json <input>")
+        inp = parse_input(args.input, decode_bare=False)
+        candidates = auto_decode(inp.data, flagset=flagset_from(config), top_n=1)
+        if not candidates:
+            print(t("recipe_nothing_to_save"), file=sys.stderr)
+            return 1
+        steps = candidates[0].params.get("chain")
+        if not steps:
+            raise RecipeError("that result has no chain of steps to save")
+        from ctfc.core.codegen import Step
+
+        pipeline.dump(
+            Path(args.recipe).stem,
+            [Step(entry["name"], entry.get("params", {})) for entry in steps],
+            args.recipe,
+        )
+        console.print(f"[green]saved[/] {escape_path(args.recipe)}: {candidates[0].label}")
+        return 0
+
+    if not args.input:
+        raise RecipeError("recipe run needs an input: ctfc recipe run r.json <input>")
+    inp = parse_input(args.input, decode_bare=False)
+    result = pipeline.run_file(inp.data, args.recipe, flagset_from(config))
+    if args.cyberchef and result.cyberchef:
+        url = deep_link(result.cyberchef, inp.data, config.cyberchef_url)
+        if not config.offline:
+            result.notes.append("CyberChef: " + url)
+        else:
+            result.notes.append("CyberChef link not built: offline mode is on")
+    if args.json:
+        print(json.dumps(result.to_dict(), indent=2))
+        return 0 if result.ok else 1
+    render.print_recipe(console, result, show_code=args.show_code)
+    return 0 if result.ok else 1
+
+
+def escape_path(path: str) -> str:
+    from rich.markup import escape
+
+    return escape(str(path))
+
+
+def cmd_tools(args: argparse.Namespace, config: Config, console: Console) -> int:
+    """Suggest the external tools that fit this input, and run one on request."""
+    if args.list:
+        render.print_tool_list(console, toolbox.installed_tools())
+        return 0
+
+    inp = parse_input(args.input)
+    report = detect(inp.data, flagset_from(config))
+    values: dict = {"input": args.input}
+    if args.wordlist:
+        values["wordlist"] = args.wordlist
+    # Fill what we can work out ourselves: a key length, a hash mode, a recipe.
+    lengths = guess_key_lengths(inp.data)
+    if lengths:
+        values["keylen"] = lengths[0].length
+    matches = identify_hash(inp.data.decode("utf-8", errors="replace").strip(), False).matches
+    if matches:
+        if matches[0].format.hashcat is not None:
+            values["hashcat_mode"] = matches[0].format.hashcat
+        if matches[0].format.john:
+            values["john_format"] = matches[0].format.john
+    candidates = auto_decode(inp.data, flagset=flagset_from(config), top_n=1)
+    if candidates and candidates[0].cyberchef:
+        values["cyberchef_recipe"] = candidates[0].cyberchef
+    values["cyberchef_data"] = inp.data[:4096]
+    values["cyberchef_url"] = config.cyberchef_url
+
+    suggestions = toolbox.suggest(
+        [(guess.rule, guess.confidence) for guess in report.guesses],
+        values=values,
+        offline=config.offline,
+        threshold=config.suggest_threshold,
+        limit=config.max_suggestions,
+    )
+
+    if args.run:
+        tool = toolbox.tool_by_id(args.run)
+        if not tool.offline_safe and config.offline:
+            print(t("tool_offline_refused", name=tool.name), file=sys.stderr)
+            return 2
+        result = toolbox.run_tool(tool, values)
+        if args.json:
+            print(json.dumps(result.to_dict(), indent=2))
+            return 0 if result.returncode == 0 else 1
+        render.print_tool_run(console, tool, result)
+        return 0 if result.returncode == 0 else 1
+
+    if args.json:
+        print(json.dumps({"suggestions": [item.to_dict() for item in suggestions]}, indent=2))
+        return 0 if suggestions else 1
+    render.print_tools(console, suggestions, public_url=PUBLIC_URL, offline=config.offline)
+    return 0 if suggestions else 1
+
+
 def cmd_serve(args: argparse.Namespace, config: Config) -> int:
     """Start the Flask web UI (bound to 127.0.0.1 unless --host says otherwise)."""
     from ctfc.web.app import create_app  # imported here so the CLI starts fast
@@ -469,11 +581,13 @@ def main(argv: list[str] | None = None) -> int:
         "hash": cmd_hash,
         "scan": cmd_scan,
         "pcap": cmd_pcap,
+        "recipe": cmd_recipe,
+        "tools": cmd_tools,
     }
     if args.command in commands:
         try:
             return commands[args.command](args, config, console)
-        except (InputError, CryptoError, RsaError, PcapError) as exc:
+        except (InputError, CryptoError, RsaError, PcapError, RecipeError, ValueError) as exc:
             print(f"{t('error_prefix')}: {exc}", file=sys.stderr)
             return 2
         except KeyboardInterrupt:

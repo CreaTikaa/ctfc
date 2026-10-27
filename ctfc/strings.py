@@ -105,10 +105,24 @@ EN: dict[str, str] = {
     ),
     "cmd_keys": "hunt candidate keys in a dump and test them against a ciphertext",
     "cmd_keys_ex": "example: ctfc keys memdump.raw --against ct.bin",
-    "cmd_recipe": "run a saved recipe (ordered operations)",
-    "cmd_recipe_ex": "example: ctfc recipe run layers.json input.bin",
-    "cmd_tools": "external tool suggestions for this input",
-    "cmd_tools_ex": "example: ctfc tools sample.bin",
+    "cmd_recipe": "run, save or show a recipe (an ordered list of operations)",
+    "cmd_recipe_ex": (
+        "examples: ctfc recipe run layers.json payload.bin  |  "
+        "ctfc recipe save found.json payload.bin  |  ctfc recipe show found.json"
+    ),
+    "arg_recipe_action": "run (apply it), save (what auto found), show (print the JSON)",
+    "arg_recipe": "the recipe file (JSON)",
+    "opt_recipe_cyberchef": "also print a CyberChef link for the recipe",
+    "recipe_nothing_to_save": "auto found no chain on this input: nothing to save.",
+    "cmd_tools": "suggest the external tools that fit this input, and run them",
+    "cmd_tools_ex": (
+        "examples: ctfc tools sample.bin  |  ctfc tools dump.bin --list  |  "
+        "ctfc tools secret.bin --run xortool"
+    ),
+    "opt_tools_list": "list every tool ctfc knows about and whether it is installed here",
+    "opt_tools_run": "run this tool (by id) on the input and show its output",
+    "opt_tools_wordlist": "wordlist path, for the tools that need one",
+    "tool_offline_refused": "{name} would send your data to a third party, and offline mode is on.",
     "cmd_pcap": "pull HTTP bodies, DNS exfiltration and TCP streams out of a capture",
     "cmd_pcap_ex": (
         "examples: ctfc pcap capture.pcap  |  ctfc pcap traffic.pcapng --extract ./objects  "

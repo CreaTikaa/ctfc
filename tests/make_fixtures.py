@@ -353,9 +353,7 @@ def write_rsa_fixtures() -> None:
     write("rsa_shared_a.pub.pem", RSA.construct((n_a, 65537)).export_key())
     write("rsa_shared_b.pub.pem", RSA.construct((n_b, 65537)).export_key())
     key_a = RSA.construct((n_a, 65537, inverse(65537, (shared - 1) * (other_a - 1))))
-    write(
-        "rsa_shared_a.bin", oaep(key_a.publickey()).encrypt(b"CYBN{fixture_rsa_shared}")
-    )
+    write("rsa_shared_a.bin", oaep(key_a.publickey()).encrypt(b"CYBN{fixture_rsa_shared}"))
 
     # 4. p and q next to each other: Fermat finds them in a few steps.
     base = getPrime(512, randfunc=RNG.randbytes)
@@ -364,9 +362,7 @@ def write_rsa_fixtures() -> None:
     n_close = p_close * q_close
     key_close = RSA.construct((n_close, 65537, inverse(65537, (p_close - 1) * (q_close - 1))))
     write("rsa_fermat.pub.pem", RSA.construct((n_close, 65537)).export_key())
-    write(
-        "rsa_fermat.bin", oaep(key_close.publickey()).encrypt(b"CYBN{fixture_rsa_fermat}")
-    )
+    write("rsa_fermat.bin", oaep(key_close.publickey()).encrypt(b"CYBN{fixture_rsa_fermat}"))
 
     # 5. A private exponent far too small: Wiener's attack.
     while True:

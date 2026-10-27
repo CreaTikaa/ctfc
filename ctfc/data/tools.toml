@@ -1,0 +1,205 @@
+# External tools ctfc can point you at, with the rule that makes each one relevant.
+#
+# ctfc reimplements the *ideas* it needs (XOR solving, file signatures, hash
+# identification) and calls the real tool when one is installed and better. It
+# never vendors xortool or Detect It Easy (CLAUDE.md section 4.8).
+#
+# Fields:
+#   id                short name
+#   name              what it is
+#   kind              "online" (sends data to a third party) | "local" (a program
+#                     on this machine) | "embedded" (vendored, served locally)
+#   command_template  for local tools: the command, as a list of arguments.
+#                     {input} is replaced by the file path, {keylen} etc. by the
+#                     values the firing rule provides. NEVER a shell string: ctfc
+#                     runs argument lists only (hard rule 4).
+#   url_template      for online tools: {recipe} and {input} are filled in
+#   suggest_when      rule ids from detect / lens; the tool is suggested when one
+#                     of them fired with enough confidence
+#   offline_safe      true when using it sends nothing anywhere
+#   install           how to get it, shown when it is missing
+#   notes             why it is the right tool here
+#
+# Suggestions are capped (config `max_suggestions`, default 3) and only appear
+# above `suggest_threshold` (default 0.7), so a confident guess shows one tool and
+# an unsure one shows nothing.
+
+[[tool]]
+id = "cyberchef_local"
+name = "CyberChef (embedded copy)"
+kind = "embedded"
+url_template = "{cyberchef_url}#recipe={recipe}&input={input}"
+suggest_when = ["base64.*", "hex.*", "charset.*", "xor.*", "aes.*", "magic.*", "jwt"]
+offline_safe = true
+install = "scripts/fetch_vendor.sh (downloads the official release into web/static/vendor/)"
+notes = "the same tool as the public instance, served from this machine: nothing leaves it"
+
+[[tool]]
+id = "cyberchef_public"
+name = "CyberChef (public instance)"
+kind = "online"
+url_template = "https://gchq.github.io/CyberChef/#recipe={recipe}&input={input}"
+suggest_when = ["base64.*", "hex.*", "xor.*", "aes.*", "jwt"]
+offline_safe = false
+install = ""
+notes = "the data travels in the URL fragment: fine for a CTF sample, never for real evidence"
+
+[[tool]]
+id = "dcode"
+name = "dcode.fr"
+kind = "online"
+url_template = "https://www.dcode.fr/en"
+suggest_when = ["classical.*", "base64.custom_alphabet", "charset.base32"]
+offline_safe = false
+install = ""
+notes = "good for classical ciphers and odd alphabets; the page is opened, the data is not sent for you"
+
+[[tool]]
+id = "xortool"
+name = "xortool"
+kind = "local"
+command_template = ["xortool", "-l", "{keylen}", "{input}"]
+suggest_when = ["xor.repeating"]
+offline_safe = true
+install = "pipx install xortool"
+notes = "a second opinion on the key length; ctfc's own XOR solver already tried"
+
+[[tool]]
+id = "xortool_auto"
+name = "xortool (guess the length)"
+kind = "local"
+command_template = ["xortool", "{input}"]
+suggest_when = ["xor.simple"]
+offline_safe = true
+install = "pipx install xortool"
+notes = "when the period is unclear, xortool ranks the candidate lengths differently"
+
+[[tool]]
+id = "diec"
+name = "Detect It Easy"
+kind = "local"
+command_template = ["diec", "{input}"]
+suggest_when = ["magic.exe", "magic.elf", "const.*", "entropy.high"]
+offline_safe = true
+install = "apt install detect-it-easy, or https://github.com/horsicq/Detect-It-Easy"
+notes = "identifies packers, compilers and crypto in executables far beyond our signature table"
+
+[[tool]]
+id = "binwalk"
+name = "binwalk"
+kind = "local"
+command_template = ["binwalk", "-e", "--run-as=root", "{input}"]
+suggest_when = ["polyglot.trailing", "embedded", "entropy.mixed"]
+offline_safe = true
+install = "apt install binwalk"
+notes = "carves embedded files out; then run `ctfc scan` on the extraction folder"
+
+[[tool]]
+id = "hashcat"
+name = "hashcat"
+kind = "local"
+command_template = ["hashcat", "-m", "{hashcat_mode}", "-a", "0", "{input}", "{wordlist}"]
+suggest_when = ["hash.*"]
+offline_safe = true
+install = "apt install hashcat"
+notes = "ctfc identifies the format and gives the mode; hashcat does the cracking"
+
+[[tool]]
+id = "john"
+name = "john the ripper"
+kind = "local"
+command_template = ["john", "--format={john_format}", "{input}"]
+suggest_when = ["hash.*"]
+offline_safe = true
+install = "apt install john"
+notes = "handles formats hashcat does not, and the *2john extractors come with it"
+
+[[tool]]
+id = "openssl"
+name = "openssl"
+kind = "local"
+command_template = ["openssl", "enc", "-d", "-aes-256-cbc", "-md", "md5", "-in", "{input}"]
+suggest_when = ["magic.enc", "openssl.salted_b64"]
+offline_safe = true
+install = "apt install openssl"
+notes = "the reference implementation; ctfc prints the exact command for the KDF that worked"
+
+[[tool]]
+id = "rsactftool"
+name = "RsaCtfTool"
+kind = "local"
+command_template = ["RsaCtfTool", "--publickey", "{input}", "--private"]
+suggest_when = ["pem"]
+offline_safe = true
+install = "pipx install git+https://github.com/RsaCtfTool/RsaCtfTool"
+notes = "more RSA attacks than ctfc has (lattices, factordb); try ctfc rsa --attack first, it is offline"
+
+[[tool]]
+id = "factordb"
+name = "factordb.com"
+kind = "online"
+url_template = "https://factordb.com/index.php?query={modulus}"
+suggest_when = ["pem"]
+offline_safe = false
+install = ""
+notes = "a lookup of already-factored moduli: CTF keys are often in there. Sends the modulus"
+
+[[tool]]
+id = "exiftool"
+name = "exiftool"
+kind = "local"
+command_template = ["exiftool", "{input}"]
+suggest_when = ["magic.jpg", "magic.png", "magic.gif", "magic.pdf", "magic.tiff"]
+offline_safe = true
+install = "apt install libimage-exiftool-perl"
+notes = "metadata: comments and GPS tags are a classic hiding place"
+
+[[tool]]
+id = "zsteg"
+name = "zsteg"
+kind = "local"
+command_template = ["zsteg", "-a", "{input}"]
+suggest_when = ["magic.png", "magic.bmp"]
+offline_safe = true
+install = "gem install zsteg"
+notes = "LSB steganography in PNG and BMP, which ctfc does not look at"
+
+[[tool]]
+id = "steghide"
+name = "steghide"
+kind = "local"
+command_template = ["steghide", "info", "{input}"]
+suggest_when = ["magic.jpg", "magic.bmp", "magic.wav"]
+offline_safe = true
+install = "apt install steghide"
+notes = "password-protected steganography; stegseek cracks the password fast"
+
+[[tool]]
+id = "stegseek"
+name = "stegseek"
+kind = "local"
+command_template = ["stegseek", "{input}", "{wordlist}"]
+suggest_when = ["magic.jpg", "magic.bmp", "magic.wav"]
+offline_safe = true
+install = "https://github.com/RickdeJager/stegseek/releases"
+notes = "brute-forces a steghide passphrase through a wordlist, very fast"
+
+[[tool]]
+id = "tshark"
+name = "tshark"
+kind = "local"
+command_template = ["tshark", "-r", "{input}", "-q", "-z", "conv,tcp"]
+suggest_when = ["magic.pcap", "magic.pcapng"]
+offline_safe = true
+install = "apt install tshark"
+notes = "ctfc pcap covers HTTP and DNS; tshark reads every other protocol"
+
+[[tool]]
+id = "foremost"
+name = "foremost"
+kind = "local"
+command_template = ["foremost", "-i", "{input}", "-o", "{output}"]
+suggest_when = ["polyglot.trailing", "embedded"]
+offline_safe = true
+install = "apt install foremost"
+notes = "another carver, with different signatures than binwalk; then `ctfc scan` the output"

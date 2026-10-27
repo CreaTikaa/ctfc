@@ -129,7 +129,17 @@ def _hex_arg(value: bytes) -> str:
 
 
 def cipher_cyberchef(params: dict) -> str | None:
-    """CyberChef recipe for one cipher step, or None when it cannot be expressed."""
+    """CyberChef recipe for one cipher step, or None when it cannot be expressed.
+
+    The argument lists below were read from the CyberChef source (v11.5.0), not
+    guessed. They differ between operations, and getting one wrong is worse than
+    emitting nothing: the recipe would run and give a wrong answer silently.
+
+        AES Decrypt:  Key, IV, IV Length, Mode, Input, Output, GCM Tag, AAD,
+                      IV from input                                  (9 arguments)
+        DES / Triple DES / Blowfish Decrypt: Key, IV, Mode, Input, Output  (5)
+        RC4:          Passphrase, Input format, Output format             (3)
+    """
     operation = CYBERCHEF_OPS.get(params["cipher"])
     mode = CYBERCHEF_MODES.get(params["mode"])
     if operation is None or params.get("iv_from") or params.get("header_skip"):
@@ -145,9 +155,20 @@ def cipher_cyberchef(params: dict) -> str | None:
     # CyberChef removes PKCS7 itself in CBC/ECB; "/NoPadding" keeps the raw bytes.
     if mode in ("CBC", "ECB") and params.get("unpad") != "pkcs7":
         mode += "/NoPadding"
-    arguments = [_hex_arg(key), _hex_arg(iv), f"'{mode}'", "'Raw'", "'Raw'"]
     if operation == "AES_Decrypt":
-        arguments.append(_hex_arg(bytes.fromhex(params.get("tag") or "")))
+        arguments = [
+            _hex_arg(key),
+            _hex_arg(iv),
+            str(len(iv) or 16),  # IV Length
+            f"'{mode}'",
+            "'Raw'",  # Input
+            "'Raw'",  # Output
+            _hex_arg(bytes.fromhex(params.get("tag") or "")),  # GCM Tag
+            _hex_arg(b""),  # Additional Authenticated Data
+            "'Off'",  # IV from input
+        ]
+    else:
+        arguments = [_hex_arg(key), _hex_arg(iv), f"'{mode}'", "'Raw'", "'Raw'"]
     return f"{operation}({','.join(arguments)})"
 
 

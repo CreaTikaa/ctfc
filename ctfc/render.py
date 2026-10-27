@@ -436,3 +436,113 @@ def print_pcap(
     if best.best is not None:
         console.print(f"[bold]best object:[/] {escape(best.extracted.name)}")
         print_candidate_details(console, best.best, show_code)
+
+
+def print_recipe(console: Console, result, show_code: bool = False) -> None:
+    """`ctfc recipe run`: every step with its own output, then the final result."""
+    for note in result.notes:
+        console.print(f"[cyan]*[/] {safe(note)}")
+
+    table = Table(title=f"recipe {result.name}", expand=True, show_lines=True)
+    table.add_column("#", justify="right", width=3)
+    table.add_column("step", ratio=2)
+    table.add_column("bytes", justify="right", width=7)
+    table.add_column("score", justify="right", width=6)
+    table.add_column("output", ratio=4)
+    for entry in result.steps:
+        if entry.error:
+            output = f"[red]{safe(entry.error, 90)}[/]"
+            score_cell = "-"
+        else:
+            output = preview(entry.data, 90)
+            score_cell = f"[{score_style(entry.score)}]{entry.score:.2f}[/]"
+        table.add_row(
+            str(entry.index),
+            safe(entry.label, 40),
+            str(len(entry.data)),
+            score_cell,
+            output,
+        )
+    console.print(table)
+
+    if result.ok:
+        text = result.output.decode("utf-8", errors="replace")
+        readable = sum(ch.isprintable() or ch in "\n\t" for ch in text) / max(len(text), 1)
+        body = safe_block(text) if readable >= 0.85 else escape(hexdump(result.output))
+        console.print(Panel(body, title="final output", expand=True))
+    if result.cyberchef:
+        console.print(f"[dim]CyberChef recipe:[/] {escape(result.cyberchef)}")
+    if show_code and result.python:
+        console.print(Syntax(result.python, "python", theme="monokai", word_wrap=True))
+    elif result.python:
+        console.print("[dim]Add --show-code to print the Python script.[/]")
+
+
+def print_tools(console: Console, suggestions, public_url: str = "", offline: bool = False) -> None:
+    """`ctfc tools`: at most three tools, each with the reason and the command."""
+    if not suggestions:
+        console.print(
+            "[yellow]No tool suggested.[/] Nothing fired confidently enough "
+            "(see suggest_threshold in the config). `ctfc tools <input> --list` "
+            "shows everything ctfc knows about."
+        )
+        return
+    for item in suggestions:
+        state = "[green]installed[/]" if item.available else "[yellow]not installed[/]"
+        if item.tool.kind != "local":
+            state = "[cyan]online[/]" if not item.tool.offline_safe else "[green]local copy[/]"
+        lines = [f"[bold]{safe(item.tool.name)}[/] ({item.tool.kind}, {state})", ""]
+        lines.append(f"  why: {safe(item.reason)}")
+        if item.tool.notes:
+            lines.append(f"  {safe(item.tool.notes)}")
+        if item.command:
+            lines.append("")
+            lines.append("  " + escape(" ".join(item.command)))
+        if item.url:
+            lines.append("")
+            lines.append("  " + escape(item.url[:300]))
+        if item.placeholders:
+            lines.append(f"  [dim]fill in: {escape(', '.join(item.placeholders))}[/]")
+        if not item.available and item.tool.install:
+            lines.append(f"  [dim]install: {safe(item.tool.install)}[/]")
+        if item.warning:
+            lines.append(f"  [yellow]warning: {safe(item.warning)}[/]")
+        console.print(Panel("\n".join(lines), expand=True))
+    if offline:
+        console.print("[dim]offline mode: tools that would send data anywhere are hidden.[/]")
+
+
+def print_tool_list(console: Console, entries) -> None:
+    """`ctfc tools <input> --list`: the whole registry and what is installed."""
+    table = Table(title="external tools ctfc knows about", expand=True)
+    table.add_column("id", width=17)
+    table.add_column("kind", width=9)
+    table.add_column("here?", width=8)
+    table.add_column("fires on", ratio=2)
+    table.add_column("notes", ratio=3)
+    for tool, available in entries:
+        if tool.kind == "local":
+            here = "[green]yes[/]" if available else "[yellow]no[/]"
+        else:
+            here = "[cyan]n/a[/]"
+        table.add_row(
+            tool.id,
+            tool.kind,
+            here,
+            safe(", ".join(tool.suggest_when), 40),
+            safe(tool.notes, 80),
+        )
+    console.print(table)
+
+
+def print_tool_run(console: Console, tool, result) -> None:
+    """`ctfc tools <input> --run <id>`: the command, then its output."""
+    console.print(f"[bold]{safe(tool.name)}[/]: {escape(' '.join(result.command))}")
+    if result.error:
+        console.print(f"[red]{safe(result.error)}[/]")
+        return
+    console.print(f"[dim]exit code {result.returncode}[/]")
+    if result.stdout:
+        console.print(Panel(safe_block(result.stdout, 8000), title="stdout", expand=True))
+    if result.stderr:
+        console.print(Panel(safe_block(result.stderr, 2000), title="stderr", expand=True))
