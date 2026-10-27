@@ -3,14 +3,16 @@
 `score(data)` returns a number between 0 and 1 **and** the reasons behind it.
 It is fully deterministic. The rules, strongest first:
 
-1. A flag (see flags.py)                          -> 0.90 .. 0.97
+1. A flag (see flags.py)                          -> up to 0.97, minus up to 0.15 if
+                                                     the text around it is unreadable
 2. Magic bytes of a known file type at offset 0   -> 0.85
 3. Valid PKCS7 padding (only when asked: after a block-cipher decryption) -> +0.15
 4. Natural-language text:
        printable ratio  (how much of it is readable characters)
        word hit rate    (how many letters belong to common EN/FR words)
        letter frequency (chi-squared distance to English / French letter frequencies)
-   text_score = printable^2 * (0.35 + 0.40 * words + 0.25 * frequency)
+   text_score = printable^6 * (0.35 + 0.40 * words + 0.25 * frequency)
+   (^6: real text is ~100% printable; 94% printable is already suspicious)
 
 So: flag > file with magic bytes > English/French sentence > base64/hex text > random bytes.
 The details are explained in docs/how-it-works.md.
@@ -125,6 +127,14 @@ def text_stats(data: bytes) -> TextStats:
     )
 
 
+def _text_score(stats: TextStats) -> float:
+    """Natural-text score from the measurements (formula in the module docstring)."""
+    frequency_score = 0.5  # neutral when there are too few letters to judge
+    if stats.chi2 is not None:
+        frequency_score = 1 / (1 + stats.chi2 / 60)
+    return stats.printable**6 * (0.35 + 0.40 * stats.word_rate + 0.25 * frequency_score)
+
+
 def has_valid_pkcs7(data: bytes, block_size: int = 16) -> bool:
     """PKCS7 padding: the last byte N (1..block) is repeated N times at the end."""
     if not data or len(data) % block_size:
@@ -145,15 +155,17 @@ def score(
 
     reasons: list[str] = []
     best = 0.0
+    flag_strength = 0.0
 
-    for hit in find_flags(data, flagset)[:3]:
+    hits = find_flags(data, flagset)
+    for hit in hits[:3]:
         if hit.how == "plain":
             reasons.append(f"matches flag pattern: {hit.text[:80]}")
         elif hit.how == "base64":
             reasons.append(f"contains a base64-encoded flag: {hit.text[:80]}")
         else:
             reasons.append(hit.text)
-        best = max(best, hit.strength)
+        flag_strength = max(flag_strength, hit.strength)
 
     signature = match_signature(data)
     if signature is not None:
@@ -161,10 +173,7 @@ def score(
         best = max(best, 0.6 if signature.weak else 0.85)
 
     stats = text_stats(data)
-    frequency_score = 0.5  # neutral when there are too few letters to judge
-    if stats.chi2 is not None:
-        frequency_score = 1 / (1 + stats.chi2 / 60)
-    text_score = stats.printable**2 * (0.35 + 0.40 * stats.word_rate + 0.25 * frequency_score)
+    text_score = _text_score(stats)
 
     if stats.printable >= 0.95:
         reasons.append(f"{stats.printable:.0%} printable" + (" UTF-8" if stats.utf8 else ""))
@@ -177,6 +186,16 @@ def score(
     if stats.length >= 64 and stats.entropy > 7.5:
         reasons.append(f"high entropy {stats.entropy:.2f} bits/byte (encrypted or compressed?)")
     best = max(best, text_score)
+    if flag_strength:
+        # A flag inside unreadable text is suspicious (e.g. a half-correct XOR key):
+        # the flag score loses up to 0.15 depending on how readable the rest is.
+        rest = data
+        for hit in hits:
+            rest = rest.replace(hit.text.encode("utf-8", errors="replace"), b"")
+        penalty = 0.0
+        if len(rest.strip()) >= 8:
+            penalty = 0.15 * (1 - _text_score(text_stats(rest)))
+        best = max(best, flag_strength - penalty)
 
     if check_padding and has_valid_pkcs7(data, block_size):
         pad = data[-1]

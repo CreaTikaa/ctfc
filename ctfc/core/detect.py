@@ -33,6 +33,7 @@ from ctfc.core.magic import (
     match_signature,
 )
 from ctfc.core.scoring import printable_ratio, shannon_entropy
+from ctfc.core.xor import coincidence_rates, period_ratios
 
 WINDOW = 256  # bytes per entropy window
 STANDARD_B64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
@@ -458,7 +459,7 @@ def _check_entropy(data: bytes, prefix: str) -> list[Guess]:
                     f"{prefix}entropy only {entropy:.2f} bits/byte, {printable:.0%} printable",
                     "real encryption would look random (close to 8 bits/byte)",
                 ],
-                next_step="ctfc xor <input> (M2) / xortool <file>",
+                next_step="ctfc xor <input> / xortool <file>",
             )
         )
     windows = entropy_windows(data)
@@ -556,42 +557,30 @@ def _check_lengths(data: bytes, prefix: str) -> list[Guess]:
 def _check_xor_period(data: bytes, prefix: str) -> list[Guess]:
     """Repeating-key XOR leaves a period: bytes k apart (k = key length) match more often.
 
-    For each shift k we count how often data[i] == data[i + k]. With a repeating key,
-    shifts that are multiples of the key length give the same rate as the plaintext
-    language (about 6% for English), other shifts give far less.
+    The maths live in xor.py (coincidence_rates / period_ratios); docs/how-it-works.md
+    explains them. Here we only decide if the signal is strong enough to report.
     """
     data = data[:4096]  # enough to see the period, and keeps the check fast
     length = len(data)
     if length < 64:
         return []
-    max_shift = min(40, length // 4)
-    rates = {}
-    for shift in range(1, max_shift + 1):
-        same = sum(1 for i in range(length - shift) if data[i] == data[i + shift])
-        rates[shift] = same / (length - shift)
-    # A key length p makes *every* multiple of p match often, and the other shifts
-    # rarely. For each candidate p: ratio = mean(rates at multiples) / mean(others).
-    best_period, best_ratio, best_mean, other_mean = 0, 0.0, 0.0, 0.0
-    ratios: dict[int, float] = {}
-    for candidate in range(2, max_shift // 2 + 1):
-        multiples = [rates[k] for k in rates if k % candidate == 0]
-        others = [rates[k] for k in rates if k % candidate != 0]
-        mean_multiples = sum(multiples) / len(multiples)
-        mean_others = sum(others) / len(others)
-        ratio = mean_multiples / max(mean_others, 0.002)
-        ratios[candidate] = ratio
+    rates = coincidence_rates(data, min(40, length // 4))
+    ratios = period_ratios(rates)
+    period, best_ratio = 0, 0.0
+    for candidate, (ratio, _mean, _other) in ratios.items():
         if ratio > best_ratio * 1.1:  # a longer period must be clearly better
-            best_period, best_ratio = candidate, ratio
-            best_mean, other_mean = mean_multiples, mean_others
-    period = best_period
+            period, best_ratio = candidate, ratio
+    if not period:
+        return []
+    _ratio, best_mean, other_mean = ratios[period]
     if best_ratio < 2.5 or best_mean < 0.03:
         return []
     if rates[period] * (length - period) < 8:
         return []  # fewer than 8 matching pairs: not enough evidence
     # Keys with a repeated character (e.g. "s3cr3t") create shorter pseudo-periods,
     # so the next best lengths are worth trying too.
-    ranked = sorted(ratios, key=lambda p: ratios[p], reverse=True)
-    others = ", ".join([str(p) for p in ranked if p != period and ratios[p] >= 2.5][:3])
+    ranked = sorted(ratios, key=lambda p: ratios[p][0], reverse=True)
+    others = ", ".join([str(p) for p in ranked if p != period and ratios[p][0] >= 2.5][:3])
     return [
         Guess(
             rule="xor.repeating",
@@ -602,6 +591,6 @@ def _check_xor_period(data: bytes, prefix: str) -> list[Guess]:
                 f"of the time, other distances only {other_mean:.1%}"
             ]
             + ([f"other plausible key lengths: {others}"] if others else []),
-            next_step=f"ctfc xor <input> --keylen {period} (M2) / xortool -l {period} <file>",
+            next_step=f"ctfc xor <input> --keylen {period} / xortool -l {period} <file>",
         )
     ]

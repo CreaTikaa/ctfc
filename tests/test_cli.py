@@ -64,3 +64,22 @@ def test_bad_input_is_a_clear_error():
     result = run_ctfc("detect", "hex:zz")
     assert result.returncode == 2
     assert "invalid hex" in result.stderr.decode()
+
+
+def test_xor_command():
+    import json
+
+    result = run_ctfc("xor", "tests/fixtures/xor_repeating.bin", "--json")
+    assert result.returncode == 0, result.stderr.decode()
+    payload = json.loads(result.stdout)
+    assert payload["key_lengths"][0]["length"] == 6
+    assert "CYBN{fixture_xor_repeating}" in payload["candidates"][0]["data_text"]
+
+
+def test_xor_with_key_and_crib_options():
+    import json
+
+    result = run_ctfc("xor", "tests/fixtures/xor_short_crib.bin", "--crib", "CYBN{", "--json")
+    assert "CYBN{crib_dragging_works}" in json.loads(result.stdout)["candidates"][0]["data_text"]
+    result = run_ctfc("xor", "tests/fixtures/xor_repeating.bin", "--key", "text:x0rK3y", "--json")
+    assert "CYBN{fixture_xor_repeating}" in json.loads(result.stdout)["candidates"][0]["data_text"]

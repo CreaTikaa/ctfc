@@ -48,7 +48,7 @@
         <button class="tab active" data-tab="auto" data-t="web_tab_auto">Auto</button>
         <button class="tab" data-tab="detect" data-t="web_tab_detect">Detect</button>
         <button class="tab" data-tab="pipeline" data-milestone="M6" data-t="web_tab_pipeline">Pipeline</button>
-        <button class="tab" data-tab="xor" data-milestone="M2" data-t="web_tab_xor">XOR</button>
+        <button class="tab" data-tab="xor" data-t="web_tab_xor">XOR</button>
         <button class="tab" data-tab="sym" data-milestone="M3" data-t="web_tab_sym">Symmetric</button>
         <button class="tab" data-tab="rsa" data-milestone="M5" data-t="web_tab_rsa">RSA</button>
         <button class="tab" data-tab="lens" data-milestone="M4" data-t="web_tab_lens">Code Lens</button>
@@ -56,11 +56,24 @@
         <button class="tab" data-tab="keys" data-milestone="M7" data-t="web_tab_keys">Keys</button>
         <button class="tab" data-tab="cheatsheet" data-milestone="M8" data-t="web_tab_cheatsheet">Cheatsheet</button>
       </nav>
+      <!-- Options of the XOR tab (shown only when that tab is active) -->
+      <div id="options-xor" class="options hidden">
+        <label><span data-t="web_xor_key">key</span>
+          <input id="xor-key" type="text" spellcheck="false" data-t-placeholder="web_xor_key_ph"></label>
+        <label><span data-t="web_xor_keylen">key length</span>
+          <input id="xor-keylen" type="number" min="1" max="256" data-t-placeholder="web_xor_keylen_ph"></label>
+        <label><span data-t="web_xor_crib">crib</span>
+          <input id="xor-crib" type="text" spellcheck="false" data-t-placeholder="web_xor_crib_ph"></label>
+        <label class="wide"><span data-t="web_xor_other">second input</span>
+          <textarea id="xor-other" spellcheck="false" data-t-placeholder="web_xor_other_ph"></textarea></label>
+      </div>
       <div class="toolbar">
         <button id="run" class="primary" data-t="web_run">Run</button>
+        <button id="cancel" class="hidden" data-t="web_cancel">Cancel</button>
         <span class="dim" data-t="web_shortcut">Ctrl+Enter = run</span>
         <span id="tab-help" class="dim"></span>
       </div>
+      <div id="progress" class="hidden"><div id="progress-bar"></div></div>
       <div id="status" class="dim"></div>
       <div id="results"></div>
     </section>

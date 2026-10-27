@@ -20,11 +20,11 @@ from ctfc.core.detect import detect
 from ctfc.core.flags import FlagSet, build_flagset
 from ctfc.core.inputs import InputError, parse_input
 from ctfc.core.types import Input
+from ctfc.core.xor import guess_key_lengths, solve_xor, xor_inputs
 from ctfc.strings import t
 
 # Commands that exist in the interface but are built in a later milestone.
 PLANNED = {
-    "xor": "M2",
     "sym": "M3",
     "blob": "M3",
     "lens": "M4",
@@ -69,9 +69,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = add("xor")
     p.add_argument("input", help=t("arg_input"))
-    p.add_argument("--key", help="key as hex:..., text:... or a file")
-    p.add_argument("--keylen", type=int, help="force this key length")
-    p.add_argument("--crib", help="known plaintext, e.g. 'CYBN{'")
+    p.add_argument("--key", help=t("opt_xor_key"))
+    p.add_argument("--keylen", type=int, help=t("opt_xor_keylen"))
+    p.add_argument("--crib", help=t("opt_xor_crib"))
+    p.add_argument("--with", dest="other", help=t("opt_xor_with"))
 
     p = add("sym")
     p.add_argument("input", help=t("arg_input"))
@@ -160,6 +161,49 @@ def cmd_auto(args: argparse.Namespace, config: Config, console: Console) -> int:
     return 0 if candidates else 1
 
 
+def cmd_xor(args: argparse.Namespace, config: Config, console: Console) -> int:
+    """XOR solver: given key, single byte, repeating key, known plaintext, two inputs."""
+    inp = parse_input(args.input)
+    flagset = flagset_from(config)
+    crib = parse_input(args.crib, decode_bare=False).data if args.crib else None
+    budget = Budget(max_attempts=2000, max_seconds=60)
+    lengths = []
+
+    if args.other:
+        other = parse_input(args.other).data
+        candidates = xor_inputs(inp.data, other, flagset, crib, top_n=config.top_n)
+    else:
+        key = parse_input(args.key).data if args.key else None
+        cribs = [prefix.encode() for prefix in config.flag_prefixes]
+        if crib:
+            cribs.insert(0, crib)
+        if not key and not args.keylen:
+            lengths = guess_key_lengths(inp.data)[:5]
+        candidates = solve_xor(
+            inp.data,
+            flagset,
+            key=key,
+            keylen=args.keylen,
+            cribs=cribs,
+            budget=budget,
+            top_n=config.top_n,
+        )
+
+    if args.json:
+        payload = {
+            "input": input_to_dict(inp),
+            "key_lengths": [vars(guess) for guess in lengths],
+            "candidates": [candidate.to_dict() for candidate in candidates],
+        }
+        print(json.dumps(payload, indent=2))
+        return 0
+    render.print_input_notes(console, inp)
+    if lengths:
+        render.print_key_lengths(console, lengths)
+    render.print_candidates(console, candidates, show_code=args.show_code, title="xor")
+    return 0 if candidates else 1
+
+
 def cmd_serve(args: argparse.Namespace, config: Config) -> int:
     """Start the Flask web UI (bound to 127.0.0.1 unless --host says otherwise)."""
     from ctfc.web.app import create_app  # imported here so the CLI starts fast
@@ -197,13 +241,16 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_serve(args, config)
 
     console = Console(highlight=False)
-    commands = {"detect": cmd_detect, "auto": cmd_auto}
+    commands = {"detect": cmd_detect, "auto": cmd_auto, "xor": cmd_xor}
     if args.command in commands:
         try:
             return commands[args.command](args, config, console)
         except InputError as exc:
             print(f"{t('error_prefix')}: {exc}", file=sys.stderr)
             return 2
+        except KeyboardInterrupt:
+            print(t("interrupted"), file=sys.stderr)
+            return 130
 
     milestone = PLANNED.get(args.command, "?")
     print(t("not_yet", command=args.command, milestone=milestone), file=sys.stderr)

@@ -13,7 +13,12 @@ const state = {
   strings: {},      // UI labels from /api/strings
   tab: "auto",      // active tab
   file: null,       // {name, b64, size} when a file was dropped
+  job: null,        // id of the background job currently running
 };
+
+// Tabs that are built, and how they run: "sync" waits for the answer,
+// "job" runs in the background with progress and a Cancel button.
+const TOOLS = { auto: "job", detect: "sync", xor: "job" };
 
 const $ = (id) => document.getElementById(id);
 
@@ -79,6 +84,17 @@ function currentPayload() {
   return { input: $("input-text").value, format: $("format").value };
 }
 
+// Options of the active tab (only XOR has some for now).
+function currentOptions() {
+  if (state.tab !== "xor") return {};
+  return {
+    key: $("xor-key").value,
+    keylen: $("xor-keylen").value,
+    crib: $("xor-crib").value,
+    other: $("xor-other").value,
+  };
+}
+
 async function post(path, payload) {
   const response = await fetch(path, {
     method: "POST",
@@ -123,30 +139,66 @@ function schedulePreview() {
 
 // ---------------------------------------------------------------- run
 async function run() {
-  if (!["auto", "detect"].includes(state.tab)) return;
+  if (!TOOLS[state.tab] || state.job) return;
   const payload = currentPayload();
   if (!payload.data_b64 && !payload.input) {
     setStatus(T("web_empty_input"), true);
     return;
   }
+  payload.options = currentOptions();
+  const tab = state.tab;
   $("run").disabled = true;
   setStatus(T("web_running"));
   $("results").replaceChildren();
   try {
-    const answer = await post("/api/" + state.tab, payload);
-    showInput(answer.input);
-    if (state.tab === "auto") {
-      renderCandidates(answer.candidates);
-      setStatus(answer.budget);
-    } else {
-      renderDetect(answer.report);
-      setStatus("");
-    }
+    const answer = TOOLS[tab] === "job" ? await runJob(tab, payload) : await post("/api/" + tab, payload);
+    if (answer) showAnswer(tab, answer);
   } catch (error) {
     setStatus(error.message, true);
   } finally {
     $("run").disabled = false;
+    $("cancel").classList.add("hidden");
+    $("progress").classList.add("hidden");
+    state.job = null;
   }
+}
+
+// Start a background job, then poll it until it is finished (or cancelled).
+async function runJob(kind, payload) {
+  const { job } = await post("/api/jobs/" + kind, payload);
+  state.job = job;
+  $("cancel").classList.remove("hidden");
+  $("progress").classList.remove("hidden");
+  while (true) {
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    const response = await fetch("/api/jobs/" + job);
+    const status = await response.json();
+    if (!response.ok) throw new Error(status.error || "job lost");
+    $("progress-bar").style.width = Math.round(status.progress * 100) + "%";
+    setStatus(T("web_running") + " " + status.attempts + " " + T("web_attempts"));
+    if (status.state === "error") throw new Error(status.error);
+    if (status.state === "done") return status.result;
+    if (status.state === "cancelled") {
+      status.result.cancelled = true;
+      return status.result;
+    }
+  }
+}
+
+async function cancelJob() {
+  if (state.job) await fetch("/api/jobs/" + state.job + "/cancel", { method: "POST" });
+}
+
+function showAnswer(tab, answer) {
+  showInput(answer.input);
+  if (tab === "detect") {
+    renderDetect(answer.report);
+    setStatus("");
+    return;
+  }
+  if (answer.key_lengths && answer.key_lengths.length) renderKeyLengths(answer.key_lengths);
+  renderCandidates(answer.candidates);
+  setStatus(answer.cancelled ? T("web_cancelled") + " " + answer.budget : answer.budget);
 }
 
 // ---------------------------------------------------------------- rendering
@@ -243,6 +295,26 @@ function useAsInput(candidate, readable) {
   $("input-text").focus();
 }
 
+// Small table: which XOR key lengths look likely, and why.
+function renderKeyLengths(lengths) {
+  const results = $("results");
+  results.append(el("h3", "", T("web_key_lengths")));
+  const table = el("table", "facts");
+  const head = el("tr");
+  head.append(el("td", "", "length"), el("td", "", "Hamming"), el("td", "", "ratio"));
+  table.append(head);
+  for (const guess of lengths) {
+    const row = el("tr");
+    row.append(
+      el("td", "", String(guess.length)),
+      el("td", "", guess.hamming.toFixed(2)),
+      el("td", "", guess.ratio.toFixed(1)),
+    );
+    table.append(row);
+  }
+  results.append(table);
+}
+
 function renderDetect(report) {
   const results = $("results");
 
@@ -333,6 +405,7 @@ function selectTab(button) {
   if (button.dataset.milestone) return;
   state.tab = button.dataset.tab;
   for (const tab of document.querySelectorAll(".tab")) tab.classList.toggle("active", tab === button);
+  $("options-xor").classList.toggle("hidden", state.tab !== "xor");
   $("tab-help").textContent = T("web_" + state.tab + "_help");
   $("results").replaceChildren();
   setStatus("");
@@ -366,6 +439,7 @@ async function init() {
   });
 
   $("run").addEventListener("click", run);
+  $("cancel").addEventListener("click", cancelJob);
   $("input-text").addEventListener("input", schedulePreview);
   $("format").addEventListener("change", schedulePreview);
   document.addEventListener("keydown", (event) => {

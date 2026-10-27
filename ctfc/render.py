@@ -113,6 +113,21 @@ def print_candidate_details(console: Console, candidate: Candidate, show_code: b
         console.print("[dim]Add --show-code to print the Python script that reproduces it.[/]")
 
 
+def print_key_lengths(console: Console, lengths: list) -> None:
+    """Table of the most likely repeating-key lengths (from xor.guess_key_lengths)."""
+    table = Table(title="likely key lengths", expand=False)
+    table.add_column("length", justify="right")
+    table.add_column("Hamming bits/byte", justify="right")
+    table.add_column("coincidence ratio", justify="right")
+    for guess in lengths:
+        table.add_row(str(guess.length), f"{guess.hamming:.2f}", f"{guess.ratio:.1f}")
+    console.print(table)
+    console.print(
+        "[dim]Hamming: lower is better (random ~ 4.0). Coincidence ratio: higher is "
+        "better (1 = no signal).[/]"
+    )
+
+
 def print_detect(console: Console, report: DetectReport) -> None:
     facts = Table(title="Facts", show_header=False, expand=False)
     facts.add_column("name", style="cyan")

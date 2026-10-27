@@ -5,7 +5,7 @@ without touching the rest of the code.
 
 Usage:
     from ctfc.strings import t
-    print(t("not_yet", command="xor", milestone="M2"))
+    print(t("not_yet", command="sym", milestone="M3"))
 """
 
 from __future__ import annotations
@@ -35,8 +35,16 @@ EN: dict[str, str] = {
     "cmd_detect_ex": "example: ctfc detect b64:U2FsdGVkX1+...  |  ctfc detect dump.bin",
     "cmd_auto": "'magic' mode: try decoding chains until the output looks meaningful",
     "cmd_auto_ex": "example: ctfc auto 'eJzLSM3JyVcozy/KSQEAGgQEXQ=='",
-    "cmd_xor": "XOR solver: single byte, repeating key, crib dragging",
-    "cmd_xor_ex": "example: ctfc xor secret.bin --keylen 8 --crib 'CYBN{'",
+    "cmd_xor": "XOR solver: single byte, repeating key, known plaintext, crib dragging",
+    "cmd_xor_ex": (
+        "example: ctfc xor secret.bin  |  ctfc xor secret.bin --keylen 8 --crib 'CYBN{'  |  "
+        "ctfc xor secret.bin --key text:s3cr3t  |  ctfc xor c1.bin --with c2.bin --crib 'the '"
+    ),
+    "opt_xor_key": "decrypt with this key (hex:..., text:..., b64:... or a key file)",
+    "opt_xor_keylen": "only try this key length (1 = single byte)",
+    "opt_xor_crib": "known plaintext somewhere in the data, e.g. 'CYBN{' or hex:89504e47",
+    "opt_xor_with": "XOR with a second input (two messages encrypted with the same key)",
+    "interrupted": "interrupted (Ctrl+C)",
     "cmd_sym": "symmetric ciphers (AES, DES, ...) with the unknown-layout solver",
     "cmd_sym_ex": "example: ctfc sym ct.bin --cipher aes --mode cbc --blob hex:00112233...",
     "cmd_blob": "unknown key/iv blob: test the usual splits against a ciphertext",
@@ -92,6 +100,21 @@ EN: dict[str, str] = {
     "web_tab_cheatsheet": "Cheatsheet",
     "web_auto_help": "Tries decoding chains (base64, hex, zlib, rot13, ...) and ranks the outputs.",
     "web_detect_help": "Fingerprints the input: entropy, charset, magic bytes, lengths, constants.",
+    "web_xor_help": "Single byte, repeating key (length found automatically), file headers, "
+    "crib dragging. Every field is optional.",
+    "web_xor_key": "key (decrypt with it)",
+    "web_xor_key_ph": "text:s3cr3t, hex:41424344, b64:...",
+    "web_xor_keylen": "key length",
+    "web_xor_keylen_ph": "auto",
+    "web_xor_crib": "crib (known plaintext)",
+    "web_xor_crib_ph": "CYBN{  or  hex:89504e47",
+    "web_xor_other": "second input: XOR the two (same key stream used twice)",
+    "web_xor_other_ph": "hex / base64 / text of the other ciphertext",
+    "web_key_lengths": "Likely key lengths (Hamming: lower is better, random ~ 4.0; "
+    "coincidence ratio: higher is better)",
+    "web_cancel": "Cancel",
+    "web_cancelled": "Cancelled: partial results below.",
+    "web_attempts": "attempts",
     "web_no_result": "No convincing result. Try the Detect tab for hints.",
     "web_no_guess": "No specific guess. Try the Auto tab.",
     "web_facts": "Facts",

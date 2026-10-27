@@ -114,6 +114,27 @@ pre {
 
 .toolbar { display: flex; gap: 0.8rem; align-items: center; margin: 0.6rem 0; }
 #status { min-height: 1.2rem; font-size: 0.85rem; }
+
+.options {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.5rem 0.8rem;
+  margin-top: 0.6rem;
+}
+.options label { display: flex; flex-direction: column; gap: 0.15rem; font-size: 0.85rem; color: var(--dim); }
+.options label.wide { grid-column: 1 / -1; }
+.options input, .options textarea {
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0.3rem 0.4rem;
+  font: 13px var(--mono);
+}
+.options textarea { height: 3.2rem; resize: vertical; }
+
+#progress { height: 4px; background: var(--panel-2); border-radius: 2px; overflow: hidden; }
+#progress-bar { height: 100%; width: 0; background: var(--accent); transition: width 0.2s; }
 #status.error { color: var(--error); }
 
 /* Result cards */

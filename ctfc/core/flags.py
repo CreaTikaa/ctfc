@@ -18,9 +18,15 @@ from functools import lru_cache
 
 from ctfc.config import DEFAULT_FLAG_PREFIXES, DEFAULT_FLAG_REGEXES
 
-# The first default regex is the generic "XXX{...}" shape: it can match ordinary
-# code like "else{ return x; }", so it is trusted a bit less than specific formats.
+# The first default regex is the generic "XXX{...}" shape. It also matches code like
+# "else{ return x; }" and random bytes like "a3g{v3gvr~}", so it is trusted less:
+# 0.9 when the prefix looks like a CTF name (BZHCTF, FCSC, flag...), else 0.45.
 GENERIC_STRENGTH = 0.9
+WEAK_GENERIC_STRENGTH = 0.45
+GARBLED_STRENGTH = 0.6
+# Characters seen inside real flags. Anything else ( ) ~ | ` ^ \ { suggests garbage.
+FLAG_CHARS = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-!?@.'$#&+:=,% ")
+CTF_PREFIX_RE = re.compile(r"^(?:[A-Z][A-Z0-9_]{1,14}|.*(?:flag|ctf|FLAG|CTF|Flag|Ctf).*)$")
 SPECIFIC_STRENGTH = 0.97
 BASE64_STRENGTH = 0.9
 
@@ -44,6 +50,41 @@ class FlagSet:
 
     regexes: list[tuple[re.Pattern[str], float]] = field(default_factory=list)
     b64_prefixes: list[tuple[re.Pattern[str], str]] = field(default_factory=list)
+
+
+def looks_like_flag(text: str) -> bool:
+    """Sanity check for the generic XXX{...} pattern, which also matches random bytes.
+
+    A real flag is printable ASCII and mostly letters, digits and underscores.
+    """
+    if not text.isascii() or not text.isprintable():
+        return False
+    inside = text[text.index("{") + 1 : -1]
+    if len(inside) > 120 or any(ch not in FLAG_CHARS for ch in inside):
+        return False
+    wordy = sum(ch.isalnum() or ch == "_" for ch in inside)
+    return wordy >= 0.75 * len(inside)
+
+
+def plain_hits(text: str, flagset: FlagSet) -> list[tuple[str, float, str]]:
+    """(flag, strength, pattern) for every regex match in clear text."""
+    hits = []
+    for regex, pattern_strength in flagset.regexes:
+        for match in regex.finditer(text):
+            flag = match.group(0)
+            strength = pattern_strength
+            if pattern_strength == GENERIC_STRENGTH:
+                if not looks_like_flag(flag):
+                    continue
+                if not CTF_PREFIX_RE.match(flag[: flag.index("{")]):
+                    strength = WEAK_GENERIC_STRENGTH
+            elif "{" in flag and not looks_like_flag(flag):
+                # Right prefix but garbled content (e.g. a half-correct XOR key).
+                strength = GARBLED_STRENGTH
+            elif len(flag) - flag.index("{") - 2 < 3:
+                strength = min(strength, 0.85)  # very short content: could be chance
+            hits.append((flag, strength, regex.pattern))
+    return hits
 
 
 def base64_forms(prefix: bytes) -> list[str]:
@@ -96,9 +137,8 @@ def find_flags(data: bytes, flagset: FlagSet | None = None) -> list[FlagHit]:
         if old is None or hit.strength > old.strength:
             hits[hit.text] = hit
 
-    for regex, strength in flagset.regexes:
-        for match in regex.finditer(text):
-            keep(FlagHit(match.group(0), "plain", strength, regex.pattern))
+    for flag, strength, pattern in plain_hits(text, flagset):
+        keep(FlagHit(flag, "plain", strength, pattern))
 
     for regex, prefix in flagset.b64_prefixes:
         if not regex.search(text):
@@ -128,8 +168,7 @@ def _flags_in_base64_run(run: str, flagset: FlagSet) -> list[str]:
             decoded = base64.b64decode(chunk).decode("utf-8", errors="replace")
         except (binascii.Error, ValueError):
             continue
-        for regex, _strength in flagset.regexes:
-            for match in regex.finditer(decoded):
-                if match.group(0) not in found:
-                    found.append(match.group(0))
+        for flag, strength, _pattern in plain_hits(decoded, flagset):
+            if strength > WEAK_GENERIC_STRENGTH and flag not in found:
+                found.append(flag)
     return found

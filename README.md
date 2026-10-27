@@ -23,6 +23,7 @@ Or without installing: `python -m ctfc ...` from this folder.
 ctfc --help              # list commands (each has an example in its --help)
 ctfc detect <input>      # fingerprint + ranked guesses
 ctfc auto <input>        # try decoding chains until something readable appears
+ctfc xor <input>         # XOR: single byte, repeating key, known plaintext, two inputs
 ctfc serve               # web UI on http://127.0.0.1:8137
 ```
 
@@ -36,6 +37,11 @@ ctfc auto tests/fixtures/powershell_encoded.txt                # PowerShell -enc
 ctfc detect tests/fixtures/png_with_zip.png                    # ZIP hidden after a PNG
 ctfc detect tests/fixtures/xor_repeating.bin                   # XOR key length 6
 ctfc detect tests/fixtures/openssl_salted_md5.b64 --json       # openssl enc, as JSON
+ctfc xor tests/fixtures/xor_two_layers.bin                     # key 'secret' + byte 0x42
+ctfc xor tests/fixtures/xor_png.bin                            # PNG header as known plaintext
+ctfc xor tests/fixtures/xor_short_crib.bin --crib 'CYBN{'      # crib dragging
+ctfc xor tests/fixtures/two_time_pad_1.bin --with tests/fixtures/two_time_pad_2.bin --crib ' the '
+ctfc auto tests/fixtures/powershell_xor.b64                    # base64 -> XOR -> PowerShell
 ```
 
 How it works, in plain language: [docs/how-it-works.md](docs/how-it-works.md).

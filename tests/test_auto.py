@@ -13,7 +13,7 @@ CASES = [
     ("layers_b64_zlib_hex.txt", "base64 -> zlib -> hex", b"CYBN{fixture_layers_b64_zlib_hex}"),
     ("reversed_b64.txt", "reverse -> base64", b"CYBN{fixture_reversed}"),
     ("powershell_encoded.txt", "extract_base64 -> utf16le", b"CYBN{fixture_encodedcommand}"),
-    ("zero_width.txt", "zero_width_a", b"CYBN{zw}"),
+    ("zero_width.txt", "zero_width_a", b"CYBN{zero_width}"),
 ]
 
 
