@@ -44,6 +44,10 @@ EN: dict[str, str] = {
     "opt_xor_keylen": "only try this key length (1 = single byte)",
     "opt_xor_crib": "known plaintext somewhere in the data, e.g. 'CYBN{' or hex:89504e47",
     "opt_xor_with": "XOR with a second input (two messages encrypted with the same key)",
+    "opt_xor_hashed": (
+        "always try md5/sha of the embedded word list as the key (automatic when "
+        "nothing else convinces)"
+    ),
     "interrupted": "interrupted (Ctrl+C)",
     "cmd_sym": "symmetric ciphers (AES, DES, ...) with the unknown-layout solver",
     "cmd_sym_ex": (
@@ -154,6 +158,7 @@ EN: dict[str, str] = {
     "web_xor_crib_ph": "CYBN{  or  hex:89504e47",
     "web_xor_other": "second input: XOR the two (same key stream used twice)",
     "web_xor_other_ph": "hex / base64 / text of the other ciphertext",
+    "web_xor_hashed": "try md5/sha of common words as the key (automatic if nothing else works)",
     "web_key_lengths": "Likely key lengths (Hamming: lower is better, random ~ 4.0; "
     "coincidence ratio: higher is better)",
     "web_sym_help": "Give what you have (key, IV, blob, passphrase): the rest is guessed. "
@@ -213,6 +218,7 @@ EN: dict[str, str] = {
     "web_guesses": "Ranked guesses",
     "web_entropy_chart": "Entropy per 256-byte window (0 to 8 bits/byte)",
     "web_next_step": "next",
+    "web_apply": "Apply in",
     "web_copy": "Copy",
     "web_copied": "Copied",
     "web_show_python": "Show Python",

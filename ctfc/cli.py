@@ -72,6 +72,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--keylen", type=int, help=t("opt_xor_keylen"))
     p.add_argument("--crib", help=t("opt_xor_crib"))
     p.add_argument("--with", dest="other", help=t("opt_xor_with"))
+    p.add_argument("--hashed-keys", action="store_true", help=t("opt_xor_hashed"))
 
     p = add("sym")
     p.add_argument("input", help=t("arg_input"))
@@ -200,6 +201,7 @@ def cmd_xor(args: argparse.Namespace, config: Config, console: Console) -> int:
             cribs=cribs,
             budget=budget,
             top_n=config.top_n,
+            try_hashed=True if args.hashed_keys else None,
         )
 
     if args.json:

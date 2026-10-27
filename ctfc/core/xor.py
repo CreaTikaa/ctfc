@@ -21,11 +21,13 @@ How to break it without the key (all deterministic, no AI):
 
 from __future__ import annotations
 
+import hashlib
 from collections import Counter
 from dataclasses import dataclass
 
 from ctfc.core.budget import Budget
 from ctfc.core.codegen import Step, chain_cyberchef, chain_snippet, key_repr
+from ctfc.core.datafiles import load_passwords
 from ctfc.core.flags import FlagSet
 from ctfc.core.scoring import score
 from ctfc.core.types import Candidate
@@ -279,6 +281,7 @@ def make_candidate(
     flagset: FlagSet | None,
     extra_reasons: list[str] | None = None,
     forced: tuple[int, int] | None = None,
+    label: str | None = None,
 ) -> Candidate:
     """Decrypt `data` with `key` and describe the result.
 
@@ -306,9 +309,10 @@ def make_candidate(
             "(XOR layers combine into one key, so this split is only the most readable guess)"
         )
     steps = [Step("xor", step_params)]
-    label = f"xor key={key_repr(key)}"
-    if layers is not None:
-        label = f"xor key={key_repr(layers[0])} + byte 0x{layers[1]:02x}"
+    if label is None:
+        label = f"xor key={key_repr(key)}"
+        if layers is not None:
+            label = f"xor key={key_repr(layers[0])} + byte 0x{layers[1]:02x}"
     return Candidate(
         label=label,
         data=output,
@@ -554,6 +558,76 @@ def drag_crib(
     return candidates
 
 
+# Hashes used to turn a word into a key. "key = md5('secret')" is one of the most
+# common things a CTF dropper does, and the key is then 16 bytes of pure noise
+# that no statistical method will ever guess.
+KEY_HASHES = ("md5", "sha1", "sha256")
+HASHED_SAMPLE = 256  # bytes used to pre-filter the thousands of candidate keys
+HASHED_SHORTLIST = 20  # how many pre-filtered keys get a real score
+# Below this score, solve_xor falls back to the hashed-key search on its own.
+# Real text scores 0.9+; a column solve with one or two wrong key bytes lands
+# around 0.55, and that is exactly the case the fallback must still cover.
+HASHED_FALLBACK = 0.8
+
+
+def _keystream(key: bytes, length: int) -> bytes:
+    """The repeating key, stretched to `length` bytes."""
+    return (key * (length // len(key) + 1))[:length]
+
+
+def solve_hashed_key(
+    data: bytes,
+    flagset: FlagSet | None = None,
+    budget: Budget | None = None,
+    top_n: int = 3,
+    words: list[bytes] | None = None,
+) -> list[Candidate]:
+    """Try md5 / sha1 / sha256 of common words as the repeating key.
+
+    Column solving cannot help here: the key is a digest, so its bytes are random
+    and no amount of frequency analysis will recover them. But the *word* behind
+    the digest is usually ordinary ("secret", "infected", the challenge name), so
+    hashing a small word list and testing each result is the way in.
+
+    Both forms are tried, because code writes both: the raw 16/20/32-byte digest,
+    and the 32/40/64-character hex string (`.hexdigest()`).
+    """
+    sample = data[:HASHED_SAMPLE]
+    if len(sample) < 16:
+        return []
+    budget = budget or Budget(max_attempts=200_000, max_seconds=15)
+    word_list = words if words is not None else list(load_passwords())
+
+    ranked: list[tuple[int, bytes, bytes, str]] = []
+    for word in word_list:
+        if not budget.spend():
+            break
+        for name in KEY_HASHES:
+            digest = hashlib.new(name, word).digest()
+            for key, how in (
+                (digest, f"{name}(word)"),
+                (digest.hex().encode(), f"{name}(word).hexdigest()"),
+            ):
+                points = text_points(xor_two(sample, _keystream(key, len(sample))))
+                ranked.append((points, key, word, how))
+
+    ranked.sort(key=lambda item: -item[0])
+    candidates = []
+    for _points, key, word, how in ranked[:HASHED_SHORTLIST]:
+        text = word.decode("utf-8", errors="replace")
+        candidates.append(
+            make_candidate(
+                data,
+                key,
+                f"key = {how}",
+                flagset,
+                [f'the key is {how} with word = "{text}", from the embedded word list'],
+                label=f"xor key={how.replace('word', repr(text))}",
+            )
+        )
+    return _best_unique(candidates, top_n)
+
+
 def solve_xor(
     data: bytes,
     flagset: FlagSet | None = None,
@@ -562,12 +636,15 @@ def solve_xor(
     cribs: list[bytes] | None = None,
     budget: Budget | None = None,
     top_n: int = 10,
+    try_hashed: bool | None = None,
 ) -> list[Candidate]:
     """Everything at once: the entry point used by `ctfc xor` and the web XOR tab.
 
     - key given: just decrypt with it.
     - otherwise: single byte, repeating key (guessed or forced length), file
       headers at offset 0, and crib dragging with the flag prefixes + your crib.
+    - `try_hashed`: also test md5/sha of common words as the key. Left to None it
+      runs only when nothing else convinced, so it costs nothing in the usual case.
     """
     budget = budget or Budget(max_attempts=500, max_seconds=30)
     if key:
@@ -587,6 +664,10 @@ def solve_xor(
         candidates += known_plaintext_at_start(data, lengths, flagset, budget=budget)
     for crib in cribs or []:
         candidates += drag_crib(data, crib, lengths, flagset, budget)
+
+    best_so_far = max((candidate.score for candidate in candidates), default=0.0)
+    if try_hashed or (try_hashed is None and best_so_far < HASHED_FALLBACK):
+        candidates += solve_hashed_key(data, flagset, budget)
     return _best_unique(candidates, top_n)
 
 

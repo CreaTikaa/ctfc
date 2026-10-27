@@ -25,7 +25,8 @@ Last update: 2026-10-27, after milestone M5. Read `CLAUDE.md` first, then this f
 | M3 symmetric | `244a7ae` | symmetric.py, kdf.py, tea.py, blockmodes.py, `ctfc sym`, `ctfc blob`, web Symmetric tab |
 | M4 Code Lens | `c367e69` | lens.py, lens_python.py, lens_rules.py, data/lens_rules.toml, `ctfc lens`, web Code Lens tab |
 | M5 RSA + hashes | this one | rsa.py, rsa_attacks.py, hashes.py, data/hashcat_modes.toml, `ctfc rsa`, `ctfc hash`, web RSA + Hash tabs |
-| improvement ideas | - | **next**: the user said to start them directly once M5 is validated (section 5) |
+| ideas 1 + 8 | this one | "Apply" buttons in Detect (`Guess.apply`), XOR key from a hash of a common word |
+| ideas 3, 2, 4 | - | **next**: `ctfc scan <folder>`, custom base64 alphabet, pcap extraction (section 5) |
 | M6 pipeline + CyberChef + tools | - | after the ideas |
 
 324 tests pass (`.venv/bin/python -m pytest -q`, ~9 s), `ruff check .` and `ruff format --check .`
@@ -202,13 +203,17 @@ Known limitations / open points:
 Order proposed, cheapest and most useful first. Each one ends with tests, a demo command and a
 commit, like a milestone.
 
-1. **"Apply" buttons in Detect** (idea 1): every `Guess` already carries a `next_step` string.
-   Add a machine-readable `apply` field (`{"tab": "xor", "options": {"keylen": 6}}`) and make the
-   web UI turn it into a button that switches tab and pre-fills the options. Now cheap, since all
-   the target tabs exist.
-2. **XOR key from a hash of a common word** (idea 8): in `xor.py`, try md5/sha1/sha256 of the
-   embedded password list (and of the flag prefixes) as repeating keys, under a budget. M3's
-   `key_forms` already does this for cipher keys, so it is the same idea one module over.
+1. ~~**"Apply" buttons in Detect**~~ **done**: `Guess.apply` is `{"tab": ..., "options": {...}}`,
+   filled in `detect.py` (`SIG_APPLY`, `PREFIX_APPLY`, and inline for xor/ecb/blob guesses). The
+   web UI turns it into a button via `applyGuess()`; the option ids follow `<tab>-<option>`, so a
+   new option is pre-fillable as soon as it is named that way. A test checks every table entry
+   names a real tab, and another checks the field survives the JSON round trip.
+2. ~~**XOR key from a hash of a common word**~~ **done**: `xor.solve_hashed_key()` tries
+   md5/sha1/sha256 of the 10000 embedded words, in both the raw-digest and `.hexdigest()` forms
+   (60000 keys, ~0.2 s thanks to a `text_points` pre-filter on 256 bytes before real scoring).
+   `solve_xor` calls it on its own when nothing else beats `HASHED_FALLBACK = 0.8` - that
+   threshold matters: a column solve with one wrong byte scores ~0.55 and must not block it.
+   `--hashed-keys` / the XOR tab checkbox force it.
 3. **`ctfc scan <folder>`** (idea 3): run detect + auto on every file in a folder, rank the ones
    that contain something, print a table. Reuses everything; add `--recursive` and a time budget.
 4. **Custom base64 alphabet** (idea 2): `detect` already finds the alphabet; pass it to `auto` as
@@ -219,6 +224,8 @@ commit, like a milestone.
 
 Idea 6 (history of "Use as next input", export the chain) belongs with M6's pipeline, and idea 7
 (stego tool suggestions) with M6's tool registry: leave both there.
+
+Done so far: idea 5 (password list, M3), idea 1 and idea 8 (this commit).
 
 ## 6. Improvement ideas (open: he said "on les feras toutes apres si M3 est fonctionnel")
 
@@ -255,5 +262,6 @@ ctfc lens tests/fixtures/lens_layers.py
 ctfc rsa --key tests/fixtures/rsa_fermat.pub.pem --decrypt tests/fixtures/rsa_fermat.bin --attack
 ctfc rsa --key tests/fixtures/rsa_private.pem --check tests/fixtures/rsa_public.pem
 ctfc hash 482c811da5d5b4bc6d497ffa98491e38
-ctfc serve   # http://127.0.0.1:8137
+ctfc xor <a file XORed with md5('infected')>   # finds the word by itself
+ctfc serve   # http://127.0.0.1:8137  (Detect now has "Apply in ..." buttons)
 ```

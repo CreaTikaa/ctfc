@@ -128,3 +128,84 @@ def test_no_noise_on_random_data():
         data = rng.randbytes(size)
         assert auto_decode(data) == []
         assert auto_decode(base64.b64encode(data)) == []
+
+
+# ---------------------------------------------------------------------------
+# A key that is the hash of a common word (improvement idea 8)
+# ---------------------------------------------------------------------------
+
+TEXT = (
+    b"This is the secret report about the incident. The flag is CYBN{xor_hashed_key} "
+    b"and the rest of this sentence is only here to give the scoring something to read."
+)
+
+
+@pytest.mark.parametrize(
+    "algorithm,word",
+    [("md5", b"infected"), ("sha1", b"dragon"), ("sha256", b"monkey")],
+)
+def test_hashed_key_is_recovered(algorithm, word):
+    """A digest key has random bytes, so only the *word* behind it can be guessed."""
+    import hashlib
+
+    from ctfc.core.xor import solve_hashed_key
+
+    key = hashlib.new(algorithm, word).digest()
+    best = solve_hashed_key(xor_with_key(TEXT, key))[0]
+    assert b"CYBN{xor_hashed_key}" in best.data
+    assert best.params["key_hex"] == key.hex()
+    assert f"{algorithm}('{word.decode()}')" in best.label
+
+
+def test_hexdigest_form_is_tried_too():
+    """Plenty of code uses .hexdigest(), which makes the key an ASCII string."""
+    import hashlib
+
+    from ctfc.core.xor import solve_hashed_key
+
+    key = hashlib.md5(b"password123").hexdigest().encode()
+    best = solve_hashed_key(xor_with_key(TEXT, key))[0]
+    assert b"CYBN{xor_hashed_key}" in best.data
+    assert "hexdigest" in best.label
+
+
+def test_solve_xor_falls_back_to_hashed_keys():
+    """Column solving cannot find a digest key, so solve_xor must fall back by itself."""
+    import hashlib
+
+    key = hashlib.sha1(b"dragon").digest()
+    best = solve_xor(xor_with_key(TEXT, key))[0]
+    assert b"CYBN{xor_hashed_key}" in best.data
+
+
+def test_the_fallback_does_not_fire_when_the_normal_path_works():
+    """It must stay free in the usual case: a readable key is found without it."""
+    best = solve_xor(xor_with_key(TEXT, b"k3y!"))[0]
+    assert best.params["key_hex"] == b"k3y!".hex()
+    assert "word list" not in " ".join(best.reasons)
+
+
+def test_hashed_search_respects_its_budget():
+    from ctfc.core.budget import Budget
+    from ctfc.core.xor import solve_hashed_key
+
+    budget = Budget(max_attempts=5, max_seconds=5)
+    solve_hashed_key(xor_with_key(TEXT, b"\x11" * 16), budget=budget)
+    assert budget.stopped_reason == "attempts"
+
+
+def test_hashed_search_needs_enough_data():
+    from ctfc.core.xor import solve_hashed_key
+
+    assert solve_hashed_key(b"short") == []
+
+
+def test_hashed_search_is_quiet_on_random_data():
+    """It must not invent a word for data that is not XORed text at all."""
+    import random
+
+    from ctfc.core.xor import solve_hashed_key
+
+    data = random.Random(11).randbytes(400)
+    results = solve_hashed_key(data)
+    assert all(candidate.score < 0.3 for candidate in results), [c.score for c in results]

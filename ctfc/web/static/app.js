@@ -105,6 +105,7 @@ function currentOptions() {
       keylen: $("xor-keylen").value,
       crib: $("xor-crib").value,
       other: $("xor-other").value,
+      hashed: $("xor-hashed").checked,
     };
   }
   if (state.tab === "rsa") {
@@ -574,6 +575,27 @@ function renderHash(report) {
   }
 }
 
+// A Detect guess that knows which tab solves it: switch there, pre-fill, run.
+// The option ids follow the "<tab>-<option>" convention of index.html.
+function applyGuess(action) {
+  const tab = document.querySelector('.tab[data-tab="' + action.tab + '"]');
+  if (!tab || tab.disabled) return;
+  selectTab(tab);
+  for (const [name, value] of Object.entries(action.options || {})) {
+    const field = $(action.tab + "-" + name.replace(/_/g, "-"));
+    if (!field) continue;
+    if (field.type === "checkbox") {
+      field.checked = Boolean(value);
+    } else if (typeof value === "string" && value.startsWith("<")) {
+      // A placeholder like "<this input>": the input panel already holds it.
+      continue;
+    } else {
+      field.value = value;
+    }
+  }
+  run();
+}
+
 function renderDetect(report) {
   const results = $("results");
 
@@ -609,6 +631,16 @@ function renderDetect(report) {
       const next = el("div", "next", T("web_next_step") + ": ");
       next.append(el("code", "", guess.next_step));
       card.append(next);
+    }
+    if (guess.apply) {
+      const target = document.querySelector('.tab[data-tab="' + guess.apply.tab + '"]');
+      if (target && !target.disabled) {
+        const actions = el("div", "actions");
+        const button = el("button", "small", T("web_apply") + " " + target.textContent);
+        button.addEventListener("click", () => applyGuess(guess.apply));
+        actions.append(button);
+        card.append(actions);
+      }
     }
     results.append(card);
   }

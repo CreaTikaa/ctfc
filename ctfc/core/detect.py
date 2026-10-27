@@ -38,6 +38,14 @@ from ctfc.core.xor import coincidence_rates, period_ratios
 WINDOW = 256  # bytes per entropy window
 STANDARD_B64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
 
+# Which tab solves which file type, for the "Apply" buttons in the web UI.
+SIG_APPLY: dict[str, dict] = {
+    "enc": {"tab": "sym", "options": {"passwords": True}},
+    "pem_rsa_private": {"tab": "rsa", "options": {}},
+    "pem_private": {"tab": "rsa", "options": {}},
+    "pem_public": {"tab": "rsa", "options": {}},
+}
+
 # What to do next for some file types (by extension in magic.toml).
 SIG_HINTS = {
     "enc": "openssl enc: ctfc sym <file> --pass <password> (or --passwords), or "
@@ -65,7 +73,11 @@ class Guess:
     label: str  # short human description
     confidence: float  # 0..1
     reasons: list[str] = field(default_factory=list)
-    next_step: str = ""  # what to try next
+    next_step: str = ""  # what to try next, as a command line
+    # The same thing, machine-readable: which tab solves this, and with which
+    # options already filled in. The web UI turns it into an "Apply" button.
+    #   {"tab": "xor", "options": {"keylen": 6}}
+    apply: dict | None = None
 
 
 @dataclass
@@ -223,6 +235,7 @@ def _check_magic(data: bytes, prefix: str = "") -> list[Guess]:
                 reasons=[f"{prefix}signature {sig.magic.hex()} at offset {sig.offset}"]
                 + (["short signature: may be a coincidence"] if sig.weak else []),
                 next_step=SIG_HINTS.get(sig.ext, f"save it as .{sig.ext} and open it"),
+                apply=SIG_APPLY.get(sig.ext),
             )
         )
     trailing = find_trailing_data(data)
@@ -253,6 +266,22 @@ def _check_magic(data: bytes, prefix: str = "") -> list[Guess]:
     return guesses
 
 
+# Which tab handles a text format recognised by prefix (see magic.toml [[prefix]]).
+PREFIX_APPLY: dict[str, dict] = {
+    "pem": {"tab": "rsa", "options": {}},
+    "fernet": {"tab": "sym", "options": {}},
+    "openssl.salted_b64": {"tab": "sym", "options": {"passwords": True}},
+    "jwt": {"tab": "auto", "options": {}},
+}
+
+
+def _apply_for_prefix(rule_id: str) -> dict | None:
+    """The tab that solves this text format, for the "Apply" button."""
+    if rule_id.startswith("hash."):
+        return {"tab": "hash", "options": {}}
+    return PREFIX_APPLY.get(rule_id)
+
+
 def _check_prefixes(data: bytes) -> list[Guess]:
     text = data[:200_000].decode("utf-8", errors="replace")
     guesses = []
@@ -268,6 +297,7 @@ def _check_prefixes(data: bytes) -> list[Guess]:
                 confidence=rule.strength,
                 reasons=[f"matched: {excerpt[:70]}{'...' if len(excerpt) > 70 else ''}"],
                 next_step=rule.hint,
+                apply=_apply_for_prefix(rule.id),
             )
         )
     return guesses
@@ -460,6 +490,7 @@ def _check_entropy(data: bytes, prefix: str) -> list[Guess]:
                     "real encryption would look random (close to 8 bits/byte)",
                 ],
                 next_step="ctfc xor <input> / xortool <file>",
+                apply={"tab": "xor", "options": {}},
             )
         )
     windows = entropy_windows(data)
@@ -504,6 +535,7 @@ def _check_ecb(data: bytes, prefix: str) -> list[Guess]:
                         "random data almost never repeats a whole block",
                     ],
                     next_step="ctfc sym <input> --mode ecb --key ...",
+                    apply={"tab": "sym", "options": {"mode": "ecb"}},
                 )
             )
             break  # 16-byte repeats imply 8-byte repeats: report only the first
@@ -535,6 +567,7 @@ def _check_lengths(data: bytes, prefix: str) -> list[Guess]:
                 confidence=0.45,
                 reasons=[f"{prefix}length {length} matches a common key/IV layout"],
                 next_step="ctfc blob <input> --against <ciphertext>",
+                apply={"tab": "sym", "options": {"blob": "<this input>"}},
             )
         )
     if length >= 32:
@@ -592,5 +625,6 @@ def _check_xor_period(data: bytes, prefix: str) -> list[Guess]:
             ]
             + ([f"other plausible key lengths: {others}"] if others else []),
             next_step=f"ctfc xor <input> --keylen {period} / xortool -l {period} <file>",
+            apply={"tab": "xor", "options": {"keylen": period}},
         )
     ]

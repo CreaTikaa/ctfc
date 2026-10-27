@@ -159,7 +159,14 @@ def create_app(config: Config | None = None) -> Flask:
                     if not key and not keylen:
                         lengths = guess_key_lengths(inp.data)[:5]
                     candidates = solve_xor(
-                        inp.data, flagset, key, keylen, cribs, budget, top_n=config.top_n
+                        inp.data,
+                        flagset,
+                        key,
+                        keylen,
+                        cribs,
+                        budget,
+                        top_n=config.top_n,
+                        try_hashed=True if options.get("hashed") else None,
                     )
                 return {
                     "input": input_summary(inp),
