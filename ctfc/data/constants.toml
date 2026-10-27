@@ -1,0 +1,131 @@
+# Well-known crypto constants. If one of them is found in a binary or a script,
+# that algorithm is probably implemented there.
+#
+# [[const]]
+#   name : what it is
+#   algo : algorithm family (shown to the user)
+#   hex  : the bytes as stored in memory. Multi-byte integers are listed twice,
+#          once per byte order ("LE" = little-endian, as on x86).
+#
+# detect.py also searches the hex text form ("9e3779b9" / "0x9e3779b9") so that
+# constants written in source code are found too.
+
+[[const]]
+name = "AES S-box (first 16 bytes)"
+algo = "AES"
+hex = "637c777bf26b6fc53001672bfed7ab76"
+
+[[const]]
+name = "AES inverse S-box (first 16 bytes)"
+algo = "AES"
+hex = "52096ad53036a538bf40a39e81f3d7fb"
+
+[[const]]
+name = "AES T-table Te0 (first entries, LE)"
+algo = "AES"
+hex = "a56363c6847c7cf8"
+
+[[const]]
+name = "MD5 / SHA-1 initial state (LE)"
+algo = "MD5/SHA-1"
+hex = "0123456789abcdeffedcba9876543210"
+
+[[const]]
+name = "MD5 / SHA-1 initial state (BE)"
+algo = "MD5/SHA-1"
+hex = "67452301efcdab8998badcfe10325476"
+
+[[const]]
+name = "MD5 sine table T[0..1] (LE)"
+algo = "MD5"
+hex = "78a46ad756b7c7e8"
+
+[[const]]
+name = "SHA-256 initial state H0..H1 (BE)"
+algo = "SHA-256"
+hex = "6a09e667bb67ae85"
+
+[[const]]
+name = "SHA-256 initial state H0..H1 (LE)"
+algo = "SHA-256"
+hex = "67e6096a85ae67bb"
+
+[[const]]
+name = "SHA-256 round constants K[0..1] (BE)"
+algo = "SHA-256"
+hex = "428a2f9871374491"
+
+[[const]]
+name = "SHA-256 round constants K[0..1] (LE)"
+algo = "SHA-256"
+hex = "982f8a4291443771"
+
+[[const]]
+name = "SHA-512 initial state H0 (BE)"
+algo = "SHA-512"
+hex = "6a09e667f3bcc908"
+
+[[const]]
+name = "SHA-512 initial state H0 (LE)"
+algo = "SHA-512"
+hex = "08c9bcf367e6096a"
+
+[[const]]
+name = "ChaCha20 / Salsa20 constant 'expand 32-byte k'"
+algo = "ChaCha20/Salsa20"
+hex = "657870616e642033322d62797465206b"
+
+[[const]]
+name = "ChaCha20 / Salsa20 constant 'expand 16-byte k'"
+algo = "ChaCha20/Salsa20"
+hex = "657870616e642031362d62797465206b"
+
+[[const]]
+name = "TEA / XTEA delta 0x9e3779b9 (BE)"
+algo = "TEA/XTEA"
+hex = "9e3779b9"
+
+[[const]]
+name = "TEA / XTEA delta 0x9e3779b9 (LE)"
+algo = "TEA/XTEA"
+hex = "b979379e"
+
+[[const]]
+name = "TEA / XTEA -delta 0x61c88647 (BE)"
+algo = "TEA/XTEA"
+hex = "61c88647"
+
+[[const]]
+name = "TEA / XTEA -delta 0x61c88647 (LE)"
+algo = "TEA/XTEA"
+hex = "4786c861"
+
+[[const]]
+name = "Blowfish P-array start (pi digits, BE)"
+algo = "Blowfish"
+hex = "243f6a8885a308d3"
+
+[[const]]
+name = "Blowfish P-array start (pi digits, LE)"
+algo = "Blowfish"
+hex = "886a3f24d308a385"
+
+[[const]]
+name = "DES S-box S1 (one value per byte)"
+algo = "DES"
+hex = "0e040d01020f0b08030a060c05090007"
+
+[[const]]
+name = "CRC32 table (LE)"
+algo = "CRC32 (checksum, not crypto)"
+hex = "0000000096300777"
+
+[[const]]
+name = "Standard base64 alphabet"
+algo = "base64"
+hex = "4142434445464748494a4b4c4d4e4f505152535455565758595a6162636465666768696a6b6c6d6e6f707172737475767778797a303132333435363738392b2f"
+
+[[const]]
+name = "Identity byte table 00 01 02 ... 3f (RC4 key-scheduling init or lookup table)"
+algo = "RC4 (weak hint)"
+hex = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f"

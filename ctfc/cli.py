@@ -6,17 +6,24 @@ Each command is one small `cmd_<name>(args, config)` function returning an exit 
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
-from ctfc import __version__
+from rich.console import Console
+
+from ctfc import __version__, render
 from ctfc.config import Config, ConfigError, load_config
+from ctfc.core.auto import auto_decode
+from ctfc.core.budget import Budget
+from ctfc.core.detect import detect
+from ctfc.core.flags import FlagSet, build_flagset
+from ctfc.core.inputs import InputError, parse_input
+from ctfc.core.types import Input
 from ctfc.strings import t
 
 # Commands that exist in the interface but are built in a later milestone.
 PLANNED = {
-    "detect": "M1",
-    "auto": "M1",
     "xor": "M2",
     "sym": "M3",
     "blob": "M3",
@@ -108,6 +115,51 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def flagset_from(config: Config) -> FlagSet:
+    return build_flagset(config.flag_regexes, config.flag_prefixes)
+
+
+def input_to_dict(inp: Input) -> dict:
+    return {"source": inp.source, "length": len(inp.data), "notes": inp.notes}
+
+
+def cmd_detect(args: argparse.Namespace, config: Config, console: Console) -> int:
+    """Fingerprint the input and print ranked guesses."""
+    inp = parse_input(args.input, decode_bare=False)
+    report = detect(inp.data, flagset_from(config))
+    if args.json:
+        print(json.dumps({"input": input_to_dict(inp), "report": report.to_dict()}, indent=2))
+        return 0
+    render.print_input_notes(console, inp)
+    render.print_detect(console, report)
+    return 0
+
+
+def cmd_auto(args: argparse.Namespace, config: Config, console: Console) -> int:
+    """Peel encoding layers until the output looks meaningful."""
+    inp = parse_input(args.input, decode_bare=False)
+    budget = Budget(max_attempts=config.auto_budget, max_seconds=30)
+    candidates = auto_decode(
+        inp.data,
+        flagset=flagset_from(config),
+        max_depth=config.auto_max_depth,
+        budget=budget,
+        top_n=config.top_n,
+    )
+    if args.json:
+        payload = {
+            "input": input_to_dict(inp),
+            "budget": budget.summary(),
+            "candidates": [candidate.to_dict() for candidate in candidates],
+        }
+        print(json.dumps(payload, indent=2))
+        return 0
+    render.print_input_notes(console, inp)
+    render.print_candidates(console, candidates, show_code=args.show_code, title="auto decode")
+    console.print(f"[dim]{budget.summary()}[/]")
+    return 0 if candidates else 1
+
+
 def cmd_serve(args: argparse.Namespace, config: Config) -> int:
     """Start the Flask web UI (bound to 127.0.0.1 unless --host says otherwise)."""
     from ctfc.web.app import create_app  # imported here so the CLI starts fast
@@ -143,6 +195,15 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "serve":
         return cmd_serve(args, config)
+
+    console = Console(highlight=False)
+    commands = {"detect": cmd_detect, "auto": cmd_auto}
+    if args.command in commands:
+        try:
+            return commands[args.command](args, config, console)
+        except InputError as exc:
+            print(f"{t('error_prefix')}: {exc}", file=sys.stderr)
+            return 2
 
     milestone = PLANNED.get(args.command, "?")
     print(t("not_yet", command=args.command, milestone=milestone), file=sys.stderr)

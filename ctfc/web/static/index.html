@@ -4,18 +4,68 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>ctfc - CTF Crypto Lab</title>
-  <style>
-    body { background: #14161a; color: #d8dee9; font-family: monospace; padding: 2rem; }
-  </style>
+  <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <h1>ctfc</h1>
-  <p>Hello from the CTF Crypto Lab. The full UI arrives in milestone M1.</p>
-  <p id="health">checking API...</p>
-  <script>
-    fetch("/api/health").then(r => r.json()).then(j => {
-      document.getElementById("health").textContent = "API ok, version " + j.version;
-    });
-  </script>
+  <!-- Every element with data-t="key" gets its text from /api/strings (ctfc/strings.py). -->
+  <header>
+    <h1>ctfc <span class="subtitle">CTF Crypto Lab</span></h1>
+    <span id="offline-badge" class="badge hidden" data-t="web_offline">offline</span>
+    <span id="version" class="dim"></span>
+  </header>
+
+  <main>
+    <!-- Left: the input -->
+    <section id="input-panel">
+      <div class="panel-title">
+        <h2 data-t="web_input">Input</h2>
+        <label><span data-t="web_format">format</span>
+          <select id="format">
+            <option value="auto" data-t="web_format_auto">auto</option>
+            <option value="text" data-t="web_format_text">text</option>
+            <option value="hex" data-t="web_format_hex">hex</option>
+            <option value="b64" data-t="web_format_b64">base64</option>
+          </select>
+        </label>
+      </div>
+      <textarea id="input-text" spellcheck="false" data-t-placeholder="web_placeholder"></textarea>
+      <div id="drop-zone" tabindex="0">
+        <span data-t="web_drop">Drop a file here</span>
+        <input type="file" id="file-input" hidden>
+      </div>
+      <div id="file-info" class="hidden">
+        <span id="file-name"></span>
+        <button id="file-clear" class="small" data-t="web_clear">clear</button>
+      </div>
+      <div id="input-info" class="dim"></div>
+      <h3 data-t="web_hexdump">Hexdump</h3>
+      <pre id="hexdump" class="hexdump"></pre>
+    </section>
+
+    <!-- Right: tabs and results -->
+    <section id="result-panel">
+      <nav id="tabs">
+        <button class="tab active" data-tab="auto" data-t="web_tab_auto">Auto</button>
+        <button class="tab" data-tab="detect" data-t="web_tab_detect">Detect</button>
+        <button class="tab" data-tab="pipeline" data-milestone="M6" data-t="web_tab_pipeline">Pipeline</button>
+        <button class="tab" data-tab="xor" data-milestone="M2" data-t="web_tab_xor">XOR</button>
+        <button class="tab" data-tab="sym" data-milestone="M3" data-t="web_tab_sym">Symmetric</button>
+        <button class="tab" data-tab="rsa" data-milestone="M5" data-t="web_tab_rsa">RSA</button>
+        <button class="tab" data-tab="lens" data-milestone="M4" data-t="web_tab_lens">Code Lens</button>
+        <button class="tab" data-tab="hash" data-milestone="M5" data-t="web_tab_hash">Hash</button>
+        <button class="tab" data-tab="keys" data-milestone="M7" data-t="web_tab_keys">Keys</button>
+        <button class="tab" data-tab="cheatsheet" data-milestone="M8" data-t="web_tab_cheatsheet">Cheatsheet</button>
+      </nav>
+      <div class="toolbar">
+        <button id="run" class="primary" data-t="web_run">Run</button>
+        <span class="dim" data-t="web_shortcut">Ctrl+Enter = run</span>
+        <span id="tab-help" class="dim"></span>
+      </div>
+      <div id="status" class="dim"></div>
+      <div id="results"></div>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
 </body>
 </html>

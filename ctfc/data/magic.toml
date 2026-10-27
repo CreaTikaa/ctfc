@@ -1,0 +1,519 @@
+# File signatures ("magic bytes") and text prefixes used by detect.py and scoring.py.
+#
+# [[sig]]  = binary signature
+#   name    : human name
+#   hex     : the signature bytes, in hex
+#   offset  : where the signature must be (default 0)
+#   weak    : true for very short signatures (2-3 bytes). Weak signatures are only
+#             trusted at offset 0 and are skipped when scanning for embedded files.
+#   end     : optional end-of-file marker (hex), used to find data appended after the file
+#   end_rule: "first" or "last" occurrence of the end marker (default "last")
+#   ext     : usual file extension
+#
+# [[prefix]] = text rule (regex) for encoded formats, keys, hashes...
+#   id      : rule id (used by the external tool bridge later)
+#   regex   : Python regex, searched in the text form of the input
+#   label   : what it is
+#   hint    : what to do next
+#   strength: 0..1, how sure we are when it matches
+#
+# To add a format: copy a block and change the values.
+
+# ---------- images ----------
+[[sig]]
+name = "PNG image"
+ext = "png"
+hex = "89504e470d0a1a0a"
+end = "0000000049454e44ae426082"
+end_rule = "first"
+
+[[sig]]
+name = "JPEG image"
+ext = "jpg"
+hex = "ffd8ff"
+end = "ffd9"
+end_rule = "last"
+
+[[sig]]
+name = "GIF image (87a)"
+ext = "gif"
+hex = "474946383761"
+
+[[sig]]
+name = "GIF image (89a)"
+ext = "gif"
+hex = "474946383961"
+
+[[sig]]
+name = "BMP image"
+ext = "bmp"
+hex = "424d"
+weak = true
+
+[[sig]]
+name = "TIFF image (little-endian)"
+ext = "tif"
+hex = "49492a00"
+
+[[sig]]
+name = "TIFF image (big-endian)"
+ext = "tif"
+hex = "4d4d002a"
+
+[[sig]]
+name = "Photoshop PSD"
+ext = "psd"
+hex = "38425053"
+
+[[sig]]
+name = "ICO icon"
+ext = "ico"
+hex = "00000100"
+weak = true
+
+# ---------- documents ----------
+[[sig]]
+name = "PDF document"
+ext = "pdf"
+hex = "255044462d"
+end = "2525454f46"
+end_rule = "last"
+
+[[sig]]
+name = "OLE2 compound file (old .doc/.xls/.msi)"
+ext = "doc"
+hex = "d0cf11e0a1b11ae1"
+
+[[sig]]
+name = "RTF document"
+ext = "rtf"
+hex = "7b5c72746631"
+
+[[sig]]
+name = "XML document"
+ext = "xml"
+hex = "3c3f786d6c"
+
+# ---------- archives / compression ----------
+[[sig]]
+name = "ZIP archive (also docx/xlsx/jar/apk)"
+ext = "zip"
+hex = "504b0304"
+end = "504b0506"
+end_rule = "last"
+
+[[sig]]
+name = "7-Zip archive"
+ext = "7z"
+hex = "377abcaf271c"
+
+[[sig]]
+name = "RAR archive (v4)"
+ext = "rar"
+hex = "526172211a0700"
+
+[[sig]]
+name = "RAR archive (v5)"
+ext = "rar"
+hex = "526172211a070100"
+
+[[sig]]
+name = "gzip compressed data"
+ext = "gz"
+hex = "1f8b08"
+
+[[sig]]
+name = "bzip2 compressed data"
+ext = "bz2"
+hex = "425a68"
+
+[[sig]]
+name = "xz compressed data"
+ext = "xz"
+hex = "fd377a585a00"
+
+[[sig]]
+name = "zstd compressed data"
+ext = "zst"
+hex = "28b52ffd"
+
+[[sig]]
+name = "LZ4 frame"
+ext = "lz4"
+hex = "04224d18"
+
+[[sig]]
+name = "zlib stream (default compression)"
+ext = "zlib"
+hex = "789c"
+weak = true
+
+[[sig]]
+name = "zlib stream (best compression)"
+ext = "zlib"
+hex = "78da"
+weak = true
+
+[[sig]]
+name = "zlib stream (no/low compression)"
+ext = "zlib"
+hex = "7801"
+weak = true
+
+[[sig]]
+name = "Microsoft CAB archive"
+ext = "cab"
+hex = "4d534346"
+
+[[sig]]
+name = "tar archive"
+ext = "tar"
+hex = "7573746172"
+offset = 257
+
+[[sig]]
+name = "ISO 9660 image"
+ext = "iso"
+hex = "4344303031"
+offset = 32769
+
+# ---------- executables / code ----------
+[[sig]]
+name = "ELF executable"
+ext = "elf"
+hex = "7f454c46"
+
+[[sig]]
+name = "DOS/Windows executable (MZ)"
+ext = "exe"
+hex = "4d5a"
+weak = true
+
+[[sig]]
+name = "Mach-O executable (32-bit)"
+ext = "macho"
+hex = "feedface"
+
+[[sig]]
+name = "Mach-O executable (64-bit)"
+ext = "macho"
+hex = "feedfacf"
+
+[[sig]]
+name = "Mach-O executable (64-bit, LE)"
+ext = "macho"
+hex = "cffaedfe"
+
+[[sig]]
+name = "Java class / Mach-O fat binary"
+ext = "class"
+hex = "cafebabe"
+
+[[sig]]
+name = "Android DEX"
+ext = "dex"
+hex = "6465780a"
+
+[[sig]]
+name = "WebAssembly module"
+ext = "wasm"
+hex = "0061736d"
+
+[[sig]]
+name = "Java serialized object (do not deserialize)"
+ext = "ser"
+hex = "aced0005"
+
+# ---------- forensics artefacts ----------
+[[sig]]
+name = "pcap capture (LE)"
+ext = "pcap"
+hex = "d4c3b2a1"
+
+[[sig]]
+name = "pcap capture (BE)"
+ext = "pcap"
+hex = "a1b2c3d4"
+
+[[sig]]
+name = "pcapng capture"
+ext = "pcapng"
+hex = "0a0d0d0a"
+
+[[sig]]
+name = "SQLite database"
+ext = "sqlite"
+hex = "53514c69746520666f726d6174203300"
+
+[[sig]]
+name = "Windows event log (EVTX)"
+ext = "evtx"
+hex = "456c6646696c6500"
+
+[[sig]]
+name = "Windows registry hive"
+ext = "hive"
+hex = "72656766"
+
+[[sig]]
+name = "Windows shortcut (LNK)"
+ext = "lnk"
+hex = "4c0000000114020000000000c000000000000046"
+
+[[sig]]
+name = "Windows minidump"
+ext = "dmp"
+hex = "4d444d5093a7"
+
+[[sig]]
+name = "LiME memory dump"
+ext = "lime"
+hex = "454d694c"
+
+[[sig]]
+name = "KeePass 2 database"
+ext = "kdbx"
+hex = "03d9a29a67fb4bb5"
+
+[[sig]]
+name = "KeePass 1 database"
+ext = "kdb"
+hex = "03d9a29a65fb4bb5"
+
+[[sig]]
+name = "LUKS encrypted volume (out of scope: use hashcat/john)"
+ext = "luks"
+hex = "4c554b53babe"
+
+[[sig]]
+name = "BitLocker volume (out of scope)"
+ext = "bitlocker"
+hex = "2d4656452d46532d"
+offset = 3
+
+[[sig]]
+name = "VMDK disk image"
+ext = "vmdk"
+hex = "4b444d56"
+
+[[sig]]
+name = "QCOW2 disk image"
+ext = "qcow2"
+hex = "514649fb"
+
+# ---------- audio / video ----------
+[[sig]]
+name = "RIFF container (WAV/AVI/WEBP)"
+ext = "riff"
+hex = "52494646"
+
+[[sig]]
+name = "Ogg container"
+ext = "ogg"
+hex = "4f676753"
+
+[[sig]]
+name = "FLAC audio"
+ext = "flac"
+hex = "664c6143"
+
+[[sig]]
+name = "MP3 with ID3 tag"
+ext = "mp3"
+hex = "494433"
+
+[[sig]]
+name = "Matroska / WebM"
+ext = "mkv"
+hex = "1a45dfa3"
+
+[[sig]]
+name = "MP4 / MOV (ftyp box)"
+ext = "mp4"
+hex = "66747970"
+offset = 4
+
+# ---------- crypto containers ----------
+[[sig]]
+name = "openssl enc file (Salted__ + 8-byte salt)"
+ext = "enc"
+hex = "53616c7465645f5f"
+
+# =====================================================================
+# Text prefixes / shapes
+# =====================================================================
+
+[[prefix]]
+id = "openssl.salted_b64"
+regex = '^\s*U2FsdGVkX1'
+label = "base64 of 'Salted__': openssl enc output"
+hint = "base64-decode, then: openssl enc -d -aes-256-cbc -md md5|sha256 [-pbkdf2] -pass pass:..."
+strength = 0.9
+
+[[prefix]]
+id = "fernet"
+regex = '^\s*gAAAAA[A-Za-z0-9_\-]{50,}={0,2}\s*$'
+label = "Fernet token (AES-128-CBC + HMAC, Python 'cryptography')"
+hint = "needs the 32-byte urlsafe-base64 Fernet key"
+strength = 0.9
+
+[[prefix]]
+id = "pem"
+regex = '-----BEGIN ([A-Z0-9 ]+)-----'
+label = "PEM block"
+hint = "keys: ctfc rsa / openssl pkey -in file -text"
+strength = 0.95
+
+[[prefix]]
+id = "jwt"
+regex = '^\s*eyJ[A-Za-z0-9_\-]+\.eyJ[A-Za-z0-9_\-]*\.[A-Za-z0-9_\-]*\s*$'
+label = "JSON Web Token (header.payload.signature, base64url)"
+hint = "base64url-decode the first two parts; alg=none or weak HS256 secret are classic"
+strength = 0.95
+
+[[prefix]]
+id = "hash.mysqlna"
+regex = '^\s*\$mysqlna\$[0-9a-fA-F]+\*[0-9a-fA-F]+\s*$'
+label = "MySQL native authentication challenge/response"
+hint = "hashcat -m 11200"
+strength = 0.95
+
+[[prefix]]
+id = "hash.bcrypt"
+regex = '^\s*\$2[abxy]\$\d{2}\$[./A-Za-z0-9]{53}\s*$'
+label = "bcrypt hash"
+hint = "hashcat -m 3200 (slow: use a small wordlist)"
+strength = 0.95
+
+[[prefix]]
+id = "hash.md5crypt"
+regex = '^\s*\$1\$[^$]{0,8}\$[./A-Za-z0-9]{22}\s*$'
+label = "md5crypt hash"
+hint = "hashcat -m 500"
+strength = 0.95
+
+[[prefix]]
+id = "hash.sha256crypt"
+regex = '^\s*\$5\$'
+label = "sha256crypt hash"
+hint = "hashcat -m 7400"
+strength = 0.9
+
+[[prefix]]
+id = "hash.sha512crypt"
+regex = '^\s*\$6\$'
+label = "sha512crypt hash (Linux /etc/shadow)"
+hint = "hashcat -m 1800"
+strength = 0.9
+
+[[prefix]]
+id = "hash.yescrypt"
+regex = '^\s*\$y\$'
+label = "yescrypt hash (recent Linux /etc/shadow)"
+hint = "john --format=crypt (hashcat has no yescrypt mode)"
+strength = 0.9
+
+[[prefix]]
+id = "hash.argon2"
+regex = '^\s*\$argon2(id|i|d)\$'
+label = "Argon2 hash"
+hint = "hashcat -m 34000 (recent versions) / john"
+strength = 0.9
+
+[[prefix]]
+id = "hash.krb5asrep"
+regex = '^\s*\$krb5asrep\$'
+label = "Kerberos AS-REP roast hash"
+hint = "hashcat -m 18200"
+strength = 0.95
+
+[[prefix]]
+id = "hash.krb5tgs"
+regex = '^\s*\$krb5tgs\$'
+label = "Kerberos TGS-REP (kerberoast) hash"
+hint = "hashcat -m 13100 (RC4) / 19600 / 19700 (AES)"
+strength = 0.95
+
+[[prefix]]
+id = "hash.netntlmv2"
+regex = '^\s*[^:\s]+::[^:\s]+:[0-9a-fA-F]{16}:[0-9a-fA-F]{32}:[0-9a-fA-F]+\s*$'
+label = "NetNTLMv2 challenge/response (Responder format)"
+hint = "hashcat -m 5600"
+strength = 0.95
+
+[[prefix]]
+id = "ssh.pubkey"
+regex = '^\s*(ssh-rsa|ssh-ed25519|ssh-dss|ecdsa-sha2-\S+) AAAA'
+label = "OpenSSH public key"
+hint = "ssh-keygen -l -f key.pub; RSA ones can be parsed by ctfc rsa (M5)"
+strength = 0.95
+
+[[prefix]]
+id = "putty"
+regex = '^\s*PuTTY-User-Key-File'
+label = "PuTTY private key (.ppk)"
+hint = "puttygen key.ppk -O private-openssh -o key.pem; putty2john for encrypted ones"
+strength = 0.95
+
+[[prefix]]
+id = "ascii85"
+regex = '^\s*<~[\s\S]*~>\s*$'
+label = "Ascii85 block (<~ ... ~>)"
+hint = "base64.a85decode(data, adobe=True)"
+strength = 0.9
+
+[[prefix]]
+id = "uuencode"
+regex = '^\s*begin [0-7]{3} \S+'
+label = "uuencoded file"
+hint = "uudecode file / python: binascii.a2b_uu per line"
+strength = 0.9
+
+[[prefix]]
+id = "data_uri"
+regex = 'data:[\w/+.\-]+;base64,'
+label = "data: URI with base64 payload"
+hint = "base64-decode the part after the comma"
+strength = 0.85
+
+[[prefix]]
+id = "escapes.hex"
+regex = '(\\x[0-9a-fA-F]{2}){4,}'
+label = "\\xNN escaped bytes"
+hint = "hex-decode (shellcode? look at it statically, never run it)"
+strength = 0.8
+
+[[prefix]]
+id = "escapes.unicode"
+regex = '(\\u[0-9a-fA-F]{4}){3,}'
+label = "\\uNNNN escaped characters (JS/JSON)"
+hint = "unescape: json.loads('\"...\"')"
+strength = 0.8
+
+[[prefix]]
+id = "charcodes"
+regex = '(\d{2,3}\s*,\s*){8,}\d{2,3}'
+label = "list of character codes (String.fromCharCode / [char] arrays)"
+hint = "bytes([int(x) for x in s.split(',')])"
+strength = 0.7
+
+[[prefix]]
+id = "powershell.encodedcommand"
+regex = '(?i)-e(nc(odedcommand)?)?\s+[A-Za-z0-9+/=]{20,}'
+label = "PowerShell -EncodedCommand (base64 of UTF-16LE text)"
+hint = "base64-decode, then decode as UTF-16LE"
+strength = 0.9
+
+[[prefix]]
+id = "morse"
+regex = '^\s*[.\-]{1,7}([ /]+[.\-]{1,7}){3,}\s*$'
+label = "Morse code"
+hint = "dcode.fr Morse / CyberChef 'From Morse Code'"
+strength = 0.85
+
+[[prefix]]
+id = "brainfuck"
+regex = '^\s*[+\-<>\[\].,\s]{20,}$'
+label = "Brainfuck program"
+hint = "dcode.fr Brainfuck interpreter (do not run untrusted programs locally)"
+strength = 0.6

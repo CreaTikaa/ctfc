@@ -1,0 +1,402 @@
+// ctfc web UI. Plain JavaScript, no framework, no build step.
+//
+// Flow: the user pastes text or drops a file -> clicks Run (or Ctrl+Enter)
+// -> we POST the input to /api/<tab> -> we draw the JSON answer as cards.
+//
+// Safety: data from samples is only ever inserted with textContent, never innerHTML,
+// so a malicious sample cannot inject HTML/JS into this page.
+
+"use strict";
+
+// ---------------------------------------------------------------- state
+const state = {
+  strings: {},      // UI labels from /api/strings
+  tab: "auto",      // active tab
+  file: null,       // {name, b64, size} when a file was dropped
+};
+
+const $ = (id) => document.getElementById(id);
+
+// Translate a key using the strings sent by the server (ctfc/strings.py).
+function T(key, params) {
+  let text = state.strings[key] || key;
+  for (const [name, value] of Object.entries(params || {})) {
+    text = text.replace("{" + name + "}", value);
+  }
+  return text;
+}
+
+// Create an element with a class and text content.
+function el(tag, className, text) {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  if (text !== undefined) node.textContent = text;
+  return node;
+}
+
+// ---------------------------------------------------------------- bytes helpers
+function hexToBytes(hex) {
+  const bytes = new Uint8Array(hex.length / 2);
+  for (let i = 0; i < bytes.length; i++) bytes[i] = parseInt(hex.substr(i * 2, 2), 16);
+  return bytes;
+}
+
+function bytesToBase64(bytes) {
+  let binary = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) {
+    binary += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+  }
+  return btoa(binary);
+}
+
+// Classic hexdump: offset, 16 hex bytes, ASCII column.
+function hexdump(bytes, limit) {
+  const lines = [];
+  const end = Math.min(bytes.length, limit);
+  for (let offset = 0; offset < end; offset += 16) {
+    const chunk = bytes.subarray(offset, Math.min(offset + 16, end));
+    const hex = Array.from(chunk, (b) => b.toString(16).padStart(2, "0")).join(" ");
+    const ascii = Array.from(chunk, (b) => (b >= 32 && b < 127 ? String.fromCharCode(b) : ".")).join("");
+    lines.push(offset.toString(16).padStart(8, "0") + "  " + hex.padEnd(47) + "  " + ascii);
+  }
+  if (bytes.length > limit) lines.push("... (" + (bytes.length - limit) + " more bytes)");
+  return lines.join("\n");
+}
+
+// True if the text is mostly readable characters.
+function isReadable(text) {
+  if (!text.length) return false;
+  let good = 0;
+  for (const ch of text) {
+    if (ch === "\n" || ch === "\t" || ch === "\r" || (ch >= " " && ch !== "�" && ch !== "\x7f")) good++;
+  }
+  return good / text.length >= 0.85;
+}
+
+// ---------------------------------------------------------------- server calls
+function currentPayload() {
+  if (state.file) return { data_b64: state.file.b64, name: state.file.name };
+  return { input: $("input-text").value, format: $("format").value };
+}
+
+async function post(path, payload) {
+  const response = await fetch(path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  const json = await response.json().catch(() => ({ error: "HTTP " + response.status }));
+  if (!response.ok) throw new Error(json.error || "HTTP " + response.status);
+  return json;
+}
+
+function setStatus(text, isError) {
+  $("status").textContent = text || "";
+  $("status").classList.toggle("error", Boolean(isError));
+}
+
+// Show the parsed input (length, notes, hexdump) on the left.
+function showInput(input) {
+  const notes = input.notes.length ? " - " + input.notes.join("; ") : "";
+  $("input-info").textContent = input.length + " " + T("web_bytes") + " (" + input.source + ")" + notes;
+  $("hexdump").textContent = hexdump(hexToBytes(input.preview_hex), 512);
+}
+
+let previewTimer = null;
+function schedulePreview() {
+  clearTimeout(previewTimer);
+  previewTimer = setTimeout(async () => {
+    const payload = currentPayload();
+    if (!payload.data_b64 && !payload.input) {
+      $("input-info").textContent = "";
+      $("hexdump").textContent = "";
+      return;
+    }
+    try {
+      showInput((await post("/api/parse", payload)).input);
+    } catch (error) {
+      $("input-info").textContent = error.message;
+      $("hexdump").textContent = "";
+    }
+  }, 300);
+}
+
+// ---------------------------------------------------------------- run
+async function run() {
+  if (!["auto", "detect"].includes(state.tab)) return;
+  const payload = currentPayload();
+  if (!payload.data_b64 && !payload.input) {
+    setStatus(T("web_empty_input"), true);
+    return;
+  }
+  $("run").disabled = true;
+  setStatus(T("web_running"));
+  $("results").replaceChildren();
+  try {
+    const answer = await post("/api/" + state.tab, payload);
+    showInput(answer.input);
+    if (state.tab === "auto") {
+      renderCandidates(answer.candidates);
+      setStatus(answer.budget);
+    } else {
+      renderDetect(answer.report);
+      setStatus("");
+    }
+  } catch (error) {
+    setStatus(error.message, true);
+  } finally {
+    $("run").disabled = false;
+  }
+}
+
+// ---------------------------------------------------------------- rendering
+function levelClass(score) {
+  if (score >= 0.85) return "good";
+  if (score >= 0.5) return "mid";
+  return "";
+}
+
+function copyButton(label, getText) {
+  const button = el("button", "small", label);
+  button.addEventListener("click", async () => {
+    await navigator.clipboard.writeText(getText());
+    button.textContent = T("web_copied");
+    setTimeout(() => (button.textContent = label), 1000);
+  });
+  return button;
+}
+
+function renderCandidates(candidates) {
+  const results = $("results");
+  if (!candidates.length) {
+    results.append(el("p", "dim", T("web_no_result")));
+    return;
+  }
+  for (const candidate of candidates) results.append(candidateCard(candidate));
+}
+
+function candidateCard(candidate) {
+  const card = el("div", "card " + levelClass(candidate.score));
+  const head = el("div", "card-head");
+  head.append(el("span", "score", candidate.score.toFixed(2)), el("span", "label", candidate.label));
+  card.append(head);
+
+  const reasons = el("ul");
+  for (const reason of candidate.reasons) reasons.append(el("li", "", reason));
+  card.append(reasons);
+
+  // Output: text view if readable, otherwise hexdump. A button switches views.
+  const bytes = hexToBytes(candidate.data_hex);
+  const readable = isReadable(candidate.data_text);
+  const output = el("pre", "output");
+  let showingHex = !readable;
+  const drawOutput = () => {
+    output.textContent = showingHex ? hexdump(bytes, 4096) : candidate.data_text;
+  };
+  drawOutput();
+  card.append(output);
+
+  const actions = el("div", "actions");
+  actions.append(copyButton(T("web_copy"), () => (showingHex ? candidate.data_hex : candidate.data_text)));
+
+  const viewButton = el("button", "small", showingHex ? T("web_view_text") : T("web_view_hex"));
+  viewButton.addEventListener("click", () => {
+    showingHex = !showingHex;
+    viewButton.textContent = showingHex ? T("web_view_text") : T("web_view_hex");
+    drawOutput();
+  });
+  actions.append(viewButton);
+
+  if (candidate.python) {
+    const code = el("pre", "code hidden", candidate.python);
+    const codeButton = el("button", "small", T("web_show_python"));
+    codeButton.addEventListener("click", () => {
+      const hidden = code.classList.toggle("hidden");
+      codeButton.textContent = hidden ? T("web_show_python") : T("web_hide_python");
+    });
+    actions.append(codeButton);
+    card.append(actions, code);
+  } else {
+    card.append(actions);
+  }
+  if (candidate.cyberchef) {
+    actions.append(copyButton(T("web_copy_cyberchef"), () => candidate.cyberchef));
+  }
+
+  const nextButton = el("button", "small", T("web_next_input"));
+  nextButton.addEventListener("click", () => useAsInput(candidate, readable));
+  actions.append(nextButton);
+  return card;
+}
+
+// Put a result back into the input box, to keep working on it.
+function useAsInput(candidate, readable) {
+  clearFile();
+  if (readable) {
+    $("input-text").value = candidate.data_text;
+    $("format").value = "text";
+  } else {
+    $("input-text").value = candidate.data_hex;
+    $("format").value = "hex";
+  }
+  schedulePreview();
+  $("input-text").focus();
+}
+
+function renderDetect(report) {
+  const results = $("results");
+
+  results.append(el("h3", "", T("web_facts")));
+  const facts = el("table", "facts");
+  for (const [name, value] of report.facts) {
+    const row = el("tr");
+    row.append(el("td", "", name), el("td", "", value));
+    facts.append(row);
+  }
+  results.append(facts);
+
+  if (report.entropy_windows.length > 1) results.append(entropyChart(report.entropy_windows));
+
+  results.append(el("h3", "", T("web_guesses")));
+  if (!report.guesses.length) {
+    results.append(el("p", "dim", T("web_no_guess")));
+    return;
+  }
+  for (const guess of report.guesses) {
+    const card = el("div", "card " + levelClass(guess.confidence));
+    const head = el("div", "card-head");
+    head.append(
+      el("span", "score", guess.confidence.toFixed(2)),
+      el("span", "label", guess.label),
+      el("span", "rule", guess.rule),
+    );
+    card.append(head);
+    const reasons = el("ul");
+    for (const reason of guess.reasons) reasons.append(el("li", "", reason));
+    card.append(reasons);
+    if (guess.next_step) {
+      const next = el("div", "next", T("web_next_step") + ": ");
+      next.append(el("code", "", guess.next_step));
+      card.append(next);
+    }
+    results.append(card);
+  }
+}
+
+// Bar chart of entropy per window: tall bars = random-looking (encrypted/compressed).
+function entropyChart(windows) {
+  const wrap = el("div", "entropy-chart");
+  wrap.append(el("h3", "", T("web_entropy_chart")));
+  const ns = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(ns, "svg");
+  svg.setAttribute("viewBox", "0 0 " + windows.length + " 8");
+  svg.setAttribute("preserveAspectRatio", "none");
+  windows.forEach((value, index) => {
+    const bar = document.createElementNS(ns, "rect");
+    bar.setAttribute("x", index);
+    bar.setAttribute("y", 8 - value);
+    bar.setAttribute("width", 0.9);
+    bar.setAttribute("height", value);
+    bar.setAttribute("fill", value > 7.5 ? "#ef6b73" : value > 5 ? "#e5c07b" : "#5fb3f9");
+    const title = document.createElementNS(ns, "title");
+    title.textContent = "offset " + index * 256 + ": " + value;
+    bar.append(title);
+    svg.append(bar);
+  });
+  wrap.append(svg);
+  return wrap;
+}
+
+// ---------------------------------------------------------------- file input
+function loadFile(file) {
+  const reader = new FileReader();
+  reader.onload = () => {
+    const bytes = new Uint8Array(reader.result);
+    state.file = { name: file.name, b64: bytesToBase64(bytes), size: bytes.length };
+    $("file-name").textContent = file.name + " (" + bytes.length + " " + T("web_bytes") + ")";
+    $("file-info").classList.remove("hidden");
+    $("input-text").disabled = true;
+    schedulePreview();
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+function clearFile() {
+  state.file = null;
+  $("file-input").value = "";
+  $("file-info").classList.add("hidden");
+  $("input-text").disabled = false;
+}
+
+// ---------------------------------------------------------------- tabs
+function selectTab(button) {
+  if (button.dataset.milestone) return;
+  state.tab = button.dataset.tab;
+  for (const tab of document.querySelectorAll(".tab")) tab.classList.toggle("active", tab === button);
+  $("tab-help").textContent = T("web_" + state.tab + "_help");
+  $("results").replaceChildren();
+  setStatus("");
+}
+
+// ---------------------------------------------------------------- start-up
+async function init() {
+  try {
+    state.strings = await (await fetch("/api/strings")).json();
+  } catch (error) {
+    state.strings = {};
+  }
+  for (const node of document.querySelectorAll("[data-t]")) node.textContent = T(node.dataset.t);
+  for (const node of document.querySelectorAll("[data-t-placeholder]")) {
+    node.placeholder = T(node.dataset.tPlaceholder);
+  }
+
+  // Tabs not built yet are disabled, with a tooltip saying when they arrive.
+  for (const tab of document.querySelectorAll(".tab")) {
+    if (tab.dataset.milestone) {
+      tab.disabled = true;
+      tab.title = T("web_coming", { milestone: tab.dataset.milestone });
+    }
+    tab.addEventListener("click", () => selectTab(tab));
+  }
+  $("tab-help").textContent = T("web_auto_help");
+
+  fetch("/api/health").then((r) => r.json()).then((health) => {
+    $("version").textContent = "v" + health.version;
+    $("offline-badge").classList.toggle("hidden", !health.offline);
+  });
+
+  $("run").addEventListener("click", run);
+  $("input-text").addEventListener("input", schedulePreview);
+  $("format").addEventListener("change", schedulePreview);
+  document.addEventListener("keydown", (event) => {
+    if (event.ctrlKey && event.key === "Enter") {
+      event.preventDefault();
+      run();
+    }
+  });
+
+  const zone = $("drop-zone");
+  zone.addEventListener("click", () => $("file-input").click());
+  zone.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" || event.key === " ") $("file-input").click();
+  });
+  $("file-input").addEventListener("change", (event) => {
+    if (event.target.files[0]) loadFile(event.target.files[0]);
+  });
+  zone.addEventListener("dragover", (event) => {
+    event.preventDefault();
+    zone.classList.add("over");
+  });
+  zone.addEventListener("dragleave", () => zone.classList.remove("over"));
+  zone.addEventListener("drop", (event) => {
+    event.preventDefault();
+    zone.classList.remove("over");
+    if (event.dataTransfer.files[0]) loadFile(event.dataTransfer.files[0]);
+  });
+  $("file-clear").addEventListener("click", () => {
+    clearFile();
+    schedulePreview();
+  });
+}
+
+init();

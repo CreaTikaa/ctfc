@@ -49,7 +49,8 @@ def looks_like_base64(text: str) -> bool:
     a digit, '+', '/', '=' or a long length. Use `text:` to force plain text.
     """
     cleaned = re.sub(r"\s", "", text)
-    if len(cleaned) < 8 or not BASE64_RE.match(cleaned):
+    # Real base64 comes in groups of 4 characters (with '=' padding).
+    if len(cleaned) < 8 or len(cleaned) % 4 or not BASE64_RE.match(cleaned):
         return False
     has_evidence = bool(re.search(r"[0-9+/=_\-]", cleaned)) or len(cleaned) >= 20
     if not has_evidence:
@@ -82,9 +83,20 @@ def decode_base64(text: str) -> bytes:
         raise InputError(f"invalid base64 ({exc}); expected e.g. b64:QUJDRA==") from exc
 
 
-def parse_input(spec: str, stdin: BinaryIO | None = None) -> Input:
-    """Parse one input specification (see module docstring) into an `Input`."""
-    if spec == "-":
+def parse_input(
+    spec: str,
+    stdin: BinaryIO | None = None,
+    allow_files: bool = True,
+    decode_bare: bool = True,
+) -> Input:
+    """Parse one input specification (see module docstring) into an `Input`.
+
+    allow_files=False: the web UI uses it, a browser must never make the server read
+        its own files (or stdin).
+    decode_bare=False: keep bare hex/base64 text as text. `detect` and `auto` use it,
+        because they recognise encodings themselves and can then show every layer.
+    """
+    if allow_files and spec == "-":
         stream = stdin if stdin is not None else sys.stdin.buffer
         return Input(data=stream.read(), source="stdin")
 
@@ -98,9 +110,11 @@ def parse_input(spec: str, stdin: BinaryIO | None = None) -> Input:
 
     path = Path(spec)
     # Very long strings cannot be file names; avoid OSError("File name too long").
-    if len(spec) < 4096 and path.is_file():
+    if allow_files and len(spec) < 4096 and path.is_file():
         return Input(data=path.read_bytes(), source=f"file:{path}")
 
+    if not decode_bare:
+        return Input(data=spec.encode("utf-8"), source="text")
     return parse_bare_text(spec)
 
 
