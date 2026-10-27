@@ -1,6 +1,6 @@
 # Handoff notes (for the next agent)
 
-Last update: 2026-10-27, after milestone M4. Read `CLAUDE.md` first, then this file.
+Last update: 2026-10-27, after milestone M5. Read `CLAUDE.md` first, then this file.
 
 ## 1. Working agreement with the user
 
@@ -23,15 +23,19 @@ Last update: 2026-10-27, after milestone M4. Read `CLAUDE.md` first, then this f
 | M1 detect + auto | `dcd775e` | encodings, scoring, flags, magic, detect, auto, rich CLI, web UI (Auto/Detect) |
 | M2 XOR | `369bfef` | xor.py, XOR in auto, `ctfc xor`, web jobs (progress/cancel), XOR tab |
 | M3 symmetric | `244a7ae` | symmetric.py, kdf.py, tea.py, blockmodes.py, `ctfc sym`, `ctfc blob`, web Symmetric tab |
-| M4 Code Lens | this one | lens.py, lens_python.py, lens_rules.py, data/lens_rules.toml, `ctfc lens`, web Code Lens tab |
-| M5 RSA + hashes | - | **next**, plan in section 5 |
+| M4 Code Lens | `c367e69` | lens.py, lens_python.py, lens_rules.py, data/lens_rules.toml, `ctfc lens`, web Code Lens tab |
+| M5 RSA + hashes | this one | rsa.py, rsa_attacks.py, hashes.py, data/hashcat_modes.toml, `ctfc rsa`, `ctfc hash`, web RSA + Hash tabs |
+| improvement ideas | - | **next**: the user said to start them directly once M5 is validated (section 5) |
+| M6 pipeline + CyberChef + tools | - | after the ideas |
 
-240 tests pass (`.venv/bin/python -m pytest -q`, ~9 s), `ruff check .` and `ruff format --check .`
+324 tests pass (`.venv/bin/python -m pytest -q`, ~9 s), `ruff check .` and `ruff format --check .`
 clean.
 
-**The user said on 2026-10-27, for M4: "tu peux directement commencer avec ton plan, pas besoin de
-me le présenter".** That waiver was for M4 only. For M5, post the plan in French and wait, unless
-he says otherwise again.
+**Plan approval: the user waived it twice on 2026-10-27.** For M4: "tu peux directement commencer
+avec ton plan, pas besoin de me le présenter". For M5 and the improvement ideas that follow:
+"Fais un plan pour M5. Et commence directement sans ma confirmation. Pour les améliorations,
+commence directement après avoir validé M5." So: write the plan, post it with the results, do not
+wait. Ask again before M6 unless he repeats the waiver.
 
 ## 3. Environment
 
@@ -81,11 +85,22 @@ Added modules (small, one responsibility each):
 - `data/lens_rules.toml` (M4): 60 rules. **Adding support for an API is one TOML entry, not code.**
   Fields: id, languages, regex, explain, operation, direction, capture, capture_as, behaviour,
   cipher, mode. `tests/test_lens.py::test_every_rule_is_well_formed` validates them all.
+- `core/rsa.py` (M5): `KeyInfo` (n, e, d, p, q + `facts()` which names the weaknesses it can
+  see), `parse_key()`, `build_key()` (completes d from p,q,e and p,q from n,e,d), `keys_match()`,
+  `decrypt_candidates()` (OAEP-SHA1, OAEP-SHA256, PKCS#1 v1.5, textbook, all scored),
+  `small_exponent_candidates()` (the e-th root attack, no key needed) and `solve_rsa()`.
+- `core/rsa_attacks.py` (M5): the integer maths, one function per weakness. `run_attacks()` runs
+  them **cheapest first with a per-attack slice of the budget** - without that, Pollard rho (which
+  can never say "no") starves Fermat. `iroot`/`isqrt` use gmpy2 when installed, else Newton on ints.
+- `core/hashes.py` + `data/hashcat_modes.toml` (M5): 42 formats, identification by prefix (strong),
+  full-shape regex (strong) or length+charset (weak, every candidate listed). Plus one free offline
+  try of the embedded password list on the *unsalted* formats only.
 - `render.py`: rich tables; all sample data goes through `safe()`. `print_notes()` added in M3,
-  `print_lens()` in M4.
+  `print_lens()` in M4, `print_rsa()` / `print_hash()` / `print_key_comparison()` in M5.
 - `web/jobs.py`: background jobs. Kinds handled in `web/app.py::prepare()`: `auto`, `xor`, `sym`,
-  `blob`. Sync twins: `/api/auto`, `/api/xor`, `/api/detect`, `/api/sym`, `/api/lens` (Code Lens
-  is static analysis, so it is fast enough to answer directly - no job needed).
+  `blob`, `rsa` (an attack can take seconds). Sync twins: `/api/auto`, `/api/xor`, `/api/detect`,
+  `/api/sym`, `/api/rsa`, plus `/api/lens` and `/api/hash`, which are fast enough to answer
+  directly with no job.
 - `core/codegen.py`: a result chain is a list of `Step(name, params)`; `step_code()` maps a step to
   `StepCode(label, comment, python, imports, import_lines, helper, cyberchef)`. M3 added
   `Step("cipher", params)` (`cipher_step_code`) and the `import_lines` field (for
@@ -135,6 +150,19 @@ Code Lens decisions (M4), all with a test that pins them:
 - `peel_blobs()` applies the chain to *every* blob and ranks by `scoring.py`, so the flag regexes
   fire; the answer is usually the first row.
 
+RSA and hash decisions (M5):
+- Attacks run cheapest-first, each with its own budget slice (see above). If nothing fires, the
+  report says plainly that a proper modulus will not be factored here and points at the
+  ciphertext instead - never an endless "trying".
+- A verified padding (OAEP / PKCS#1 v1.5) adds 0.2 to the score, like PKCS7 in M3: it is
+  near-proof the key is right.
+- An RSA result of 16/24/32/44/48 unreadable bytes is reported as **key material**, with the
+  `ctfc blob` command to run next (test: `test_rsa_wrapping_an_aes_key_hands_over_to_blob`).
+- Hash identification never claims certainty from a length alone; every same-shape candidate is
+  listed with its mode. `test_every_example_is_recognised_as_its_own_format` is the guard that
+  catches a typo in a pattern (it already caught one in phpass).
+- The embedded password list is tried only on unsalted formats; anything salted goes to hashcat.
+
 Conventions **verified against real implementations** in M3 (tests enforce them):
 - `openssl enc -aes-256-cfb` = pycryptodome `MODE_CFB, segment_size=128`; our separate `cfb8`
   mode is pycryptodome's default (one segment per byte).
@@ -158,37 +186,39 @@ Known limitations / open points:
 - No XChaCha20 (24-byte nonce), no AES-SIV, no DES degenerate-key handling beyond what
   pycryptodome refuses (caught as `CryptoError` and skipped).
 - `docs/cheatsheet.md` does not exist yet (CLAUDE.md puts it in M8 with the web tab).
+- RSA: no Hastad (same message under several keys with the same small e), no Franklin-Reiter, no
+  partial-key (Coppersmith) attacks - they need lattice work that would mean a new dependency.
+  factordb is **not** wired yet: CLAUDE.md wants it as an opt-in online button, which belongs with
+  the M6 tool bridge (the `offline` config flag and `--offline` already exist).
+- `gmpy2` is not installed here, so the pure-Python path is the one that gets exercised.
 - Code Lens: a key computed at runtime cannot be recovered statically (the KDF call is reported);
   control flow is not simulated, so a character-by-character loop with arithmetic is not folded
   (the char-code *array* form is); the rule-based languages have no notion of scope.
 - `tests/fixtures/*` is excluded from ruff in `pyproject.toml`: the Code Lens samples are data,
   deliberately written in obfuscated dropper style, and must stay byte-for-byte as they are.
 
-## 5. Plan for M5 (RSA + hashes) - post it in French and wait for his OK
+## 5. Next: the improvement ideas (he said to start them directly after M5)
 
-CLAUDE.md section 4.5.
+Order proposed, cheapest and most useful first. Each one ends with tests, a demo command and a
+commit, like a milestone.
 
-1. `core/rsa.py`: parse PEM/DER public and private keys (pycryptodome `RSA.import_key`), print n,
-   e, d, p, q, bit size; check that a private key matches a public one (compare moduli); decrypt
-   with OAEP (SHA-1/SHA-256) and PKCS#1 v1.5, trying both and scoring the result; build a key from
-   `n,e,p,q` or `n,e,d` (`RSA.construct`), including the `d` from `p,q,e` computation.
-2. Offline attacks on weak keys, each with a one-line explanation of *why* it works: small `e`
-   (integer cube root with `gmpy2` if present, else Newton on ints), shared factors across several
-   keys (gcd of moduli), Fermat (p and q close), Wiener (small `d`, continued fractions), trial
-   division by small primes, and Hastad for the same message under several keys if cheap.
-   factordb is an **opt-in online button** (config `offline`, `--offline`), with the warning.
-3. `core/hashes.py` + `data/hashcat_modes.toml`: identify a hash from its length, charset and
-   prefix, then print the ready `hashcat -m <mode>` and `john --format=<x>` commands. Include the
-   DB/auth formats CLAUDE.md names: MySQL native `$mysqlna$<salt>*<response>` (fixture exists),
-   NTLM, bcrypt `$2y$`, sha512crypt `$6$`, Kerberos AS-REP/TGS, plus the plain md5/sha family.
-   **No cracker**: identify + hand over (tiny wordlist / known-plaintext cases are fine).
-4. CLI `ctfc rsa` (`--key`, `--decrypt`, `--n/--e/--d/--p/--q`, `--attack`) and `ctfc hash <hash>`;
-   web RSA and Hash tabs. Remove `rsa`/`hash` from `PLANNED` and the `data-milestone` attributes.
-5. Fixtures: an RSA keypair with a known flag (OAEP and PKCS1v15 variants), a small-`e` key, two
-   keys sharing a prime, a Fermat-weak key, a Wiener-weak key, the RSA-OAEP-wrapped AES key||iv
-   blob CLAUDE.md asks for in section 9, and one hash per format in the table.
-6. Docs: a `how-it-works.md` section on RSA (why `e=3` on a short message is a cube root, what
-   OAEP padding is for, why sharing a prime breaks both keys), and the hash identification table.
+1. **"Apply" buttons in Detect** (idea 1): every `Guess` already carries a `next_step` string.
+   Add a machine-readable `apply` field (`{"tab": "xor", "options": {"keylen": 6}}`) and make the
+   web UI turn it into a button that switches tab and pre-fills the options. Now cheap, since all
+   the target tabs exist.
+2. **XOR key from a hash of a common word** (idea 8): in `xor.py`, try md5/sha1/sha256 of the
+   embedded password list (and of the flag prefixes) as repeating keys, under a budget. M3's
+   `key_forms` already does this for cipher keys, so it is the same idea one module over.
+3. **`ctfc scan <folder>`** (idea 3): run detect + auto on every file in a folder, rank the ones
+   that contain something, print a table. Reuses everything; add `--recursive` and a time budget.
+4. **Custom base64 alphabet** (idea 2): `detect` already finds the alphabet; pass it to `auto` as
+   a decoder variant.
+5. **pcap extraction in stdlib** (idea 4): read pcap/pcapng, pull HTTP bodies and reassemble DNS
+   exfiltration (base32/hex subdomains), then feed `auto`. The biggest of the five; do it last,
+   and keep it in its own module `core/pcap.py`.
+
+Idea 6 (history of "Use as next input", export the chain) belongs with M6's pipeline, and idea 7
+(stego tool suggestions) with M6's tool registry: leave both there.
 
 ## 6. Improvement ideas (open: he said "on les feras toutes apres si M3 est fonctionnel")
 
@@ -205,6 +235,9 @@ CLAUDE.md section 4.5.
    Note: M3 already does this for *cipher* keys (`key_forms` hashes the given key), so the same
    trick in `xor.py` would be a small addition.
 
+Ideas 5 (password list) and, in M5, the hash hand-off are done. See section 5 for the order the
+remaining ones will be done in.
+
 ## 7. Quick verification commands
 
 ```sh
@@ -219,5 +252,8 @@ ctfc sym tests/fixtures/openssl_salted_pbkdf2.bin --passwords
 ctfc sym tests/fixtures/xtea_cbc.bin --pass tiny --cipher xtea
 ctfc lens tests/fixtures/lens_dropper.ps1 --show-code
 ctfc lens tests/fixtures/lens_layers.py
+ctfc rsa --key tests/fixtures/rsa_fermat.pub.pem --decrypt tests/fixtures/rsa_fermat.bin --attack
+ctfc rsa --key tests/fixtures/rsa_private.pem --check tests/fixtures/rsa_public.pem
+ctfc hash 482c811da5d5b4bc6d497ffa98491e38
 ctfc serve   # http://127.0.0.1:8137
 ```

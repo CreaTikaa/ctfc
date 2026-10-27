@@ -240,3 +240,114 @@ def print_detect(console: Console, report: DetectReport) -> None:
             safe(guess.next_step),
         )
     console.print(table)
+
+
+def print_key_comparison(console: Console, first, second, same: bool, why: str) -> None:
+    """`ctfc rsa --check`: do these two keys belong together?"""
+    style = "bold green" if same else "yellow"
+    console.print(f"[{style}]{'MATCH' if same else 'NO MATCH'}[/]: {escape(why)}")
+    table = Table(show_header=True, expand=False)
+    table.add_column("")
+    table.add_column("first key")
+    table.add_column("second key")
+    table.add_row("kind", _kind(first), _kind(second))
+    table.add_row("size", f"{first.bits} bits", f"{second.bits} bits")
+    table.add_row("n", _tail(first.n), _tail(second.n))
+    table.add_row("e", str(first.e), str(second.e))
+    console.print(table)
+
+
+def _kind(key) -> str:
+    return "private" if key.is_private else "public"
+
+
+def _tail(number: int, keep: int = 20) -> str:
+    text = str(number)
+    return text if len(text) <= keep else "..." + text[-keep:]
+
+
+def print_rsa(console: Console, report, show_code: bool = False) -> None:
+    """`ctfc rsa`: the key, what the attacks tried, then the decryptions."""
+    if report.key is not None:
+        table = Table(title="the key", show_header=False, expand=False)
+        table.add_column("name", style="cyan")
+        table.add_column("value")
+        for name, value in report.key.facts():
+            table.add_row(name, safe(value, 160))
+        console.print(table)
+
+    if report.attacks is not None:
+        attacks = report.attacks
+        console.print("[bold]attacks tried:[/] " + safe(", ".join(attacks.tried)))
+        if attacks.factorisation is not None:
+            found = attacks.factorisation
+            lines = [
+                f"[bold green]n factored[/] by {escape(found.method)}",
+                "",
+                f"  {safe(found.explanation)}",
+                "",
+                f"  p = {_tail(found.p, 40)}",
+                f"  q = {_tail(found.q, 40)}",
+            ]
+            console.print(Panel("\n".join(lines), title="weakness found", expand=True))
+            if show_code and found.python:
+                console.print(Syntax(found.python, "python", theme="monokai", word_wrap=True))
+        elif attacks.private_exponent is not None:
+            found = attacks.private_exponent
+            console.print(
+                Panel(
+                    f"[bold green]d recovered[/] by {escape(found.method)}\n\n"
+                    f"  {safe(found.explanation)}\n\n  d = {_tail(found.d, 40)}",
+                    title="weakness found",
+                    expand=True,
+                )
+            )
+        for note in attacks.notes:
+            console.print(f"[yellow]*[/] {safe(note)}")
+
+    for note in report.notes:
+        console.print(f"[cyan]*[/] {safe(note)}")
+
+    if report.candidates:
+        print_candidates(console, report.candidates, show_code=show_code, title="RSA decryption")
+
+
+def print_hash(console: Console, report) -> None:
+    """`ctfc hash`: what the string is, and the command that cracks it."""
+    facts = Table(title="Facts", show_header=False, expand=False)
+    facts.add_column("name", style="cyan")
+    facts.add_column("value")
+    for name, value in report.facts:
+        facts.add_row(name, safe(value, 120))
+    console.print(facts)
+
+    if report.matches:
+        table = Table(title="possible formats", expand=True, show_lines=True)
+        table.add_column("conf", justify="right", width=5)
+        table.add_column("format", ratio=2)
+        table.add_column("mode", width=12)
+        table.add_column("command / notes", ratio=4)
+        for match in report.matches:
+            modes = []
+            if match.format.hashcat is not None:
+                modes.append(f"hashcat -m {match.format.hashcat}")
+            if match.format.john:
+                modes.append(f"john {match.format.john}")
+            details = []
+            if match.cracked:
+                details.append(f"[bold green]password: {safe(match.cracked)}[/]")
+            command = match.format.hashcat_command() or match.format.john_command()
+            if command:
+                details.append(escape(command))
+            if match.format.notes:
+                details.append(f"[dim]{safe(match.format.notes, 200)}[/]")
+            table.add_row(
+                f"[{score_style(match.confidence)}]{match.confidence:.2f}[/]",
+                safe(match.format.name),
+                "\n".join(modes) or "-",
+                "\n".join(details),
+            )
+        console.print(table)
+
+    for note in report.notes:
+        console.print(f"[cyan]*[/] {safe(note)}")

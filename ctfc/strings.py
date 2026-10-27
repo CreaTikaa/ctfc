@@ -66,10 +66,31 @@ EN: dict[str, str] = {
     "cmd_blob": "unknown key/iv blob: test the usual splits against a ciphertext",
     "cmd_blob_ex": "example: ctfc blob keyiv.b64 --against ct.bin",
     "opt_blob_against": "the ciphertext to test the splits against (file, hex:..., b64:...)",
-    "cmd_rsa": "RSA: parse keys, decrypt, weak-key attacks",
-    "cmd_rsa_ex": "example: ctfc rsa --key priv.pem --decrypt ct.bin",
+    "cmd_rsa": "RSA: inspect keys, compare them, decrypt, attack weak keys",
+    "cmd_rsa_ex": (
+        "examples: ctfc rsa --key priv.pem --decrypt ct.bin  |  "
+        "ctfc rsa --key pub.pem --decrypt ct.bin --attack  |  "
+        "ctfc rsa --n 0x... --e 3 --decrypt ct.bin  |  "
+        "ctfc rsa --key a.pub --attack --other b.pub  |  ctfc rsa --key priv.pem --check pub.pem"
+    ),
+    "opt_rsa_key": "a PEM / DER / OpenSSH key file (public or private)",
+    "opt_rsa_pass": "passphrase of an encrypted private key",
+    "opt_rsa_decrypt": "ciphertext to decrypt (file, hex:..., b64:...)",
+    "opt_rsa_attack": "look for a weakness: small primes, Fermat, Wiener, Pollard, shared prime",
+    "opt_rsa_other": "another key or modulus to compare with (repeatable): finds a shared prime",
+    "opt_rsa_check": "another key: check whether it is the pair of this one (same modulus)",
+    "opt_rsa_n": "the modulus n, in decimal or 0x hex",
+    "opt_rsa_e": "the public exponent e (default 65537)",
+    "opt_rsa_d": "the private exponent d",
+    "opt_rsa_p": "the prime p",
+    "opt_rsa_q": "the prime q",
     "cmd_hash": "identify a hash and print the hashcat/john command",
-    "cmd_hash_ex": "example: ctfc hash '$2y$10$...'",
+    "cmd_hash_ex": (
+        "examples: ctfc hash '$2y$10$...'  |  ctfc hash 5f4dcc3b5aa765d61d8327deb882cf99  |  "
+        "ctfc hash '$mysqlna$...' --json"
+    ),
+    "arg_hash": "the hash string (quote it: it often contains $)",
+    "opt_hash_no_passwords": "do not try the embedded password list on unsalted formats",
     "cmd_lens": "static crypto analysis of a script + generated recovery script",
     "cmd_lens_ex": (
         "examples: ctfc lens dropper.ps1  |  ctfc lens stage1.py --show-code  |  "
@@ -161,6 +182,27 @@ EN: dict[str, str] = {
     "web_lens_recovery": "Recovery script",
     "web_lens_complete": "complete",
     "web_lens_partial": "partial: check it",
+    "web_rsa_help": "Ciphertext on the left, key (or n/e) in the options. Tick the box to look "
+    "for a weak key. Nothing is sent anywhere.",
+    "web_rsa_key": "key (PEM) - paste it, or leave empty and fill n/e below",
+    "web_rsa_key_ph": "-----BEGIN PUBLIC KEY----- ...",
+    "web_rsa_number_ph": "decimal, or 0x for hex",
+    "web_rsa_optional_ph": "optional",
+    "web_rsa_n": "n (modulus)",
+    "web_rsa_e": "e (exponent)",
+    "web_rsa_d": "d (private exponent)",
+    "web_rsa_p": "p",
+    "web_rsa_q": "q",
+    "web_rsa_other": "other keys or moduli (one per line): finds a shared prime",
+    "web_rsa_attack": "look for a weakness (small primes, Fermat, Wiener, Pollard)",
+    "web_rsa_facts": "The key",
+    "web_rsa_tried": "tried",
+    "web_rsa_no_weakness": "no weakness found offline",
+    "web_hash_help": "Paste a hash. ctfc identifies the format and gives the hashcat / john "
+    "command; it does not crack it (except a free try on the embedded list).",
+    "web_hash_formats": "Possible formats, best first",
+    "web_hash_none": "No known format matches. Try the Detect tab: it may be base64 or hex.",
+    "web_hash_no_passwords": "do not try the embedded password list",
     "web_blob_needs_ct": "to test a blob, also give the ciphertext it should decrypt.",
     "web_cancel": "Cancel",
     "web_cancelled": "Cancelled: partial results below.",

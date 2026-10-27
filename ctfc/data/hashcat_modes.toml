@@ -1,0 +1,459 @@
+# Hash formats, their hashcat / john names, and how to recognise them.
+# Written by hand. ctfc identifies a hash and prints the ready command; it is not
+# a cracker (CLAUDE.md section 2: "identify them and print the ready-to-run
+# hashcat/john command rather than writing a cracker").
+#
+# Fields:
+#   id          short name used in the report
+#   name        what it is, in words
+#   hashcat     hashcat -m number (omit when hashcat has no mode for it)
+#   john        john --format= name (omit when john has none)
+#   prefix      the hash starts with this text -> a strong, almost certain match
+#   regex       full-match regular expression (anchored automatically)
+#   length      length in characters, for the plain hex formats
+#   charset     "hex" (0-9a-f), "hex_upper", "base64", "any"
+#   confidence  0..1 when matched; prefixed formats are high, bare hex is low
+#   notes       what to watch out for, shown to the user
+#   example     a real-looking sample (never a real secret)
+#
+# Several formats share a length (md5, ntlm, md4, md2 are all 32 hex chars), so
+# the report shows every candidate, ranked. That is the honest answer.
+
+# ---------------------------------------------------------------------------
+# Prefixed formats: these are nearly certain
+# ---------------------------------------------------------------------------
+
+[[hash]]
+id = "bcrypt"
+name = "bcrypt"
+hashcat = 3200
+john = "bcrypt"
+regex = '''\$2[abxy]?\$\d{2}\$[./A-Za-z0-9]{53}'''
+confidence = 0.99
+notes = "the number after the second $ is the cost: 10 means 2^10 rounds, so cracking is slow by design"
+example = "$2y$10$3FsIFkRaKqDvx3s9zfkcAeNvYZ.mN8W1FbGn2m7ql0BBx1HKMiMVO"
+
+[[hash]]
+id = "sha512crypt"
+name = "sha512crypt (Linux /etc/shadow)"
+hashcat = 1800
+john = "sha512crypt"
+prefix = "$6$"
+confidence = 0.99
+notes = "format $6$<salt>$<hash>; the default on modern Linux"
+example = "$6$salt1234$Pq8Qw0Xy...."
+
+[[hash]]
+id = "sha256crypt"
+name = "sha256crypt (Linux /etc/shadow)"
+hashcat = 7400
+john = "sha256crypt"
+prefix = "$5$"
+confidence = 0.99
+notes = "format $5$<salt>$<hash>"
+example = "$5$salt1234$Hs8Hd..."
+
+[[hash]]
+id = "md5crypt"
+name = "md5crypt (old Linux, FreeBSD)"
+hashcat = 500
+john = "md5crypt"
+prefix = "$1$"
+confidence = 0.99
+notes = "1000 iterations of md5; weak but still seen on old systems"
+example = "$1$salt1234$ABCDEFGHIJKLMNOPQRSTU."
+
+[[hash]]
+id = "apr1"
+name = "Apache apr1-md5 (.htpasswd)"
+hashcat = 1600
+john = "md5crypt-long"
+prefix = "$apr1$"
+confidence = 0.99
+notes = "md5crypt with an Apache-specific magic string"
+example = "$apr1$salt1234$ABCDEFGHIJKLMNOPQRSTU."
+
+[[hash]]
+id = "yescrypt"
+name = "yescrypt (recent Linux /etc/shadow)"
+john = "yescrypt"
+prefix = "$y$"
+confidence = 0.99
+notes = "hashcat has no mode for it yet; john handles it"
+example = "$y$j9T$salt$hash"
+
+[[hash]]
+id = "phpass"
+name = "phpass (WordPress, Drupal 7)"
+hashcat = 400
+john = "phpass"
+regex = '''\$[PH]\$[./A-Za-z0-9]{31}'''
+confidence = 0.99
+notes = "$P$ is WordPress, $H$ is phpBB3; the character after it encodes the iteration count"
+example = "$P$B123456789012345678901234567890"
+
+[[hash]]
+id = "drupal7"
+name = "Drupal 7"
+hashcat = 7900
+john = "drupal7"
+prefix = "$S$"
+confidence = 0.99
+notes = "sha512 based, with an iteration count"
+example = "$S$D1234567890abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLM"
+
+[[hash]]
+id = "argon2"
+name = "Argon2"
+john = "argon2"
+regex = '''\$argon2(id|i|d)\$v=\d+\$m=\d+,t=\d+,p=\d+\$[^$]+\$[^$]+'''
+confidence = 0.99
+notes = "memory-hard; the parameters are in the string itself"
+example = "$argon2id$v=19$m=65536,t=3,p=4$c2FsdHNhbHQ$aGFzaGhhc2g"
+
+[[hash]]
+id = "mysqlna"
+name = "MySQL native authentication challenge-response"
+hashcat = 11200
+john = "mysqlna"
+regex = '''\$mysqlna\$[0-9a-f]{40}\*[0-9a-f]{40}'''
+confidence = 0.99
+notes = "sniffed from the wire: $mysqlna$<20-byte salt>*<20-byte response>. Very common in forensics challenges with a pcap"
+example = "$mysqlna$1234567890abcdef1234567890abcdef12345678*abcdef1234567890abcdef1234567890abcdef12"
+
+[[hash]]
+id = "mysql41"
+name = "MySQL 4.1+ (SHA1(SHA1(password)))"
+hashcat = 300
+john = "mysql-sha1"
+# The leading * is what makes this recognisable. Without it the string is
+# indistinguishable from a plain sha1, and that is what the sha1 entry says.
+regex = '''\*[0-9A-Fa-f]{40}'''
+confidence = 0.97
+notes = "MySQL writes it with a leading *; without the *, a 40-hex string is indistinguishable from plain sha1"
+example = "*2470C0C06DEE42FD1618BB99005ADCA2EC9D1E19"
+
+[[hash]]
+id = "krb5asrep"
+name = "Kerberos 5 AS-REP etype 23 (AS-REP roasting)"
+hashcat = 18200
+john = "krb5asrep"
+prefix = "$krb5asrep$"
+confidence = 0.99
+notes = "obtained from an account with pre-authentication disabled"
+example = "$krb5asrep$23$user@DOMAIN:abcdef...$abcdef..."
+
+[[hash]]
+id = "krb5tgs"
+name = "Kerberos 5 TGS-REP etype 23 (kerberoasting)"
+hashcat = 13100
+john = "krb5tgs"
+prefix = "$krb5tgs$"
+confidence = 0.99
+notes = "obtained from a service account's ticket"
+example = "$krb5tgs$23$*user$DOMAIN$service*$abcdef...$abcdef..."
+
+[[hash]]
+id = "netntlmv2"
+name = "NetNTLMv2 (SMB authentication capture)"
+hashcat = 5600
+john = "netntlmv2"
+regex = '''[^:]+::[^:]*:[0-9a-fA-F]{16}:[0-9a-fA-F]{32}:[0-9a-fA-F]+'''
+confidence = 0.97
+notes = "user::domain:challenge:HMAC:blob, as Responder writes it. Very common in forensics"
+example = "user::DOMAIN:1122334455667788:1234567890abcdef1234567890abcdef:0101000000000000"
+
+[[hash]]
+id = "netntlmv1"
+name = "NetNTLMv1"
+hashcat = 5500
+john = "netntlm"
+regex = '''[^:]+::[^:]*:[0-9a-fA-F]{48}:[0-9a-fA-F]{48}:[0-9a-fA-F]{16}'''
+confidence = 0.97
+notes = "much weaker than v2: the response can be converted to the NT hash directly"
+example = "user::DOMAIN:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb:1122334455667788"
+
+[[hash]]
+id = "jwt"
+name = "JWT (JSON Web Token) signature"
+hashcat = 16500
+john = "HMAC-SHA256"
+regex = '''eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+'''
+confidence = 0.99
+notes = "header and payload are only base64url, not encrypted: decode them first (ctfc auto). Only the signature needs a key"
+example = "eyJhbGciOiJIUzI1NiJ9.eyJ1c2VyIjoiYWRtaW4ifQ.c2lnbmF0dXJl"
+
+[[hash]]
+id = "pdf"
+name = "PDF owner/user password"
+hashcat = 10500
+john = "pdf"
+prefix = "$pdf$"
+confidence = 0.99
+notes = "extract it with pdf2john first"
+example = "$pdf$4*4*128*-1028*1*16*abc*32*def*32*ghi"
+
+[[hash]]
+id = "zip"
+name = "WinZip / PKZIP encrypted archive"
+hashcat = 13600
+john = "zip"
+prefix = "$zip2$"
+confidence = 0.99
+notes = "extract it with zip2john first"
+example = "$zip2$*0*3*0*abc*def*...*$/zip2$"
+
+[[hash]]
+id = "rar5"
+name = "RAR5 archive"
+hashcat = 13000
+john = "rar5"
+prefix = "$rar5$"
+confidence = 0.99
+notes = "extract it with rar2john first"
+example = "$rar5$16$abc$15$def$8$ghi"
+
+[[hash]]
+id = "office"
+name = "MS Office document"
+hashcat = 9600
+john = "office"
+prefix = "$office$"
+confidence = 0.99
+notes = "mode depends on the version: 9400 (2007), 9500 (2010), 9600 (2013+). Extract with office2john"
+example = "$office$*2013*100000*256*16*abc*def*ghi"
+
+[[hash]]
+id = "keepass"
+name = "KeePass database"
+hashcat = 13400
+john = "KeePass"
+prefix = "$keepass$"
+confidence = 0.99
+notes = "extract it with keepass2john first"
+example = "$keepass$*1*6000*0*abc*def*ghi"
+
+[[hash]]
+id = "ssha"
+name = "LDAP salted SHA-1 ({SSHA})"
+hashcat = 111
+john = "ssha"
+prefix = "{SSHA}"
+confidence = 0.99
+notes = "base64 of sha1(password + salt) followed by the salt"
+example = "{SSHA}abcdefghijklmnopqrstuvwxyz0123456789AB"
+
+[[hash]]
+id = "ldap_md5"
+name = "LDAP MD5 ({MD5})"
+hashcat = 1600
+john = "md5"
+prefix = "{MD5}"
+confidence = 0.95
+notes = "base64 of a plain md5: unsalted"
+example = "{MD5}X03MO1qnZdYdgyfeuILPmQ=="
+
+[[hash]]
+id = "django_pbkdf2"
+name = "Django PBKDF2-SHA256"
+hashcat = 10000
+john = "django"
+prefix = "pbkdf2_sha256$"
+confidence = 0.99
+notes = "format pbkdf2_sha256$<iterations>$<salt>$<base64 hash>"
+example = "pbkdf2_sha256$260000$saltsalt$aGFzaGhhc2hoYXNoaGFzaA=="
+
+[[hash]]
+id = "mscash2"
+name = "Domain Cached Credentials 2 (DCC2, mscash2)"
+hashcat = 2100
+john = "mscash2"
+prefix = "$DCC2$"
+confidence = 0.99
+notes = "cached domain logon on a Windows workstation"
+example = "$DCC2$10240#user#abcdef1234567890abcdef1234567890"
+
+[[hash]]
+id = "vbulletin"
+name = "vBulletin (md5(md5(pass).salt))"
+hashcat = 2611
+john = "dynamic_4"
+regex = '''[0-9a-f]{32}:[^\s:]{3,}'''
+confidence = 0.75
+notes = "hash:salt format; many forum software packages look like this"
+example = "1234567890abcdef1234567890abcdef:saltysalt"
+
+[[hash]]
+id = "md5_salted"
+name = "salted md5 (hash:salt)"
+hashcat = 10
+john = "dynamic_1"
+regex = '''[0-9a-f]{32}:[0-9a-zA-Z]{1,32}'''
+confidence = 0.7
+notes = "mode 10 is md5(pass.salt), mode 20 is md5(salt.pass): try both"
+example = "1234567890abcdef1234567890abcdef:1234"
+
+[[hash]]
+id = "sha1_salted"
+name = "salted sha1 (hash:salt)"
+hashcat = 110
+john = "dynamic_24"
+regex = '''[0-9a-f]{40}:[0-9a-zA-Z]{1,32}'''
+confidence = 0.7
+notes = "mode 110 is sha1(pass.salt), mode 120 is sha1(salt.pass)"
+example = "1234567890abcdef1234567890abcdef12345678:1234"
+
+# ---------------------------------------------------------------------------
+# Bare hex formats: the length narrows it down, nothing more
+# ---------------------------------------------------------------------------
+
+[[hash]]
+id = "md5"
+name = "MD5"
+hashcat = 0
+john = "raw-md5"
+length = 32
+charset = "hex"
+confidence = 0.5
+notes = "32 hex characters is also MD4, MD2, NTLM, LM halves and RIPEMD-128: the length alone cannot tell them apart"
+example = "5f4dcc3b5aa765d61d8327deb882cf99"
+
+[[hash]]
+id = "ntlm"
+name = "NTLM (Windows NT hash)"
+hashcat = 1000
+john = "nt"
+length = 32
+charset = "hex"
+confidence = 0.45
+notes = "same shape as md5. From an SAM dump, the second field of user:rid:lm:nt::: is this one"
+example = "8846f7eaee8fb117ad06bdd830b7586c"
+
+[[hash]]
+id = "md4"
+name = "MD4"
+hashcat = 900
+john = "raw-md4"
+length = 32
+charset = "hex"
+confidence = 0.2
+notes = "same shape as md5 and NTLM"
+example = "31d6cfe0d16ae931b73c59d7e0c089c0"
+
+[[hash]]
+id = "lm"
+name = "LM (one half)"
+hashcat = 3000
+john = "lm"
+length = 16
+charset = "hex"
+confidence = 0.6
+notes = "a 16-hex-character half; LM is case-insensitive and splits the password in two 7-character halves, so it falls in seconds"
+example = "aad3b435b51404ee"
+
+[[hash]]
+id = "sha1"
+name = "SHA-1"
+hashcat = 100
+john = "raw-sha1"
+length = 40
+charset = "hex"
+confidence = 0.6
+notes = "40 hex characters is also RIPEMD-160, and MySQL 4.1+ when the leading * was dropped (hashcat -m 300)"
+example = "5baa61e4c9b93f3f0682250b6cf8331b7ee68fd8"
+
+[[hash]]
+id = "ripemd160"
+name = "RIPEMD-160"
+hashcat = 6000
+john = "ripemd-160"
+length = 40
+charset = "hex"
+confidence = 0.2
+notes = "same shape as sha1"
+example = "ab8b1d1ff3c6d0e0b1e9e2f0a1b2c3d4e5f60718"
+
+[[hash]]
+id = "sha224"
+name = "SHA-224"
+hashcat = 1300
+john = "raw-sha224"
+length = 56
+charset = "hex"
+confidence = 0.7
+example = "d14a028c2a3a2bc9476102bb288234c415a2b01f828ea62ac5b3e42f"
+
+[[hash]]
+id = "sha256"
+name = "SHA-256"
+hashcat = 1400
+john = "raw-sha256"
+length = 64
+charset = "hex"
+confidence = 0.6
+notes = "64 hex characters is also SHA3-256, BLAKE2s-256, Keccak-256 and GOST"
+example = "5e884898da28047151d0e56f8dc6292773603d0d6aabbdd62a11ef721d1542d8"
+
+[[hash]]
+id = "sha3_256"
+name = "SHA3-256"
+hashcat = 17400
+john = "raw-sha3"
+length = 64
+charset = "hex"
+confidence = 0.2
+notes = "same shape as sha256"
+example = "a7ffc6f8bf1ed76651c14756a061d662f580ff4de43b49fa82d80a4b80f8434a"
+
+[[hash]]
+id = "sha384"
+name = "SHA-384"
+hashcat = 10800
+john = "raw-sha384"
+length = 96
+charset = "hex"
+confidence = 0.8
+example = "38b060a751ac96384cd9327eb1b1e36a21fdb71114be07434c0cc7bf63f6e1da274edebfe76f65fbd51ad2f14898b95b"
+
+[[hash]]
+id = "sha512"
+name = "SHA-512"
+hashcat = 1700
+john = "raw-sha512"
+length = 128
+charset = "hex"
+confidence = 0.7
+notes = "128 hex characters is also Whirlpool and SHA3-512"
+example = "cf83e1357eefb8bdf1542850d66d8007d620e4050b5715dc83f4a921d36ce9ce47d0d13c5d85f2b0ff8318d2877eec2f63b931bd47417a81a538327af927da3e"
+
+[[hash]]
+id = "whirlpool"
+name = "Whirlpool"
+hashcat = 6100
+john = "whirlpool"
+length = 128
+charset = "hex"
+confidence = 0.2
+notes = "same shape as sha512"
+example = "19fa61d75522a4669b44e39c1d2e1726c530232130d407f89afee0964997f7a73e83be698b288febcf88e3e03c4f0757ea8964e59b63d93708b138cc42a66eb3"
+
+[[hash]]
+id = "crc32"
+name = "CRC32"
+hashcat = 11500
+length = 8
+charset = "hex"
+confidence = 0.4
+notes = "a checksum, not a hash: collisions are trivial, and hashcat wants it as hash:00000000"
+example = "190a55ad"
+
+[[hash]]
+id = "mysql323"
+name = "MySQL 3.2.3 (very old)"
+hashcat = 200
+john = "mysql"
+length = 16
+charset = "hex"
+confidence = 0.3
+notes = "same shape as an LM half; broken beyond repair"
+example = "6f8c114b58f2ce9e"

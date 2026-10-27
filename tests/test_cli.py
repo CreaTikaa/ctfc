@@ -33,9 +33,10 @@ def test_command_help_has_example():
 
 
 def test_planned_command_says_which_milestone():
-    result = run_ctfc("rsa")
+    """Commands that are not built yet must say which milestone brings them."""
+    result = run_ctfc("keys", "somedump.bin")
     assert result.returncode == 1
-    assert "M5" in result.stderr.decode()
+    assert "M7" in result.stderr.decode()
 
 
 def test_detect_json(tmp_path):
@@ -154,3 +155,100 @@ def test_lens_from_stdin():
     result = run_ctfc("lens", "-", "--json", stdin=script)
     assert result.returncode == 0, result.stderr.decode()
     assert b'"base64"' in result.stdout
+
+
+def test_rsa_command_attacks_and_decrypts():
+    result = run_ctfc(
+        "rsa",
+        "--key",
+        "tests/fixtures/rsa_fermat.pub.pem",
+        "--decrypt",
+        "tests/fixtures/rsa_fermat.bin",
+        "--attack",
+    )
+    assert result.returncode == 0, result.stderr.decode()
+    out = result.stdout.decode()
+    assert "CYBN{fixture_rsa_fermat}" in out
+    assert "Fermat" in out
+
+
+def test_rsa_command_from_raw_numbers():
+    """--n and --e instead of a key file, with a small exponent."""
+    import json
+
+    from Crypto.PublicKey import RSA
+
+    key = RSA.import_key(open("tests/fixtures/rsa_small_e.pub.pem", "rb").read())
+    result = run_ctfc(
+        "rsa",
+        "--n",
+        str(key.n),
+        "--e",
+        "3",
+        "--decrypt",
+        "tests/fixtures/rsa_small_e.bin",
+        "--json",
+    )
+    assert result.returncode == 0, result.stderr.decode()
+    answer = json.loads(result.stdout)
+    assert "CYBN{fixture_rsa_small_e}" in answer["candidates"][0]["data_text"]
+
+
+def test_rsa_check_pairs_keys():
+    ok = run_ctfc(
+        "rsa", "--key", "tests/fixtures/rsa_private.pem", "--check", "tests/fixtures/rsa_public.pem"
+    )
+    assert ok.returncode == 0 and b"MATCH" in ok.stdout
+    bad = run_ctfc(
+        "rsa",
+        "--key",
+        "tests/fixtures/rsa_private.pem",
+        "--check",
+        "tests/fixtures/rsa_fermat.pub.pem",
+    )
+    assert bad.returncode == 1 and b"NO MATCH" in bad.stdout
+
+
+def test_rsa_shared_prime_with_other():
+    result = run_ctfc(
+        "rsa",
+        "--key",
+        "tests/fixtures/rsa_shared_a.pub.pem",
+        "--decrypt",
+        "tests/fixtures/rsa_shared_a.bin",
+        "--attack",
+        "--other",
+        "tests/fixtures/rsa_shared_b.pub.pem",
+    )
+    assert result.returncode == 0, result.stderr.decode()
+    assert b"CYBN{fixture_rsa_shared}" in result.stdout
+
+
+def test_rsa_bad_number_is_an_error():
+    result = run_ctfc("rsa", "--n", "not-a-number", "--e", "3")
+    assert result.returncode == 2
+    assert b"not a number" in result.stderr
+
+
+def test_hash_command_identifies_and_cracks():
+    result = run_ctfc("hash", "482c811da5d5b4bc6d497ffa98491e38")
+    assert result.returncode == 0, result.stderr.decode()
+    out = result.stdout.decode()
+    assert "MD5" in out and "hashcat -m 0" in out
+    assert "password123" in out
+
+
+def test_hash_command_json_with_prefix_format():
+    import json
+
+    value = open("tests/fixtures/mysqlna_hash.txt").read().strip()
+    result = run_ctfc("hash", value, "--json")
+    assert result.returncode == 0, result.stderr.decode()
+    answer = json.loads(result.stdout)
+    assert answer["matches"][0]["id"] == "mysqlna"
+    assert answer["matches"][0]["hashcat_mode"] == 11200
+
+
+def test_hash_command_unknown_returns_one():
+    result = run_ctfc("hash", "definitely not a hash")
+    assert result.returncode == 1

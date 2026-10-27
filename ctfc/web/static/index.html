@@ -50,9 +50,9 @@
         <button class="tab" data-tab="pipeline" data-milestone="M6" data-t="web_tab_pipeline">Pipeline</button>
         <button class="tab" data-tab="xor" data-t="web_tab_xor">XOR</button>
         <button class="tab" data-tab="sym" data-t="web_tab_sym">Symmetric</button>
-        <button class="tab" data-tab="rsa" data-milestone="M5" data-t="web_tab_rsa">RSA</button>
+        <button class="tab" data-tab="rsa" data-t="web_tab_rsa">RSA</button>
         <button class="tab" data-tab="lens" data-t="web_tab_lens">Code Lens</button>
-        <button class="tab" data-tab="hash" data-milestone="M5" data-t="web_tab_hash">Hash</button>
+        <button class="tab" data-tab="hash" data-t="web_tab_hash">Hash</button>
         <button class="tab" data-tab="keys" data-milestone="M7" data-t="web_tab_keys">Keys</button>
         <button class="tab" data-tab="cheatsheet" data-milestone="M8" data-t="web_tab_cheatsheet">Cheatsheet</button>
       </nav>
@@ -107,6 +107,32 @@
           <input id="sym-seconds" type="number" min="1" max="120" value="30"></label>
         <label class="checkbox"><input id="sym-passwords" type="checkbox">
           <span data-t="web_sym_passwords">try the embedded password list</span></label>
+      </div>
+      <!-- Options of the RSA tab: a key file, or the raw numbers -->
+      <div id="options-rsa" class="options hidden">
+        <label class="wide"><span data-t="web_rsa_key">key (PEM) - paste it, or leave empty and fill n/e below</span>
+          <textarea id="rsa-key" spellcheck="false" data-t-placeholder="web_rsa_key_ph"></textarea></label>
+        <label><span data-t="web_rsa_n">n</span>
+          <input id="rsa-n" type="text" spellcheck="false" data-t-placeholder="web_rsa_number_ph"></label>
+        <label><span data-t="web_rsa_e">e</span>
+          <input id="rsa-e" type="text" spellcheck="false" placeholder="65537"></label>
+        <label><span data-t="web_rsa_d">d</span>
+          <input id="rsa-d" type="text" spellcheck="false" data-t-placeholder="web_rsa_optional_ph"></label>
+        <label><span data-t="web_rsa_p">p</span>
+          <input id="rsa-p" type="text" spellcheck="false" data-t-placeholder="web_rsa_optional_ph"></label>
+        <label><span data-t="web_rsa_q">q</span>
+          <input id="rsa-q" type="text" spellcheck="false" data-t-placeholder="web_rsa_optional_ph"></label>
+        <label class="wide"><span data-t="web_rsa_other">other keys or moduli (one per line): finds a shared prime</span>
+          <textarea id="rsa-other" spellcheck="false"></textarea></label>
+        <label><span data-t="web_sym_seconds">time budget (s)</span>
+          <input id="rsa-seconds" type="number" min="1" max="120" value="20"></label>
+        <label class="checkbox"><input id="rsa-attack" type="checkbox">
+          <span data-t="web_rsa_attack">look for a weakness (small primes, Fermat, Wiener, Pollard)</span></label>
+      </div>
+      <!-- Options of the Hash tab -->
+      <div id="options-hash" class="options hidden">
+        <label class="checkbox"><input id="hash-no-passwords" type="checkbox">
+          <span data-t="web_hash_no_passwords">do not try the embedded password list</span></label>
       </div>
       <div class="toolbar">
         <button id="run" class="primary" data-t="web_run">Run</button>

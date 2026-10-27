@@ -30,8 +30,10 @@ from ctfc.core.auto import auto_decode
 from ctfc.core.budget import Budget
 from ctfc.core.detect import detect
 from ctfc.core.flags import build_flagset
+from ctfc.core.hashes import identify as identify_hash
 from ctfc.core.inputs import InputError, decode_base64, decode_hex, parse_input
 from ctfc.core.lens import analyse as analyse_script
+from ctfc.core.rsa import RsaError, build_key, parse_key, solve_rsa
 from ctfc.core.symmetric import solve_symmetric
 from ctfc.core.types import Input
 from ctfc.core.xor import guess_key_lengths, solve_xor, xor_inputs
@@ -63,6 +65,17 @@ def input_from_payload(payload: dict, decode_bare: bool = True) -> Input:
     if fmt == "b64":
         return Input(data=decode_base64(text), source="b64")
     return parse_input(text, allow_files=False, decode_bare=decode_bare)
+
+
+def _number(value: object) -> int | None:
+    """Read a big integer from the browser: decimal, or 0x hex."""
+    text = str(value or "").strip().replace("_", "").replace(" ", "")
+    if not text:
+        return None
+    try:
+        return int(text, 16) if text.lower().startswith("0x") else int(text)
+    except ValueError as exc:
+        raise InputError(f"{text[:40]!r} is not a number (decimal, or 0x for hex)") from exc
 
 
 def input_summary(inp: Input) -> dict:
@@ -200,6 +213,44 @@ def create_app(config: Config | None = None) -> Flask:
 
             return work_sym, budget
 
+        if kind == "rsa":
+            # The input panel holds the ciphertext; the key goes in the options.
+            inp = input_from_payload(payload)
+            key_text = str(options.get("key") or "").strip()
+            if key_text:
+                key = parse_key(key_text.encode())
+            else:
+                key = build_key(
+                    n=_number(options.get("n")),
+                    e=_number(options.get("e")),
+                    d=_number(options.get("d")),
+                    p=_number(options.get("p")),
+                    q=_number(options.get("q")),
+                )
+            others = []
+            for line in str(options.get("other") or "").splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                others.append(parse_key(line.encode()).n if "-----" in line else int(line))
+            attack = bool(options.get("attack"))
+            seconds = min(float(options.get("seconds") or 20), 120)
+            budget = Budget(max_attempts=50_000_000, max_seconds=seconds)
+
+            def work_rsa(budget: Budget) -> dict:
+                report = solve_rsa(
+                    key,
+                    ciphertext=inp.data or None,
+                    flagset=flagset,
+                    attack=attack,
+                    other_moduli=others,
+                    budget=budget,
+                    top_n=config.top_n,
+                )
+                return {"input": input_summary(inp), **report.to_dict()}
+
+            return work_rsa, budget
+
         raise InputError(f"unknown tool '{kind}'")
 
     @app.get("/")
@@ -244,6 +295,22 @@ def create_app(config: Config | None = None) -> Flask:
         work, budget = prepare("sym")
         return jsonify(work(budget))
 
+    @app.post("/api/rsa")
+    def api_rsa():
+        work, budget = prepare("rsa")
+        return jsonify(work(budget))
+
+    @app.post("/api/hash")
+    def api_hash():
+        """Hash identification: instant, except the optional password-list try."""
+        payload = read_payload()
+        value = str(payload.get("input", "")).strip()
+        if not value:
+            raise InputError(t("web_empty_input"))
+        options = payload.get("options") or {}
+        report = identify_hash(value, try_passwords=not options.get("no_passwords"))
+        return jsonify(report.to_dict())
+
     @app.post("/api/lens")
     def api_lens():
         """Code Lens: static analysis only, so it is fast enough to answer directly."""
@@ -269,6 +336,10 @@ def create_app(config: Config | None = None) -> Flask:
     @app.post("/api/jobs/<job_id>/cancel")
     def cancel_job(job_id: str):
         return jsonify({"ok": jobs.cancel(job_id)})
+
+    @app.errorhandler(RsaError)
+    def bad_key(error: RsaError):
+        return jsonify({"error": str(error)}), 400
 
     @app.errorhandler(InputError)
     def bad_input(error: InputError):

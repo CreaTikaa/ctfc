@@ -481,3 +481,107 @@ ctfc sym <file> --pass "bashpass"
   character with arithmetic is not folded (the char-code *array* form is).
 - The rule-based languages see no variable scope, so a name reused for two
   different things can be mixed up. The line numbers in the report let you check.
+
+## 8. RSA (`ctfc/core/rsa.py`, `ctfc/core/rsa_attacks.py`)
+
+Every RSA question in a CTF is a question about one of five numbers:
+
+```
+n = p * q              the modulus, public
+e                      the public exponent, usually 65537
+d = e^-1 mod phi(n)    the private exponent, with phi(n) = (p-1)(q-1)
+
+encrypt:  c = m^e mod n          decrypt:  m = c^d mod n
+```
+
+Knowing p and q gives phi(n), which gives d, which gives the message. So the work
+is always one of two things: **get p and q**, or **notice that the message itself
+was left unprotected**.
+
+### Padding is not a detail
+
+Textbook RSA (`m^e mod n` and nothing more) is deterministic: the same message
+always gives the same ciphertext, and `m = 1` stays `1`. Real code wraps the
+message first:
+
+- **PKCS#1 v1.5**: `00 02 <random non-zero bytes> 00 <message>`. The padding is
+  verifiable, so a wrong key is usually rejected.
+- **OAEP**: a mask built from a hash (SHA-1 or SHA-256 - *both exist in the wild
+  and they are not interchangeable*). Verifiable too, and much stronger.
+
+ctfc tries OAEP-SHA1, OAEP-SHA256, PKCS#1 v1.5 and textbook, then scores the
+results. When a padding scheme *verifies*, that is near-proof the key is right,
+so those candidates get a bonus, exactly like valid PKCS7 in section 6.
+
+### The attacks, and the mistake each one punishes
+
+| the mistake | the shortcut | why it works |
+|---|---|---|
+| p or q tiny | trial division | ctfc divides by every prime below 100000 |
+| p and q close | **Fermat** | n = a² - b² = (a-b)(a+b); start at a = ⌈√n⌉ and walk up |
+| p-1 only has small factors | **Pollard p-1** | 2^k ≡ 1 (mod p) once (p-1) divides k, so gcd(2^k - 1, n) = p |
+| a factor below ~2^60 | **Pollard rho** | a random walk mod n collides mod p first |
+| d too small (< n^0.25/3) | **Wiener** | k/d appears in the continued fraction of e/n |
+| two keys share a prime | **gcd** | gcd(n1, n2) *is* the shared prime - instant, and it breaks both keys |
+| p == q | perfect square | √n; watch out, phi(n) = p(p-1) here, not (p-1)² |
+| small e, short message | **e-th root** | if m^e < n nothing wrapped, so m = ᵉ√c - no key at all |
+
+The last one deserves emphasis because it surprises people: with `e = 3` and a
+message of a few dozen bytes under a 1024-bit modulus, `m³` never reaches `n`, so
+the "encryption" is just a cube. ctfc also tries `c + k*n` for a few hundred `k`,
+which covers a message that wrapped a handful of times.
+
+Two practical decisions:
+
+- **Order and budget.** The attacks run cheapest-first, and each gets *its own
+  slice* of the time budget. Without that, Pollard rho (which can never say "no")
+  would eat everything before Fermat got a chance - which is exactly the bug the
+  first version had.
+- **Honesty.** If nothing fires, ctfc says so plainly: a properly generated
+  modulus will not be factored here, whatever the budget. The note points at the
+  ciphertext instead. A tool that keeps "trying" is a tool that wastes your CTF.
+
+`gmpy2` is used for the big-integer roots when it is installed (optional extra
+`pip install -e ".[fast]"`); otherwise the same work is done with Newton's method
+on plain Python integers.
+
+### RSA that wraps a key rather than a message
+
+A very common shape: RSA carries a 48-byte `key||iv` blob, and a second file holds
+the real payload under AES. So when a decryption comes out as 16, 24, 32, 44 or 48
+*unreadable* bytes, ctfc does not call it a failure - it says what the length means
+and hands over:
+
+```
+ctfc blob <that file> --against <the payload>
+```
+
+## 9. Hash identification (`ctfc/core/hashes.py`)
+
+ctfc does **not** crack hashes. hashcat and john are far better at it, and writing
+a third-rate cracker would be a waste of the time you have during a CTF. What is
+useful is the step before: *which format is this, and what is the mode number?*
+
+Three signals, strongest first:
+
+1. a **prefix**: `$2y$` (bcrypt), `$6$` (sha512crypt), `$krb5tgs$`, `{SSHA}`,
+   `pbkdf2_sha256$`... nearly certain,
+2. a **full-shape regex**: `$mysqlna$<40 hex>*<40 hex>`,
+   `user::domain:<16 hex>:<32 hex>:<blob>` (NetNTLMv2), a JWT's three parts,
+3. the **length and charset** alone, which is *weak*: 32 hex characters is MD5,
+   but equally NTLM, MD4, MD2 and RIPEMD-128.
+
+That third case is where tools usually lie to you by announcing "MD5" with
+confidence. ctfc lists every candidate with its mode, ranked, and says in so many
+words that the string alone cannot tell them apart - the context (an SAM dump? a
+web database? a pcap?) is what decides.
+
+The table lives in `ctfc/data/hashcat_modes.toml`, one entry per format with its
+hashcat mode, john format, notes and an example. A test identifies **every
+example against its own rule**, which is what caught a one-character typo in the
+phpass pattern while this was being written.
+
+One exception to "no cracking": for the unsalted formats (md5, sha1, sha256, NTLM
+and friends) ctfc hashes the 10000 embedded passwords and compares. That is the
+thirty-second check you would do by hand anyway, it is instant, and it is skipped
+for anything salted or iterated - which is precisely why salting exists.

@@ -18,8 +18,10 @@ from ctfc.core.auto import auto_decode
 from ctfc.core.budget import Budget
 from ctfc.core.detect import detect
 from ctfc.core.flags import FlagSet, build_flagset
+from ctfc.core.hashes import identify as identify_hash
 from ctfc.core.inputs import InputError, parse_input
 from ctfc.core.lens import analyse as analyse_script
+from ctfc.core.rsa import RsaError, build_key, keys_match, parse_key, solve_rsa
 from ctfc.core.symmetric import CryptoError, SolveReport, solve_symmetric
 from ctfc.core.types import Input
 from ctfc.core.xor import guess_key_lengths, solve_xor, xor_inputs
@@ -27,8 +29,6 @@ from ctfc.strings import t
 
 # Commands that exist in the interface but are built in a later milestone.
 PLANNED = {
-    "rsa": "M5",
-    "hash": "M5",
     "recipe": "M6",
     "tools": "M6",
     "keys": "M7",
@@ -90,11 +90,22 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--seconds", type=float, default=30.0, help=t("opt_seconds"))
 
     p = add("rsa")
-    p.add_argument("--key", help="PEM/DER key file")
-    p.add_argument("--decrypt", help="ciphertext to decrypt")
+    p.add_argument("--key", help=t("opt_rsa_key"))
+    p.add_argument("--pass", dest="passphrase", help=t("opt_rsa_pass"))
+    p.add_argument("--decrypt", help=t("opt_rsa_decrypt"))
+    p.add_argument("--attack", action="store_true", help=t("opt_rsa_attack"))
+    p.add_argument("--other", action="append", default=[], help=t("opt_rsa_other"))
+    p.add_argument("--check", help=t("opt_rsa_check"))
+    p.add_argument("--n", help=t("opt_rsa_n"))
+    p.add_argument("--e", help=t("opt_rsa_e"))
+    p.add_argument("--d", help=t("opt_rsa_d"))
+    p.add_argument("--p", help=t("opt_rsa_p"))
+    p.add_argument("--q", help=t("opt_rsa_q"))
+    p.add_argument("--seconds", type=float, default=20.0, help=t("opt_seconds"))
 
     p = add("hash")
-    p.add_argument("hash", help="the hash string")
+    p.add_argument("hash", help=t("arg_hash"))
+    p.add_argument("--no-passwords", action="store_true", help=t("opt_hash_no_passwords"))
 
     p = add("lens")
     p.add_argument("script", help=t("arg_script"))
@@ -279,6 +290,78 @@ def cmd_lens(args: argparse.Namespace, config: Config, console: Console) -> int:
     return 0 if report.operations else 1
 
 
+def parse_number(text: str | None) -> int | None:
+    """Read a big integer written in decimal or as 0x hex."""
+    if not text:
+        return None
+    cleaned = text.strip().replace("_", "").replace(" ", "")
+    try:
+        return int(cleaned, 16) if cleaned.lower().startswith("0x") else int(cleaned)
+    except ValueError as exc:
+        raise RsaError(f"{text!r} is not a number (use decimal, or 0x for hex)") from exc
+
+
+def read_modulus(spec: str) -> int:
+    """--other accepts a key file or a bare modulus."""
+    path = Path(spec)
+    if len(spec) < 4096 and path.is_file():
+        return parse_key(path.read_bytes()).n
+    number = parse_number(spec)
+    if number is None:
+        raise RsaError(f"could not read a modulus from {spec!r}")
+    return number
+
+
+def cmd_rsa(args: argparse.Namespace, config: Config, console: Console) -> int:
+    """RSA: inspect a key, compare two keys, decrypt, or attack a weak key."""
+    if args.key:
+        key = parse_key(parse_input(args.key, decode_bare=False).data, args.passphrase)
+    else:
+        key = build_key(
+            n=parse_number(args.n),
+            e=parse_number(args.e),
+            d=parse_number(args.d),
+            p=parse_number(args.p),
+            q=parse_number(args.q),
+        )
+
+    if args.check:
+        other = parse_key(parse_input(args.check, decode_bare=False).data)
+        same, why = keys_match(key, other)
+        if args.json:
+            print(json.dumps({"match": same, "reason": why}, indent=2))
+        else:
+            render.print_key_comparison(console, key, other, same, why)
+        return 0 if same else 1
+
+    ciphertext = parse_input(args.decrypt).data if args.decrypt else None
+    budget = Budget(max_attempts=50_000_000, max_seconds=args.seconds)
+    report = solve_rsa(
+        key,
+        ciphertext=ciphertext,
+        flagset=flagset_from(config),
+        attack=args.attack,
+        other_moduli=[read_modulus(spec) for spec in args.other],
+        budget=budget,
+        top_n=config.top_n,
+    )
+    if args.json:
+        print(json.dumps(report.to_dict(), indent=2))
+        return 0 if report.candidates else 1
+    render.print_rsa(console, report, show_code=args.show_code)
+    return 0 if report.candidates or not ciphertext else 1
+
+
+def cmd_hash(args: argparse.Namespace, config: Config, console: Console) -> int:
+    """Identify a hash and print the hashcat / john command for it."""
+    report = identify_hash(args.hash, try_passwords=not args.no_passwords)
+    if args.json:
+        print(json.dumps(report.to_dict(), indent=2))
+        return 0 if report.matches else 1
+    render.print_hash(console, report)
+    return 0 if report.matches else 1
+
+
 def cmd_serve(args: argparse.Namespace, config: Config) -> int:
     """Start the Flask web UI (bound to 127.0.0.1 unless --host says otherwise)."""
     from ctfc.web.app import create_app  # imported here so the CLI starts fast
@@ -323,11 +406,13 @@ def main(argv: list[str] | None = None) -> int:
         "sym": cmd_sym,
         "blob": cmd_blob,
         "lens": cmd_lens,
+        "rsa": cmd_rsa,
+        "hash": cmd_hash,
     }
     if args.command in commands:
         try:
             return commands[args.command](args, config, console)
-        except (InputError, CryptoError) as exc:
+        except (InputError, CryptoError, RsaError) as exc:
             print(f"{t('error_prefix')}: {exc}", file=sys.stderr)
             return 2
         except KeyboardInterrupt:

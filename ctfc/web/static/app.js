@@ -18,10 +18,18 @@ const state = {
 
 // Tabs that are built, and how they run: "sync" waits for the answer,
 // "job" runs in the background with progress and a Cancel button.
-const TOOLS = { auto: "job", detect: "sync", xor: "job", sym: "job", lens: "sync" };
+const TOOLS = {
+  auto: "job",
+  detect: "sync",
+  xor: "job",
+  sym: "job",
+  lens: "sync",
+  rsa: "job",
+  hash: "sync",
+};
 
 // Tabs that have their own options panel (#options-<tab>).
-const OPTION_PANELS = ["xor", "sym"];
+const OPTION_PANELS = ["xor", "sym", "rsa", "hash"];
 
 const $ = (id) => document.getElementById(id);
 
@@ -84,8 +92,8 @@ function isReadable(text) {
 // ---------------------------------------------------------------- server calls
 function currentPayload() {
   if (state.file) return { data_b64: state.file.b64, name: state.file.name };
-  // Code Lens always wants the raw text: a pasted script must not be decoded.
-  const format = state.tab === "lens" ? "text" : $("format").value;
+  // Code Lens and Hash want the raw text: neither a script nor a hash is decoded.
+  const format = state.tab === "lens" || state.tab === "hash" ? "text" : $("format").value;
   return { input: $("input-text").value, format };
 }
 
@@ -98,6 +106,22 @@ function currentOptions() {
       crib: $("xor-crib").value,
       other: $("xor-other").value,
     };
+  }
+  if (state.tab === "rsa") {
+    return {
+      key: $("rsa-key").value,
+      n: $("rsa-n").value,
+      e: $("rsa-e").value,
+      d: $("rsa-d").value,
+      p: $("rsa-p").value,
+      q: $("rsa-q").value,
+      other: $("rsa-other").value,
+      attack: $("rsa-attack").checked,
+      seconds: $("rsa-seconds").value,
+    };
+  }
+  if (state.tab === "hash") {
+    return { no_passwords: $("hash-no-passwords").checked };
   }
   if (state.tab === "sym") {
     return {
@@ -209,7 +233,7 @@ async function cancelJob() {
 }
 
 function showAnswer(tab, answer) {
-  showInput(answer.input);
+  if (answer.input) showInput(answer.input);
   if (tab === "detect") {
     renderDetect(answer.report);
     setStatus("");
@@ -218,6 +242,16 @@ function showAnswer(tab, answer) {
   if (tab === "lens") {
     renderLens(answer);
     setStatus("");
+    return;
+  }
+  if (tab === "hash") {
+    renderHash(answer);
+    setStatus("");
+    return;
+  }
+  if (tab === "rsa") {
+    renderRsa(answer);
+    setStatus(answer.budget || "");
     return;
   }
   if (answer.notes && answer.notes.length) renderNotes(answer.notes);
@@ -470,6 +504,73 @@ function renderLens(report) {
     actions.append(copyButton(T("web_copy"), () => report.recovery.python));
     recovery.append(actions, code);
     results.append(recovery);
+  }
+}
+
+// RSA: the key, what the attacks found, then the decryptions.
+function renderRsa(report) {
+  const results = $("results");
+  if (report.key) {
+    results.append(el("h3", "", T("web_rsa_facts")));
+    results.append(simpleTable(["", ""], report.key.facts));
+  }
+  if (report.attacks) {
+    const attacks = report.attacks;
+    const found = attacks.factorisation || attacks.private_exponent;
+    const card = el("div", "card " + (found ? "good" : ""));
+    const head = el("div", "card-head");
+    head.append(el("span", "label", found ? found.method : T("web_rsa_no_weakness")));
+    card.append(head);
+    const list = el("ul");
+    if (found) list.append(el("li", "", found.explanation));
+    if (attacks.factorisation) {
+      list.append(el("li", "", "p = " + attacks.factorisation.p));
+      list.append(el("li", "", "q = " + attacks.factorisation.q));
+    }
+    if (attacks.private_exponent) list.append(el("li", "", "d = " + attacks.private_exponent.d));
+    list.append(el("li", "dim", T("web_rsa_tried") + ": " + attacks.tried.join(", ")));
+    for (const note of attacks.notes) list.append(el("li", "", note));
+    card.append(list);
+    results.append(card);
+  }
+  if (report.notes && report.notes.length) renderNotes(report.notes);
+  renderCandidates(report.candidates);
+}
+
+// Hash: the facts, then one card per possible format with its command.
+function renderHash(report) {
+  const results = $("results");
+  results.append(el("h3", "", T("web_facts")));
+  results.append(simpleTable(["", ""], report.facts));
+  if (report.notes && report.notes.length) renderNotes(report.notes);
+  if (!report.matches.length) {
+    results.append(el("p", "dim", T("web_hash_none")));
+    return;
+  }
+  results.append(el("h3", "", T("web_hash_formats")));
+  for (const match of report.matches) {
+    const card = el("div", "card " + levelClass(match.confidence));
+    const head = el("div", "card-head");
+    head.append(
+      el("span", "score", match.confidence.toFixed(2)),
+      el("span", "label", match.name),
+      el("span", "rule", match.hashcat_mode !== null ? "-m " + match.hashcat_mode : match.john_format || ""),
+    );
+    card.append(head);
+    const list = el("ul");
+    // The "found in the list" line is already the first reason: no need to repeat it.
+    for (const reason of match.reasons) list.append(el("li", "", reason));
+    if (match.notes) list.append(el("li", "dim", match.notes));
+    card.append(list);
+    const actions = el("div", "actions");
+    for (const [label, command] of [["hashcat", match.hashcat], ["john", match.john]]) {
+      if (!command) continue;
+      const line = el("pre", "code", command);
+      card.append(line);
+      actions.append(copyButton(T("web_copy") + " " + label, () => command));
+    }
+    card.append(actions);
+    results.append(card);
   }
 }
 

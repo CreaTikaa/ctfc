@@ -11,13 +11,16 @@ import base64
 import hashlib
 import hmac
 import io
+import math
 import random
 import struct
 import zipfile
 import zlib
 from pathlib import Path
 
-from Crypto.Cipher import AES, ChaCha20
+from Crypto.Cipher import AES, PKCS1_OAEP, ChaCha20, PKCS1_v1_5
+from Crypto.PublicKey import RSA
+from Crypto.Util.number import bytes_to_long, getPrime, inverse, isPrime, long_to_bytes
 from Crypto.Util.Padding import pad
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -289,6 +292,98 @@ def lens_vbs_dropper() -> str:
     )
 
 
+def next_prime(start: int) -> int:
+    """The first prime >= start (used to build two primes that are too close)."""
+    candidate = start | 1
+    while not isPrime(candidate):
+        candidate += 2
+    return candidate
+
+
+def write_rsa_fixtures() -> None:
+    """One RSA fixture per classic mistake, plus a correct keypair.
+
+    `getPrime(..., randfunc=RNG.randbytes)` keeps everything deterministic.
+    """
+    # 1. A correct 1024-bit keypair, with the flag under OAEP and under PKCS#1 v1.5.
+    p = getPrime(512, randfunc=RNG.randbytes)
+    q = getPrime(512, randfunc=RNG.randbytes)
+    key = RSA.construct((p * q, 65537, inverse(65537, (p - 1) * (q - 1)), p, q))
+    write("rsa_private.pem", key.export_key())
+    write("rsa_public.pem", key.publickey().export_key())
+    secret = b"CYBN{fixture_rsa_oaep}"
+    write("rsa_oaep.bin", PKCS1_OAEP.new(key.publickey()).encrypt(secret))
+    write(
+        "rsa_pkcs1v15.bin",
+        PKCS1_v1_5.new(key.publickey()).encrypt(b"CYBN{fixture_rsa_pkcs1v15}"),
+    )
+    # The textbook case: no padding at all, which plenty of challenges use.
+    textbook = bytes_to_long(b"CYBN{fixture_rsa_textbook}")
+    write("rsa_textbook.bin", long_to_bytes(pow(textbook, 65537, p * q)))
+
+    # 2. e = 3 on a short message: no key needed, the cube root is the message.
+    p3 = getPrime(512, randfunc=RNG.randbytes)
+    q3 = getPrime(512, randfunc=RNG.randbytes)
+    while (p3 - 1) % 3 == 0:
+        p3 = getPrime(512, randfunc=RNG.randbytes)
+    while (q3 - 1) % 3 == 0:
+        q3 = getPrime(512, randfunc=RNG.randbytes)
+    n3 = p3 * q3
+    message = bytes_to_long(b"CYBN{fixture_rsa_small_e}")
+    assert message**3 < n3, "the message must be short enough not to wrap"
+    write("rsa_small_e.pub.pem", RSA.construct((n3, 3)).export_key())
+    write("rsa_small_e.bin", long_to_bytes(pow(message, 3, n3)))
+
+    # 3. Two keys sharing a prime: gcd of the moduli breaks both.
+    shared = getPrime(512, randfunc=RNG.randbytes)
+    other_a = getPrime(512, randfunc=RNG.randbytes)
+    other_b = getPrime(512, randfunc=RNG.randbytes)
+    n_a, n_b = shared * other_a, shared * other_b
+    write("rsa_shared_a.pub.pem", RSA.construct((n_a, 65537)).export_key())
+    write("rsa_shared_b.pub.pem", RSA.construct((n_b, 65537)).export_key())
+    key_a = RSA.construct((n_a, 65537, inverse(65537, (shared - 1) * (other_a - 1))))
+    write(
+        "rsa_shared_a.bin", PKCS1_OAEP.new(key_a.publickey()).encrypt(b"CYBN{fixture_rsa_shared}")
+    )
+
+    # 4. p and q next to each other: Fermat finds them in a few steps.
+    base = getPrime(512, randfunc=RNG.randbytes)
+    p_close = next_prime(base)
+    q_close = next_prime(p_close + 2)
+    n_close = p_close * q_close
+    key_close = RSA.construct((n_close, 65537, inverse(65537, (p_close - 1) * (q_close - 1))))
+    write("rsa_fermat.pub.pem", RSA.construct((n_close, 65537)).export_key())
+    write(
+        "rsa_fermat.bin", PKCS1_OAEP.new(key_close.publickey()).encrypt(b"CYBN{fixture_rsa_fermat}")
+    )
+
+    # 5. A private exponent far too small: Wiener's attack.
+    while True:
+        pw = getPrime(512, randfunc=RNG.randbytes)
+        qw = getPrime(512, randfunc=RNG.randbytes)
+        phi = (pw - 1) * (qw - 1)
+        d_small = getPrime(120, randfunc=RNG.randbytes)
+        if math.gcd(d_small, phi) != 1:
+            continue
+        e_big = inverse(d_small, phi)
+        if e_big.bit_length() > 1000:  # e must really be the big one
+            break
+    n_w = pw * qw
+    write("rsa_wiener.pub.pem", RSA.construct((n_w, e_big)).export_key())
+    key_w = RSA.construct((n_w, e_big, d_small, pw, qw))
+    write("rsa_wiener.bin", PKCS1_OAEP.new(key_w.publickey()).encrypt(b"CYBN{fixture_rsa_wiener}"))
+
+    # 6. The layered case CLAUDE.md asks for: an AES key||iv blob wrapped with
+    #    RSA-OAEP, and the payload encrypted with that AES key.
+    blob = RNG.randbytes(48)
+    write("rsa_wrapped_key.bin", PKCS1_OAEP.new(key.publickey()).encrypt(blob))
+    payload = b"CYBN{fixture_rsa_wrapped_aes} the key travelled inside the RSA blob."
+    write(
+        "rsa_wrapped_payload.bin",
+        AES.new(blob[:32], AES.MODE_CBC, blob[32:]).encrypt(pad(payload, 16)),
+    )
+
+
 def main() -> None:
     FIXTURES.mkdir(exist_ok=True)
     print(f"writing fixtures to {FIXTURES}")
@@ -445,6 +540,11 @@ def main() -> None:
     salt_hex = RNG.randbytes(20).hex()
     response_hex = RNG.randbytes(20).hex()
     write("mysqlna_hash.txt", f"$mysqlna${salt_hex}*{response_hex}\n")
+
+    # --- RSA (M5) ---
+    # Every key below is generated from the fixed seed, so the files never change.
+    # They are all deliberately weak, one mistake each.
+    write_rsa_fixtures()
 
 
 if __name__ == "__main__":

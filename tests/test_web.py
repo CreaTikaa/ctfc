@@ -216,3 +216,67 @@ def test_api_lens_keeps_a_script_as_text(client):
     """A script that happens to look like base64 must not be decoded first."""
     answer = client.post("/api/lens", json={"input": "YWJjZGVmZ2g=", "format": "auto"}).get_json()
     assert answer["input"]["length"] == len("YWJjZGVmZ2g=")
+
+
+def test_api_rsa_job_with_attack(client, fixture_bytes):
+    """The RSA tab runs as a job, because an attack can take seconds."""
+    import time
+
+    payload = {
+        "input": fixture_bytes("rsa_fermat.bin").hex(),
+        "format": "hex",
+        "options": {
+            "key": fixture_bytes("rsa_fermat.pub.pem").decode(),
+            "attack": True,
+            "seconds": 20,
+        },
+    }
+    job = client.post("/api/jobs/rsa", json=payload).get_json()["job"]
+    for _ in range(400):
+        status = client.get(f"/api/jobs/{job}").get_json()
+        if status["state"] != "running":
+            break
+        time.sleep(0.05)
+    assert status["state"] == "done", status
+    answer = status["result"]
+    assert "CYBN{fixture_rsa_fermat}" in answer["candidates"][0]["data_text"]
+    assert answer["attacks"]["factorisation"]["method"].startswith("Fermat")
+
+
+def test_api_rsa_sync_with_numbers(client, fixture_bytes):
+    from Crypto.PublicKey import RSA
+
+    key = RSA.import_key(fixture_bytes("rsa_small_e.pub.pem"))
+    payload = {
+        "input": fixture_bytes("rsa_small_e.bin").hex(),
+        "format": "hex",
+        "options": {"n": str(key.n), "e": "3"},
+    }
+    answer = client.post("/api/rsa", json=payload).get_json()
+    assert "CYBN{fixture_rsa_small_e}" in answer["candidates"][0]["data_text"]
+
+
+def test_api_rsa_bad_key_is_json_400(client):
+    response = client.post("/api/rsa", json={"input": "00", "options": {"key": "not a key"}})
+    assert response.status_code == 400
+    assert "RSA key" in response.get_json()["error"]
+
+
+def test_api_hash(client):
+    import hashlib
+
+    digest = hashlib.sha1(b"letmein").hexdigest()
+    answer = client.post("/api/hash", json={"input": digest}).get_json()
+    assert answer["matches"][0]["id"] == "sha1"
+    assert answer["matches"][0]["cracked"] == "letmein"
+    assert "hashcat -m 100" in answer["matches"][0]["hashcat"]
+
+
+def test_api_hash_without_the_password_list(client):
+    import hashlib
+
+    digest = hashlib.sha1(b"letmein").hexdigest()
+    answer = client.post(
+        "/api/hash", json={"input": digest, "options": {"no_passwords": True}}
+    ).get_json()
+    assert answer["matches"][0]["cracked"] is None
