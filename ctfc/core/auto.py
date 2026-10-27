@@ -24,7 +24,13 @@ from dataclasses import dataclass, field
 from ctfc.core import xor
 from ctfc.core.budget import Budget
 from ctfc.core.codegen import Step, chain_cyberchef, chain_label, chain_snippet
-from ctfc.core.encodings import DECODERS, DecodeError, as_text
+from ctfc.core.encodings import (
+    DECODERS,
+    DecodeError,
+    as_text,
+    decode_custom_base64,
+    find_custom_alphabet,
+)
 from ctfc.core.flags import FlagSet
 from ctfc.core.magic import match_signature
 from ctfc.core.scoring import printable_ratio, score
@@ -35,7 +41,7 @@ FOUND = 0.9  # a flag in readable text: no need to decode this output further
 XOR_MIN_SCORE = 0.6  # an XOR guess must look clearly readable to be kept
 # Each of these may appear at most once in a chain, otherwise the search wastes its
 # budget on things like rot47 -> rot13 -> rot47, or xor -> xor (two XORs = one XOR).
-ONCE_PER_CHAIN = {"rot13", "rot47", "reverse", "xor"}
+ONCE_PER_CHAIN = {"rot13", "rot47", "reverse", "xor", "base64_custom"}
 
 
 @dataclass(order=True)
@@ -48,10 +54,30 @@ class _Node:
     reasons: list[str] = field(compare=False)
 
 
-def _decoder_outputs(data: bytes, chain: list[Step], budget: Budget) -> list[tuple[bytes, Step]]:
-    """Run every applicable decoder from encodings.py."""
+def _decoder_outputs(
+    data: bytes,
+    chain: list[Step],
+    budget: Budget,
+    alphabet: str | None = None,
+) -> list[tuple[bytes, Step]]:
+    """Run every applicable decoder from encodings.py.
+
+    `alphabet`: a shuffled base64 alphabet found in the original input. An
+    obfuscator that shuffles the alphabet leaves it in the same file, so trying it
+    is free and it is the only way that payload ever decodes.
+    """
     used = {step.name for step in chain}
     outputs = []
+    if alphabet is not None and "base64_custom" not in used and budget.spend():
+        try:
+            outputs.append(
+                (
+                    decode_custom_base64(data, alphabet),
+                    Step("base64_custom", {"alphabet": alphabet}),
+                )
+            )
+        except (DecodeError, ValueError, UnicodeError):
+            pass
     for decoder in DECODERS:
         if decoder.name in ONCE_PER_CHAIN and decoder.name in used:
             continue
@@ -123,6 +149,10 @@ def auto_decode(
     beats the input, the list is empty (e.g. ROT13 of a random base64 string).
     """
     budget = budget or Budget(max_attempts=2000, max_seconds=10)
+    # A shuffled base64 alphabet written in the input is looked for once, and then
+    # offered as a decoder at every step of the search.
+    found_alphabet = find_custom_alphabet(data)
+    alphabet = found_alphabet[0] if found_alphabet else None
     seen = {hashlib.sha256(data).digest()}
     counter = 0
     root_score, root_reasons = score(data, flagset)
@@ -135,7 +165,7 @@ def auto_decode(
             results.append(node)
         if len(node.chain) >= max_depth or (node.chain and node.score >= FOUND):
             continue
-        outputs = _decoder_outputs(node.data, node.chain, budget)
+        outputs = _decoder_outputs(node.data, node.chain, budget, alphabet)
         outputs += _xor_outputs(node.data, node.score, node.chain, flagset, budget)
         for output, step in outputs:
             digest = hashlib.sha256(output).digest()

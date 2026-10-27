@@ -298,12 +298,54 @@ def cipher_step_code(params: dict) -> StepCode:
 # ---------------------------------------------------------------------------
 
 
+CUSTOM_B64_HELPER = '''
+def from_custom_base64(data, alphabet):
+    """base64 with a shuffled alphabet: find the payload, translate, decode.
+
+    The alphabet holds most letters and digits, so we cannot simply keep every
+    character it knows: that would swallow the whole surrounding file. Instead we
+    drop the alphabet declaration itself and take the longest run that is left.
+    """
+    standard = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+    text = data.decode("latin-1").replace(alphabet, " ")
+    allowed = set(alphabet) | {"="}
+    runs, current = [], []
+    for char in text:
+        if char in allowed:
+            current.append(char)
+        else:
+            runs.append("".join(current))
+            current = []
+    runs.append("".join(current))
+    payload = max(runs, key=len).rstrip("=")
+    payload = payload.translate(str.maketrans(alphabet, standard))
+    payload += "=" * (-len(payload) % 4)
+    return base64.b64decode(payload)
+'''
+
+
+def custom_base64_step_code(params: dict) -> StepCode:
+    """Code for Step("base64_custom", {"alphabet": "..."})."""
+    alphabet = params["alphabet"]
+    return StepCode(
+        label="base64(custom alphabet)",
+        comment=f"base64 with the shuffled alphabet {alphabet[:16]}... found in the data",
+        python=f'data = from_custom_base64(data, "{alphabet}")',
+        imports=("base64",),
+        helper=CUSTOM_B64_HELPER,
+        # CyberChef takes the alphabet as the first argument of From_Base64.
+        cyberchef=f"From_Base64('{alphabet}',true,false)",
+    )
+
+
 def step_code(step: Step) -> StepCode:
     """Look up how to write one step in Python / CyberChef."""
     if step.name == "xor":
         return xor_step_code(step.params)
     if step.name == "cipher":
         return cipher_step_code(step.params)
+    if step.name == "base64_custom":
+        return custom_base64_step_code(step.params)
     decoder = DECODERS_BY_NAME[step.name]
     return StepCode(
         label=decoder.name,

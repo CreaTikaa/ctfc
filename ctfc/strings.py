@@ -109,6 +109,21 @@ EN: dict[str, str] = {
     "cmd_recipe_ex": "example: ctfc recipe run layers.json input.bin",
     "cmd_tools": "external tool suggestions for this input",
     "cmd_tools_ex": "example: ctfc tools sample.bin",
+    "cmd_pcap": "pull HTTP bodies, DNS exfiltration and TCP streams out of a capture",
+    "cmd_pcap_ex": (
+        "examples: ctfc pcap capture.pcap  |  ctfc pcap traffic.pcapng --extract ./objects  "
+        "(then: ctfc scan ./objects)"
+    ),
+    "opt_pcap_extract": "also save every extracted object into this folder",
+    "cmd_scan": "run detect + auto on every file of a folder and rank them",
+    "cmd_scan_ex": (
+        "examples: ctfc scan _dump.bin.extracted  |  ctfc scan ./objects --seconds 300  |  "
+        "ctfc scan ./carved --json"
+    ),
+    "arg_folder": "the folder to scan (or a single file)",
+    "opt_scan_no_recursive": "do not go into subfolders",
+    "opt_scan_per_file": "time budget per file, in seconds (default 3)",
+    "opt_scan_min": "only report files at least this interesting, 0..1 (default 0.4)",
     "cmd_serve": "start the local web UI",
     "cmd_serve_ex": "example: ctfc serve --port 8137  (then open http://127.0.0.1:8137)",
     "opt_port": "port to listen on",

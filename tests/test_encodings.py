@@ -99,3 +99,97 @@ def test_zip_bomb_is_capped(monkeypatch):
 def test_invalid_input_raises_decode_error():
     with pytest.raises(DecodeError):
         DECODERS_BY_NAME["zlib"].decode(b"\x78\x9cnot zlib at all")
+
+
+# ---------------------------------------------------------------------------
+# Custom base64 alphabets (improvement idea 2)
+# ---------------------------------------------------------------------------
+
+
+def shuffled_alphabet(seed: int) -> str:
+    import random
+
+    from ctfc.core.encodings import STANDARD_B64_ALPHABET
+
+    letters = list(STANDARD_B64_ALPHABET)
+    random.Random(seed).shuffle(letters)
+    return "".join(letters)
+
+
+def encode_with(alphabet: str, payload: bytes) -> str:
+    import base64
+
+    from ctfc.core.encodings import STANDARD_B64_ALPHABET
+
+    standard = base64.b64encode(payload).decode()
+    return standard.translate(str.maketrans(STANDARD_B64_ALPHABET, alphabet))
+
+
+def test_find_custom_alphabet():
+    from ctfc.core.encodings import STANDARD_B64_ALPHABET, find_custom_alphabet
+
+    alphabet = shuffled_alphabet(7)
+    found = find_custom_alphabet(f'TABLE = "{alphabet}"\n'.encode())
+    assert found is not None and found[0] == alphabet
+    # The standard alphabet is not "custom": it must not be reported.
+    assert find_custom_alphabet(f'x = "{STANDARD_B64_ALPHABET}"'.encode()) is None
+    assert find_custom_alphabet(b"nothing like an alphabet in here") is None
+
+
+def test_decode_custom_base64_round_trip():
+    from ctfc.core.encodings import decode_custom_base64
+
+    alphabet = shuffled_alphabet(7)
+    payload = b"CYBN{custom_alphabet} with enough text to be worth decoding"
+    assert decode_custom_base64(encode_with(alphabet, payload).encode(), alphabet) == payload
+
+
+def test_decode_custom_base64_ignores_the_alphabet_declaration():
+    """The alphabet sits next to the payload; it must not be decoded as the payload."""
+    from ctfc.core.encodings import decode_custom_base64
+
+    alphabet = shuffled_alphabet(11)
+    payload = b"CYBN{alphabet_not_swallowed} and some more text here to be sure"
+    script = f'ALPHA = "{alphabet}"\nDATA = "{encode_with(alphabet, payload)}"\n'
+    assert decode_custom_base64(script.encode(), alphabet) == payload
+
+
+def test_decode_custom_base64_rejects_a_bad_alphabet():
+    from ctfc.core.encodings import DecodeError, decode_custom_base64
+
+    with pytest.raises(DecodeError, match="64 distinct characters"):
+        decode_custom_base64(b"AAAA", "too short")
+
+
+def test_auto_uses_an_alphabet_found_in_the_input():
+    """The whole point: auto must spot the table and use it, with no option."""
+    from ctfc.core.auto import auto_decode
+
+    alphabet = shuffled_alphabet(5)
+    payload = b"CYBN{custom_alphabet_auto} plus enough plain English words here to score."
+    script = f'# payload\nALPHA = "{alphabet}"\nDATA = "{encode_with(alphabet, payload)}"\n'
+    best = auto_decode(script.encode())[0]
+    assert best.data == payload
+    assert best.label == "base64(custom alphabet)"
+    assert alphabet in best.cyberchef
+
+
+@pytest.mark.parametrize("seed", [5, 11, 42])
+def test_generated_snippet_decodes_a_custom_alphabet(tmp_path, seed):
+    import subprocess
+    import sys
+
+    from ctfc.core.auto import auto_decode
+
+    alphabet = shuffled_alphabet(seed)
+    payload = b"CYBN{custom_alphabet_auto} plus enough plain English words here to score."
+    script = f'ALPHA = "{alphabet}"\nDATA = "{encode_with(alphabet, payload)}"\n'.encode()
+    best = auto_decode(script)[0]
+    target = tmp_path / "r.py"
+    target.write_text(best.python)
+    (tmp_path / "input.bin").write_bytes(script)
+    result = subprocess.run(
+        [sys.executable, "-I", str(target)], cwd=tmp_path, capture_output=True, timeout=30
+    )
+    assert result.returncode == 0, best.python + result.stderr.decode()
+    assert b"CYBN{custom_alphabet_auto}" in result.stdout

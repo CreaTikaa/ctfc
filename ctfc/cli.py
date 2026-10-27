@@ -21,7 +21,10 @@ from ctfc.core.flags import FlagSet, build_flagset
 from ctfc.core.hashes import identify as identify_hash
 from ctfc.core.inputs import InputError, parse_input
 from ctfc.core.lens import analyse as analyse_script
+from ctfc.core.pcap import PcapError
+from ctfc.core.pcap import solve as solve_pcap
 from ctfc.core.rsa import RsaError, build_key, keys_match, parse_key, solve_rsa
+from ctfc.core.scan import scan as scan_folder
 from ctfc.core.symmetric import CryptoError, SolveReport, solve_symmetric
 from ctfc.core.types import Input
 from ctfc.core.xor import guess_key_lengths, solve_xor, xor_inputs
@@ -119,6 +122,18 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("action", choices=["run"])
     p.add_argument("recipe", help="recipe.json")
     p.add_argument("input", nargs="?", help=t("arg_input"))
+
+    p = add("pcap")
+    p.add_argument("input", help=t("arg_input"))
+    p.add_argument("--extract", help=t("opt_pcap_extract"))
+    p.add_argument("--seconds", type=float, default=30.0, help=t("opt_seconds"))
+
+    p = add("scan")
+    p.add_argument("folder", help=t("arg_folder"))
+    p.add_argument("--no-recursive", action="store_true", help=t("opt_scan_no_recursive"))
+    p.add_argument("--seconds", type=float, default=120.0, help=t("opt_seconds"))
+    p.add_argument("--per-file", type=float, default=3.0, help=t("opt_scan_per_file"))
+    p.add_argument("--min-interest", type=float, default=0.4, help=t("opt_scan_min"))
 
     p = add("tools")
     p.add_argument("input", help=t("arg_input"))
@@ -364,6 +379,48 @@ def cmd_hash(args: argparse.Namespace, config: Config, console: Console) -> int:
     return 0 if report.matches else 1
 
 
+def cmd_pcap(args: argparse.Namespace, config: Config, console: Console) -> int:
+    """Pull the payloads out of a capture and decode them."""
+    inp = parse_input(args.input, decode_bare=False)
+    budget = Budget(max_attempts=10_000_000, max_seconds=args.seconds)
+    report, findings = solve_pcap(inp.data, args.input, flagset=flagset_from(config), budget=budget)
+    saved = []
+    if args.extract:
+        folder = Path(args.extract)
+        folder.mkdir(parents=True, exist_ok=True)
+        for finding in findings:
+            target = folder / finding.extracted.name
+            target.write_bytes(finding.extracted.data)
+            saved.append(str(target))
+    if args.json:
+        payload = {
+            **report.to_dict(),
+            "findings": [finding.to_dict() for finding in findings],
+            "saved": saved,
+        }
+        print(json.dumps(payload, indent=2))
+        return 0 if findings else 1
+    render.print_pcap(console, report, findings, saved, show_code=args.show_code)
+    return 0 if findings else 1
+
+
+def cmd_scan(args: argparse.Namespace, config: Config, console: Console) -> int:
+    """Run detect + auto on every file of a folder and rank them."""
+    budget = Budget(max_attempts=10_000_000, max_seconds=args.seconds)
+    report = scan_folder(
+        Path(args.folder),
+        flagset=flagset_from(config),
+        recursive=not args.no_recursive,
+        budget=budget,
+        per_file_seconds=args.per_file,
+    )
+    if args.json:
+        print(json.dumps(report.to_dict(), indent=2))
+        return 0 if report.interesting(args.min_interest) else 1
+    render.print_scan(console, report, args.min_interest, show_code=args.show_code)
+    return 0 if report.interesting(args.min_interest) else 1
+
+
 def cmd_serve(args: argparse.Namespace, config: Config) -> int:
     """Start the Flask web UI (bound to 127.0.0.1 unless --host says otherwise)."""
     from ctfc.web.app import create_app  # imported here so the CLI starts fast
@@ -410,11 +467,13 @@ def main(argv: list[str] | None = None) -> int:
         "lens": cmd_lens,
         "rsa": cmd_rsa,
         "hash": cmd_hash,
+        "scan": cmd_scan,
+        "pcap": cmd_pcap,
     }
     if args.command in commands:
         try:
             return commands[args.command](args, config, console)
-        except (InputError, CryptoError, RsaError) as exc:
+        except (InputError, CryptoError, RsaError, PcapError) as exc:
             print(f"{t('error_prefix')}: {exc}", file=sys.stderr)
             return 2
         except KeyboardInterrupt:

@@ -25,9 +25,9 @@ Last update: 2026-10-27, after milestone M5. Read `CLAUDE.md` first, then this f
 | M3 symmetric | `244a7ae` | symmetric.py, kdf.py, tea.py, blockmodes.py, `ctfc sym`, `ctfc blob`, web Symmetric tab |
 | M4 Code Lens | `c367e69` | lens.py, lens_python.py, lens_rules.py, data/lens_rules.toml, `ctfc lens`, web Code Lens tab |
 | M5 RSA + hashes | this one | rsa.py, rsa_attacks.py, hashes.py, data/hashcat_modes.toml, `ctfc rsa`, `ctfc hash`, web RSA + Hash tabs |
-| ideas 1 + 8 | this one | "Apply" buttons in Detect (`Guess.apply`), XOR key from a hash of a common word |
-| ideas 3, 2, 4 | - | **next**: `ctfc scan <folder>`, custom base64 alphabet, pcap extraction (section 5) |
-| M6 pipeline + CyberChef + tools | - | after the ideas |
+| ideas 1 + 8 | `fb74064` | "Apply" buttons in Detect (`Guess.apply`), XOR key from a hash of a common word |
+| ideas 2 + 3 + 4 | this one | custom base64 alphabet in auto, `ctfc scan <folder>`, `ctfc pcap` (core/pcap.py) |
+| M6 pipeline + CyberChef + tools | - | **next** |
 
 324 tests pass (`.venv/bin/python -m pytest -q`, ~9 s), `ruff check .` and `ruff format --check .`
 clean.
@@ -86,6 +86,15 @@ Added modules (small, one responsibility each):
 - `data/lens_rules.toml` (M4): 60 rules. **Adding support for an API is one TOML entry, not code.**
   Fields: id, languages, regex, explain, operation, direction, capture, capture_as, behaviour,
   cipher, mode. `tests/test_lens.py::test_every_rule_is_well_formed` validates them all.
+- `core/scan.py` (idea 3): `scan(folder)` runs detect + auto on every file and ranks them by an
+  explicit `interest` built from independent signals (a flag in the file, a crypto detect rule, a
+  container type, a decoding chain, plain text capped at `PLAIN_TEXT_CAP`). Each file gets its own
+  budget slice. Carved *media* is deliberately low-interest; containers (enc/zip/kdbx/pcap) are not.
+- `core/pcap.py` (idea 4): pcap **and** pcapng parsing, Ethernet/SLL/raw link layers, IPv4+IPv6,
+  TCP reassembly by sequence number (gaps reported, never glued over silently), HTTP request and
+  response extraction (chunked + gzip/deflate undone), DNS exfiltration rebuilt from the first
+  label of each query, raw TCP/UDP fallback. `solve()` then runs `auto` on every object and ranks
+  them. **Checked byte-for-byte against tshark** (packet count, DNS names, exported HTTP objects).
 - `core/rsa.py` (M5): `KeyInfo` (n, e, d, p, q + `facts()` which names the weaknesses it can
   see), `parse_key()`, `build_key()` (completes d from p,q,e and p,q from n,e,d), `keys_match()`,
   `decrypt_candidates()` (OAEP-SHA1, OAEP-SHA256, PKCS#1 v1.5, textbook, all scored),
@@ -203,6 +212,8 @@ Known limitations / open points:
 Order proposed, cheapest and most useful first. Each one ends with tests, a demo command and a
 commit, like a milestone.
 
+All five improvement ideas are now done; what follows is M6. Kept here for the record:
+
 1. ~~**"Apply" buttons in Detect**~~ **done**: `Guess.apply` is `{"tab": ..., "options": {...}}`,
    filled in `detect.py` (`SIG_APPLY`, `PREFIX_APPLY`, and inline for xor/ecb/blob guesses). The
    web UI turns it into a button via `applyGuess()`; the option ids follow `<tab>-<option>`, so a
@@ -214,13 +225,15 @@ commit, like a milestone.
    `solve_xor` calls it on its own when nothing else beats `HASHED_FALLBACK = 0.8` - that
    threshold matters: a column solve with one wrong byte scores ~0.55 and must not block it.
    `--hashed-keys` / the XOR tab checkbox force it.
-3. **`ctfc scan <folder>`** (idea 3): run detect + auto on every file in a folder, rank the ones
-   that contain something, print a table. Reuses everything; add `--recursive` and a time budget.
-4. **Custom base64 alphabet** (idea 2): `detect` already finds the alphabet; pass it to `auto` as
-   a decoder variant.
-5. **pcap extraction in stdlib** (idea 4): read pcap/pcapng, pull HTTP bodies and reassemble DNS
-   exfiltration (base32/hex subdomains), then feed `auto`. The biggest of the five; do it last,
-   and keep it in its own module `core/pcap.py`.
+3. ~~**`ctfc scan <folder>`**~~ **done**: `core/scan.py`, `ctfc scan` with `--no-recursive`,
+   `--per-file`, `--min-interest`. The ranking rules are in section 4.
+4. ~~**Custom base64 alphabet**~~ **done**: `encodings.find_custom_alphabet()` +
+   `decode_custom_base64()`, offered by `auto` at every step as `Step("base64_custom")`. The
+   fiddly part was *what* to decode: the alphabet holds most letters, so "keep every character it
+   knows" swallowed the whole script. It now drops the alphabet declaration and takes the longest
+   remaining run, and the generated snippet does the same.
+5. ~~**pcap extraction in stdlib**~~ **done**: `core/pcap.py`, `ctfc pcap` with `--extract <dir>`
+   which feeds `ctfc scan`. Validated against tshark.
 
 Idea 6 (history of "Use as next input", export the chain) belongs with M6's pipeline, and idea 7
 (stego tool suggestions) with M6's tool registry: leave both there.
@@ -262,6 +275,8 @@ ctfc lens tests/fixtures/lens_layers.py
 ctfc rsa --key tests/fixtures/rsa_fermat.pub.pem --decrypt tests/fixtures/rsa_fermat.bin --attack
 ctfc rsa --key tests/fixtures/rsa_private.pem --check tests/fixtures/rsa_public.pem
 ctfc hash 482c811da5d5b4bc6d497ffa98491e38
-ctfc xor <a file XORed with md5('infected')>   # finds the word by itself
+ctfc pcap tests/fixtures/capture.pcap
+ctfc pcap tests/fixtures/capture.pcap --extract /tmp/objs && ctfc scan /tmp/objs
+ctfc scan tests/fixtures --min-interest 0.9
 ctfc serve   # http://127.0.0.1:8137  (Detect now has "Apply in ..." buttons)
 ```

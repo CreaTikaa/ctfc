@@ -73,6 +73,74 @@ class Decoder:
 
 
 # ---------------------------------------------------------------------------
+# Custom base64 alphabets
+# ---------------------------------------------------------------------------
+
+STANDARD_B64_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+# 64 distinct characters in a row, from the set alphabets are written with.
+ALPHABET_RUN = re.compile(r"[A-Za-z0-9+/=_\-.!@#$%^&*(){}\[\]|~<>?,;:]{64,4096}")
+
+
+def find_custom_alphabet(data: bytes, limit: int = 1_000_000) -> tuple[str, int] | None:
+    """Find a (non-standard) base64 alphabet written inside the data.
+
+    Obfuscators love shuffling the alphabet: the payload then looks like base64,
+    decodes to nothing with the standard table, and the shuffled table is sitting
+    right there in the same file. Returns (alphabet, offset) or None.
+    """
+    text = data[:limit].decode("latin-1")
+    for match in ALPHABET_RUN.finditer(text):
+        run = match.group(0)
+        for start in range(len(run) - 63):
+            window = run[start : start + 64]
+            if len(set(window)) == 64 and window != STANDARD_B64_ALPHABET:
+                return window, match.start() + start
+    return None
+
+
+def decode_custom_base64(data: bytes, alphabet: str) -> bytes:
+    """Decode base64 written with `alphabet` instead of the standard table.
+
+    The trick itself is a plain character translation to the standard alphabet,
+    then a normal base64 decode. The fiddly part is finding *what* to decode: a
+    custom alphabet contains most letters and digits, so "keep every character
+    the alphabet knows" would swallow the whole script around the payload.
+
+    So we work like the `extract_base64` decoder: drop the alphabet declaration
+    itself (it is a 64-character run in its own alphabet), then take the longest
+    remaining run of alphabet characters.
+    """
+    if len(set(alphabet)) != 64:
+        raise DecodeError(f"an alphabet needs 64 distinct characters, got {len(set(alphabet))}")
+    text = data.decode("latin-1")
+    # The alphabet is usually declared right next to the payload: remove it, or it
+    # would be the longest run and decode to nothing useful.
+    text = text.replace(alphabet, " ")
+    allowed = set(alphabet) | {"="}
+    best = ""
+    current: list[str] = []
+    for char in text:
+        if char in allowed:
+            current.append(char)
+            continue
+        if len(current) > len(best):
+            best = "".join(current)
+        current = []
+    if len(current) > len(best):
+        best = "".join(current)
+    if len(best) < 8:
+        raise DecodeError("no run of 8+ characters of this alphabet to decode")
+
+    translated = best.translate(str.maketrans(alphabet, STANDARD_B64_ALPHABET))
+    translated = translated.rstrip("=")
+    translated += "=" * (-len(translated) % 4)
+    try:
+        return base64.b64decode(translated, validate=False)
+    except (binascii.Error, ValueError) as exc:
+        raise DecodeError(str(exc)) from exc
+
+
+# ---------------------------------------------------------------------------
 # Small helpers
 # ---------------------------------------------------------------------------
 

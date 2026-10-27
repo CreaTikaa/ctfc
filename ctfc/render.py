@@ -351,3 +351,88 @@ def print_hash(console: Console, report) -> None:
 
     for note in report.notes:
         console.print(f"[cyan]*[/] {safe(note)}")
+
+
+def print_scan(
+    console: Console, report, min_interest: float = 0.4, show_code: bool = False
+) -> None:
+    """`ctfc scan`: the ranked folder, then the details of the best file."""
+    for note in report.notes:
+        console.print(f"[cyan]*[/] {safe(note)}")
+
+    interesting = report.interesting(min_interest)
+    if not interesting:
+        console.print(
+            f"[yellow]Nothing above {min_interest:.2f}[/] in {len(report.files)} file(s). "
+            "Lower --min-interest, or look at the kinds below."
+        )
+    shown = interesting or report.files[:10]
+    table = Table(title=f"{report.root} ({len(report.files)} files scanned)", expand=True)
+    table.add_column("score", justify="right", width=6)
+    table.add_column("file", ratio=2)
+    table.add_column("size", justify="right", width=9)
+    table.add_column("kind", ratio=1)
+    table.add_column("why", ratio=3)
+    for result in shown:
+        # Show the path relative to the folder being scanned: the absolute one is
+        # long, identical for every row, and pushes the useful columns off screen.
+        try:
+            shown_path = str(result.path.relative_to(report.root))
+        except ValueError:
+            shown_path = str(result.path)
+        table.add_row(
+            f"[{score_style(result.interest)}]{result.interest:.2f}[/]",
+            safe(shown_path, 60),
+            str(result.size),
+            safe(result.kind, 24),
+            safe("; ".join(result.reasons[:2]) or result.error, 90),
+        )
+    console.print(table)
+    if report.budget_summary:
+        console.print(f"[dim]{report.budget_summary}[/]")
+
+    best = shown[0] if shown else None
+    if best is not None and best.best is not None:
+        console.print(f"[bold]best file:[/] {escape(str(best.path))}")
+        print_candidate_details(console, best.best, show_code)
+
+
+def print_pcap(
+    console: Console, report, findings, saved: list[str], show_code: bool = False
+) -> None:
+    """`ctfc pcap`: what was in the capture, ranked by how promising it is."""
+    for note in report.notes:
+        console.print(f"[cyan]*[/] {safe(note)}")
+    if not findings:
+        console.print("[yellow]Nothing to extract.[/] Encrypted traffic, or only handshakes.")
+        return
+
+    table = Table(title=f"{len(findings)} object(s) extracted", expand=True)
+    table.add_column("score", justify="right", width=6)
+    table.add_column("kind", width=13)
+    table.add_column("where", ratio=2)
+    table.add_column("size", justify="right", width=7)
+    table.add_column("what came out", ratio=4)
+    for finding in findings:
+        item = finding.extracted
+        if finding.best is not None:
+            decoded = preview(finding.best.data, 50)
+            outcome = f"{item.description} -> {finding.best.label}: {decoded}"
+        else:
+            outcome = f"{item.description}: {preview(item.data, 50)}"
+        table.add_row(
+            f"[{score_style(finding.score)}]{finding.score:.2f}[/]",
+            item.kind,
+            safe(item.source or "-", 40),
+            str(len(item.data)),
+            safe(outcome, 120),
+        )
+    console.print(table)
+
+    if saved:
+        console.print(f"[green]saved {len(saved)} object(s)[/]; next: ctfc scan <that folder>")
+
+    best = findings[0]
+    if best.best is not None:
+        console.print(f"[bold]best object:[/] {escape(best.extracted.name)}")
+        print_candidate_details(console, best.best, show_code)
