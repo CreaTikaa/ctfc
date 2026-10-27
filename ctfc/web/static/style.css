@@ -197,3 +197,10 @@ ul.notes li { margin: 2px 0; }
   align-items: center;
   gap: 6px;
 }
+
+/* Header row of the small tables (Code Lens). */
+table.facts td.th {
+  font-weight: 600;
+  color: #9fb4c7;
+  border-bottom: 1px solid #2c3a49;
+}

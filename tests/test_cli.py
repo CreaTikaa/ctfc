@@ -126,3 +126,31 @@ def test_sym_without_material_explains():
     result = run_ctfc("sym", "tests/fixtures/aes_cbc_keyiv_blob.bin")
     assert result.returncode == 1
     assert "no key material" in result.stdout.decode()
+
+
+def test_lens_command_on_the_powershell_dropper():
+    result = run_ctfc("lens", "tests/fixtures/lens_dropper.ps1", "--show-code")
+    assert result.returncode == 0, result.stderr.decode()
+    out = result.stdout.decode()
+    assert "powershell" in out
+    assert "base64" in out and "XOR" in out
+    assert "Recovery" in out or "recovery" in out
+
+
+def test_lens_command_json():
+    import json
+
+    result = run_ctfc("lens", "tests/fixtures/lens_dropper.py", "--json")
+    assert result.returncode == 0, result.stderr.decode()
+    answer = json.loads(result.stdout)
+    assert answer["language"] == "python"
+    assert answer["recovery"]["complete"] is True
+    kinds = [operation["kind"] for operation in answer["operations"]]
+    assert kinds == ["base64", "cipher"]
+
+
+def test_lens_from_stdin():
+    script = b"import base64\nprint(base64.b64decode('Q1lCTntzdGRpbl9sZW5zfQ=='))\n"
+    result = run_ctfc("lens", "-", "--json", stdin=script)
+    assert result.returncode == 0, result.stderr.decode()
+    assert b'"base64"' in result.stdout

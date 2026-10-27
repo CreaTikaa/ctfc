@@ -18,7 +18,7 @@ const state = {
 
 // Tabs that are built, and how they run: "sync" waits for the answer,
 // "job" runs in the background with progress and a Cancel button.
-const TOOLS = { auto: "job", detect: "sync", xor: "job", sym: "job" };
+const TOOLS = { auto: "job", detect: "sync", xor: "job", sym: "job", lens: "sync" };
 
 // Tabs that have their own options panel (#options-<tab>).
 const OPTION_PANELS = ["xor", "sym"];
@@ -84,7 +84,9 @@ function isReadable(text) {
 // ---------------------------------------------------------------- server calls
 function currentPayload() {
   if (state.file) return { data_b64: state.file.b64, name: state.file.name };
-  return { input: $("input-text").value, format: $("format").value };
+  // Code Lens always wants the raw text: a pasted script must not be decoded.
+  const format = state.tab === "lens" ? "text" : $("format").value;
+  return { input: $("input-text").value, format };
 }
 
 // Options of the active tab.
@@ -213,6 +215,11 @@ function showAnswer(tab, answer) {
     setStatus("");
     return;
   }
+  if (tab === "lens") {
+    renderLens(answer);
+    setStatus("");
+    return;
+  }
   if (answer.notes && answer.notes.length) renderNotes(answer.notes);
   if (answer.key_lengths && answer.key_lengths.length) renderKeyLengths(answer.key_lengths);
   renderCandidates(answer.candidates);
@@ -338,6 +345,132 @@ function renderKeyLengths(lengths) {
     table.append(row);
   }
   results.append(table);
+}
+
+// Small helper: a table with a header row and a list of rows (all textContent).
+function simpleTable(headers, rows) {
+  const table = el("table", "facts");
+  const head = el("tr");
+  for (const header of headers) head.append(el("td", "th", header));
+  table.append(head);
+  for (const row of rows) {
+    const line = el("tr");
+    for (const cell of row) line.append(el("td", "", cell));
+    table.append(line);
+  }
+  return table;
+}
+
+// Code Lens: what the script does, what was extracted, and how to undo it.
+function renderLens(report) {
+  const results = $("results");
+
+  const card = el("div", "card good");
+  const head = el("div", "card-head");
+  head.append(el("span", "label", T("web_lens_language") + ": " + report.language));
+  card.append(head);
+  const summary = el("ul");
+  if (!report.summary.length) summary.append(el("li", "dim", T("web_lens_nothing")));
+  for (const line of report.summary) summary.append(el("li", "", line));
+  card.append(summary);
+  results.append(card);
+
+  // The chain applied to every embedded blob: usually where the answer is.
+  if (report.peeled && report.peeled.length) {
+    results.append(el("h3", "", T("web_lens_peeled")));
+    for (const peeled of report.peeled) {
+      const peel = el("div", "card " + levelClass(peeled.score));
+      const head = el("div", "card-head");
+      head.append(
+        el("span", "score", peeled.score.toFixed(2)),
+        el("span", "label", peeled.label + (peeled.line ? " (line " + peeled.line + ")" : "")),
+      );
+      peel.append(head);
+      const reasons = el("ul");
+      for (const reason of peeled.reasons.slice(0, 4)) reasons.append(el("li", "", reason));
+      peel.append(reasons);
+      peel.append(el("pre", "output", peeled.data_text));
+      const actions = el("div", "actions");
+      actions.append(copyButton(T("web_copy"), () => peeled.data_text));
+      const next = el("button", "small", T("web_next_input"));
+      next.addEventListener("click", () => {
+        clearFile();
+        $("input-text").value = peeled.data_text;
+        $("format").value = "text";
+        schedulePreview();
+      });
+      actions.append(next);
+      peel.append(actions);
+      results.append(peel);
+    }
+  }
+
+  if (report.operations.length) {
+    results.append(el("h3", "", T("web_lens_operations")));
+    results.append(
+      simpleTable(
+        ["#", "line", "step", "what", "rule"],
+        report.operations.map((operation, index) => [
+          String(index + 1),
+          String(operation.line),
+          operation.kind || "-",
+          operation.label,
+          operation.rule,
+        ]),
+      ),
+    );
+  }
+
+  if (report.artifacts.length) {
+    results.append(el("h3", "", T("web_lens_artifacts")));
+    results.append(
+      simpleTable(
+        ["kind", "line", "name", "value", "how"],
+        report.artifacts.map((artifact) => [
+          artifact.kind,
+          String(artifact.line),
+          artifact.name || "-",
+          artifact.preview,
+          artifact.how,
+        ]),
+      ),
+    );
+  }
+
+  if (report.behaviours.length) {
+    results.append(el("h3", "", T("web_lens_behaviour")));
+    results.append(
+      simpleTable(
+        ["kind", "line", "what"],
+        report.behaviours.map((behaviour) => [
+          behaviour.kind,
+          String(behaviour.line),
+          behaviour.label,
+        ]),
+      ),
+    );
+  }
+
+  if (report.notes.length) renderNotes(report.notes);
+
+  if (report.recovery) {
+    const recovery = el("div", "card " + (report.recovery.complete ? "good" : "mid"));
+    const title = el("div", "card-head");
+    title.append(
+      el("span", "label", T("web_lens_recovery") + ": " + report.recovery.label),
+      el(
+        "span",
+        "rule",
+        report.recovery.complete ? T("web_lens_complete") : T("web_lens_partial"),
+      ),
+    );
+    recovery.append(title);
+    const code = el("pre", "code", report.recovery.python);
+    const actions = el("div", "actions");
+    actions.append(copyButton(T("web_copy"), () => report.recovery.python));
+    recovery.append(actions, code);
+    results.append(recovery);
+  }
 }
 
 function renderDetect(report) {

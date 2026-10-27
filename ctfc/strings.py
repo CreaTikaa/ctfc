@@ -70,8 +70,14 @@ EN: dict[str, str] = {
     "cmd_rsa_ex": "example: ctfc rsa --key priv.pem --decrypt ct.bin",
     "cmd_hash": "identify a hash and print the hashcat/john command",
     "cmd_hash_ex": "example: ctfc hash '$2y$10$...'",
-    "cmd_lens": "static crypto analysis of a script + generated inverse script",
-    "cmd_lens_ex": "example: ctfc lens dropper.ps1",
+    "cmd_lens": "static crypto analysis of a script + generated recovery script",
+    "cmd_lens_ex": (
+        "examples: ctfc lens dropper.ps1  |  ctfc lens stage1.py --show-code  |  "
+        "ctfc lens obfuscated.js --json"
+    ),
+    "arg_script": (
+        "the script to analyse: a file path, '-' for stdin, or text:... (NEVER executed)"
+    ),
     "cmd_keys": "hunt candidate keys in a dump and test them against a ciphertext",
     "cmd_keys_ex": "example: ctfc keys memdump.raw --against ct.bin",
     "cmd_recipe": "run a saved recipe (ordered operations)",
@@ -144,6 +150,17 @@ EN: dict[str, str] = {
     "web_sym_auto": "auto (try them all)",
     "web_sym_seconds": "time budget (s)",
     "web_sym_passwords": "try the embedded password list (10000 entries, offline)",
+    "web_lens_help": "Paste or drop a script (Python, PowerShell, JS, bash, VBS). "
+    "It is read statically and NEVER executed.",
+    "web_lens_language": "language",
+    "web_lens_nothing": "Nothing recognised. Is it really a script?",
+    "web_lens_peeled": "Layers peeled off the embedded blobs (static, nothing was run)",
+    "web_lens_operations": "What it does to the data, in order",
+    "web_lens_artifacts": "Extracted values",
+    "web_lens_behaviour": "Behaviour (beyond transforming data)",
+    "web_lens_recovery": "Recovery script",
+    "web_lens_complete": "complete",
+    "web_lens_partial": "partial: check it",
     "web_blob_needs_ct": "to test a blob, also give the ciphertext it should decrypt.",
     "web_cancel": "Cancel",
     "web_cancelled": "Cancelled: partial results below.",

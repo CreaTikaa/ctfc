@@ -1,0 +1,524 @@
+# This file is written by hand. Each [[rule]] is one thing Code Lens can
+# recognise in a script that is not Python (Python uses `ast`, see lens_python.py).
+#
+# Fields:
+#   id         short unique name, shown in the report ("ps.frombase64")
+#   languages  which languages the rule applies to
+#   regex      Python regular expression, matched against the whole source
+#   explain    what it means, in plain words (shown to the user)
+#   operation  codegen step name when the rule is a data transformation:
+#              base64 / base64url / base32 / hex / zlib / gzip / bz2 / lzma /
+#              reverse / utf16le / xor / cipher   (empty = not a transformation)
+#              Prefix with "cipher:" to give the cipher and mode, e.g.
+#              operation = "cipher", cipher = "aes", mode = "cbc".
+#   direction  "decode" (the script undoes something), "encode", or "both"
+#   capture    what group 1 of the regex holds, when it holds something:
+#              blob / key / iv / nonce / salt / password / url / path / command
+#   capture_as how the captured text should be read: "text" (default),
+#              "base64", "hex", "charcodes" (a list of numbers), "utf16le_b64"
+#   behaviour  when the rule is not about data: execute / network / filesystem /
+#              persistence / process
+#
+# Keep the regexes simple and readable: a rule that is hard to read is a rule
+# nobody will fix during a CTF.
+
+# ---------------------------------------------------------------------------
+# PowerShell
+# ---------------------------------------------------------------------------
+
+[[rule]]
+id = "ps.frombase64"
+languages = ["powershell"]
+regex = '''\[(?:System\.)?Convert\]::FromBase64String\(\s*['"]([A-Za-z0-9+/=\s]{16,})['"]'''
+explain = "decodes an embedded base64 string ([Convert]::FromBase64String)"
+operation = "base64"
+direction = "decode"
+capture = "blob"
+
+[[rule]]
+id = "ps.frombase64.var"
+languages = ["powershell"]
+regex = '''\[(?:System\.)?Convert\]::FromBase64String\('''
+explain = "decodes base64 ([Convert]::FromBase64String)"
+operation = "base64"
+direction = "decode"
+
+[[rule]]
+id = "ps.tobase64"
+languages = ["powershell"]
+regex = '''\[(?:System\.)?Convert\]::ToBase64String\('''
+explain = "encodes to base64 ([Convert]::ToBase64String)"
+operation = "base64"
+direction = "encode"
+
+[[rule]]
+id = "ps.encodedcommand"
+languages = ["powershell", "bash", "unknown"]
+regex = '''(?:-enc(?:odedcommand)?|-ec)\s+([A-Za-z0-9+/=]{20,})'''
+explain = "runs a base64 UTF-16LE command (powershell -EncodedCommand)"
+operation = "base64"
+direction = "decode"
+capture = "blob"
+behaviour = "execute"
+
+[[rule]]
+id = "ps.bxor"
+languages = ["powershell"]
+regex = '''-bxor\s*(?:\$?\w+|0x[0-9a-fA-F]{1,2}|\d{1,3})'''
+explain = "XORs the data (-bxor)"
+operation = "xor"
+direction = "both"
+
+[[rule]]
+id = "ps.bxor.literal"
+languages = ["powershell"]
+regex = '''-bxor\s*(0x[0-9a-fA-F]{1,2}|\d{1,3})\b'''
+explain = "XORs with a single byte"
+operation = "xor"
+direction = "both"
+capture = "key"
+capture_as = "number"
+
+[[rule]]
+id = "ps.aes"
+languages = ["powershell"]
+regex = '''(?:New-Object\s+)?(?:System\.Security\.Cryptography\.)?(?:AesManaged|AesCryptoServiceProvider|RijndaelManaged)'''
+explain = "AES through .NET System.Security.Cryptography"
+operation = "cipher"
+cipher = "aes"
+mode = "cbc"
+direction = "decode"
+
+[[rule]]
+id = "ps.aes.key"
+languages = ["powershell"]
+regex = '''\.Key\s*=\s*(?:\[byte\[\]\]\s*)?[@(]\(?\s*((?:0x[0-9a-fA-F]{1,2}\s*,\s*){7,}0x[0-9a-fA-F]{1,2})'''
+explain = "the AES key, written as a byte array"
+capture = "key"
+capture_as = "charcodes"
+
+[[rule]]
+id = "ps.aes.iv"
+languages = ["powershell"]
+regex = '''\.IV\s*=\s*(?:\[byte\[\]\]\s*)?[@(]\(?\s*((?:0x[0-9a-fA-F]{1,2}\s*,\s*){7,}0x[0-9a-fA-F]{1,2})'''
+explain = "the AES IV, written as a byte array"
+capture = "iv"
+capture_as = "charcodes"
+
+[[rule]]
+id = "ps.charcodes.hex"
+languages = ["powershell"]
+regex = '''@\(\s*((?:0x[0-9a-fA-F]{1,2}\s*,\s*){7,}0x[0-9a-fA-F]{1,2})\s*\)'''
+explain = "a string hidden as an array of byte values"
+capture = "blob"
+capture_as = "charcodes"
+
+[[rule]]
+id = "ps.charcodes.decimal"
+languages = ["powershell"]
+regex = '''@\(\s*((?:\d{1,3}\s*,\s*){7,}\d{1,3})\s*\)'''
+explain = "a string hidden as an array of byte values (decimal)"
+capture = "blob"
+capture_as = "charcodes"
+
+[[rule]]
+id = "ps.securestring"
+languages = ["powershell"]
+regex = '''ConvertTo-SecureString\s+.*-Key\s+'''
+explain = "decrypts a SecureString with a fixed key (ConvertTo-SecureString -Key): AES-CBC"
+operation = "cipher"
+cipher = "aes"
+mode = "cbc"
+direction = "decode"
+
+[[rule]]
+id = "ps.deflate"
+languages = ["powershell"]
+regex = '''(?:DeflateStream|GZipStream)'''
+explain = "decompresses a stream (.NET DeflateStream/GZipStream)"
+operation = "deflate"
+direction = "decode"
+
+[[rule]]
+id = "ps.download"
+languages = ["powershell"]
+regex = '''(?:DownloadFile|DownloadString|Invoke-WebRequest|Invoke-RestMethod|Start-BitsTransfer)'''
+explain = "downloads a file from the network"
+behaviour = "network"
+
+[[rule]]
+id = "ps.iex"
+languages = ["powershell"]
+regex = '''(?:Invoke-Expression|\biex\b)'''
+explain = "runs the decoded string as code (Invoke-Expression)"
+behaviour = "execute"
+
+[[rule]]
+id = "ps.start"
+languages = ["powershell"]
+regex = '''(?:Start-Process|\[Diagnostics\.Process\]::Start)'''
+explain = "starts a process"
+behaviour = "process"
+
+[[rule]]
+id = "ps.registry"
+languages = ["powershell"]
+regex = '''(?:New-ItemProperty|Set-ItemProperty|HKCU:|HKLM:)'''
+explain = "writes to the Windows registry (persistence)"
+behaviour = "persistence"
+
+# ---------------------------------------------------------------------------
+# JavaScript
+# ---------------------------------------------------------------------------
+
+[[rule]]
+id = "js.atob"
+languages = ["javascript"]
+regex = '''atob\(\s*['"]([A-Za-z0-9+/=]{16,})['"]\s*\)'''
+explain = "decodes an embedded base64 string (atob)"
+operation = "base64"
+direction = "decode"
+capture = "blob"
+
+[[rule]]
+id = "js.atob.var"
+languages = ["javascript"]
+regex = '''\batob\('''
+explain = "decodes base64 (atob)"
+operation = "base64"
+direction = "decode"
+
+[[rule]]
+id = "js.btoa"
+languages = ["javascript"]
+regex = '''\bbtoa\('''
+explain = "encodes to base64 (btoa)"
+operation = "base64"
+direction = "encode"
+
+[[rule]]
+id = "js.buffer.base64"
+languages = ["javascript"]
+regex = '''Buffer\.from\(\s*['"]([A-Za-z0-9+/=]{16,})['"]\s*,\s*['"]base64['"]'''
+explain = "decodes an embedded base64 string (Buffer.from(..., 'base64'))"
+operation = "base64"
+direction = "decode"
+capture = "blob"
+
+[[rule]]
+id = "js.buffer.hex"
+languages = ["javascript"]
+regex = '''Buffer\.from\(\s*['"]([0-9a-fA-F]{32,})['"]\s*,\s*['"]hex['"]'''
+explain = "reads bytes from a hex string (Buffer.from(..., 'hex'))"
+operation = "hex"
+direction = "decode"
+capture = "blob"
+
+[[rule]]
+id = "js.xor.charcode"
+languages = ["javascript"]
+regex = '''charCodeAt\([^)]*\)\s*\^'''
+explain = "XORs the characters one by one (charCodeAt ^ ...)"
+operation = "xor"
+direction = "both"
+
+[[rule]]
+id = "js.xor.literal"
+languages = ["javascript"]
+regex = '''\^\s*(0x[0-9a-fA-F]{1,2}|\d{1,3})\b'''
+explain = "XORs with a single byte written in the code"
+operation = "xor"
+direction = "both"
+capture = "key"
+capture_as = "number"
+
+[[rule]]
+id = "js.cryptojs.aes"
+languages = ["javascript"]
+regex = '''CryptoJS\.AES\.(decrypt|encrypt)\('''
+explain = "AES through CryptoJS (a passphrase goes through EVP_BytesToKey, like openssl)"
+operation = "cipher"
+cipher = "aes"
+mode = "cbc"
+direction = "decode"
+
+[[rule]]
+id = "js.cryptojs.passphrase"
+languages = ["javascript"]
+regex = '''CryptoJS\.AES\.(?:de|en)crypt\(\s*[^,]+,\s*['"]([^'"]{3,})['"]'''
+explain = "the CryptoJS passphrase, in clear in the script"
+capture = "password"
+
+[[rule]]
+id = "js.cryptojs.other"
+languages = ["javascript"]
+regex = '''CryptoJS\.(?:DES|TripleDES|RC4|Rabbit)\.'''
+explain = "another CryptoJS cipher (DES / TripleDES / RC4 / Rabbit)"
+operation = ""
+
+[[rule]]
+id = "js.node.crypto"
+languages = ["javascript"]
+regex = '''crypto\.create(?:De|En)cipheriv?\(\s*['"]([a-z0-9-]+)['"]'''
+explain = "Node.js crypto: the cipher name says the algorithm and the mode"
+capture = "command"
+
+[[rule]]
+id = "js.reverse"
+languages = ["javascript"]
+regex = '''\.split\(\s*['"]{2}\s*\)\.reverse\(\)\.join\(\s*['"]{2}\s*\)'''
+explain = "reverses the string (split/reverse/join)"
+operation = "reverse"
+direction = "both"
+
+[[rule]]
+id = "js.fromcharcode"
+languages = ["javascript"]
+regex = '''String\.fromCharCode\(\s*((?:\d{1,3}\s*,\s*){7,}\d{1,3})'''
+explain = "rebuilds a string from character codes"
+capture = "blob"
+capture_as = "charcodes"
+
+[[rule]]
+id = "js.eval"
+languages = ["javascript"]
+regex = '''(?:\beval\(|new\s+Function\(|setTimeout\(\s*['"])'''
+explain = "runs the decoded string as code (eval / new Function)"
+behaviour = "execute"
+
+[[rule]]
+id = "js.network"
+languages = ["javascript"]
+regex = '''(?:XMLHttpRequest|fetch\(|https?\.get\(|require\(\s*['"]https?['"]\s*\))'''
+explain = "talks to the network"
+behaviour = "network"
+
+[[rule]]
+id = "js.childprocess"
+languages = ["javascript"]
+regex = '''child_process|execSync|spawnSync'''
+explain = "runs a system command"
+behaviour = "process"
+
+# ---------------------------------------------------------------------------
+# bash
+# ---------------------------------------------------------------------------
+
+[[rule]]
+id = "sh.base64.decode"
+languages = ["bash"]
+regex = '''base64\s+(?:--decode|-d|-D)\b'''
+explain = "decodes base64 (base64 -d)"
+operation = "base64"
+direction = "decode"
+
+[[rule]]
+id = "sh.base64.blob"
+languages = ["bash"]
+regex = '''echo\s+(?:-n\s+)?['"]?([A-Za-z0-9+/=]{24,})['"]?\s*\|\s*base64\s+(?:--decode|-d|-D)'''
+explain = "an embedded base64 string piped into base64 -d"
+operation = "base64"
+direction = "decode"
+capture = "blob"
+
+[[rule]]
+id = "sh.xxd"
+languages = ["bash"]
+regex = '''xxd\s+-r\s+-p|xxd\s+-p\s+-r'''
+explain = "reads bytes from hex (xxd -r -p)"
+operation = "hex"
+direction = "decode"
+
+[[rule]]
+id = "sh.openssl.enc"
+languages = ["bash"]
+regex = '''openssl\s+(?:enc\s+)?(-d\s+)?-(aes|des|bf|rc4|camellia)[a-z0-9-]*'''
+explain = "openssl enc: the cipher name gives the algorithm, the key size and the mode"
+operation = "cipher"
+cipher = "aes"
+mode = "cbc"
+direction = "decode"
+
+[[rule]]
+id = "sh.openssl.pass"
+languages = ["bash"]
+regex = '''-pass\s+pass:([^\s'"]+)'''
+explain = "the openssl password, in clear on the command line"
+capture = "password"
+
+[[rule]]
+id = "sh.openssl.k"
+languages = ["bash"]
+regex = '''-K\s+([0-9a-fA-F]{16,64})'''
+explain = "the openssl key, as hex"
+capture = "key"
+capture_as = "hex"
+
+[[rule]]
+id = "sh.openssl.iv"
+languages = ["bash"]
+regex = '''-iv\s+([0-9a-fA-F]{16,32})'''
+explain = "the openssl IV, as hex"
+capture = "iv"
+capture_as = "hex"
+
+[[rule]]
+id = "sh.openssl.command"
+languages = ["bash"]
+regex = '''(openssl\s+enc[^\n|>]*)'''
+explain = "the full openssl command line"
+capture = "command"
+
+[[rule]]
+id = "sh.gunzip"
+languages = ["bash"]
+regex = '''\b(?:gunzip|zcat|gzip\s+-d)\b'''
+explain = "decompresses gzip"
+operation = "gzip"
+direction = "decode"
+
+[[rule]]
+id = "sh.rev"
+languages = ["bash"]
+regex = '''\|\s*rev\b'''
+explain = "reverses the text (rev)"
+operation = "reverse"
+direction = "both"
+
+[[rule]]
+id = "sh.curl"
+languages = ["bash"]
+regex = '''\b(?:curl|wget)\b'''
+explain = "downloads from the network"
+behaviour = "network"
+
+[[rule]]
+id = "sh.pipe.shell"
+languages = ["bash"]
+regex = '''\|\s*(?:ba)?sh\b|\beval\s'''
+explain = "runs the decoded output as a shell script"
+behaviour = "execute"
+
+[[rule]]
+id = "sh.cron"
+languages = ["bash"]
+regex = '''crontab|/etc/cron|systemctl\s+enable'''
+explain = "installs itself to run again later (persistence)"
+behaviour = "persistence"
+
+# ---------------------------------------------------------------------------
+# VBScript
+# ---------------------------------------------------------------------------
+
+[[rule]]
+id = "vbs.xor"
+languages = ["vbs"]
+regex = '''Chr\s*\(\s*Asc\s*\([^)]*\)\s*Xor\s*(\d{1,3}|&H[0-9A-Fa-f]{1,2})'''
+explain = "XORs each character with a fixed byte (Chr(Asc(c) Xor n))"
+operation = "xor"
+direction = "both"
+capture = "key"
+capture_as = "number"
+
+[[rule]]
+id = "vbs.xor.literal"
+languages = ["vbs"]
+regex = '''\bXor\s+(\d{1,3}|&H[0-9A-Fa-f]{1,2})\b'''
+explain = "XORs with a single byte written in the code"
+operation = "xor"
+direction = "both"
+capture = "key"
+capture_as = "number"
+
+[[rule]]
+id = "vbs.hex.midclng"
+languages = ["vbs"]
+regex = '''CLng\(\s*"&H"\s*&\s*Mid\('''
+explain = "reads bytes from a hex string, two characters at a time (the usual VBS idiom)"
+operation = "hex"
+direction = "decode"
+
+[[rule]]
+id = "vbs.xor.any"
+languages = ["vbs"]
+regex = '''\bXor\b'''
+explain = "XORs the data"
+operation = "xor"
+direction = "both"
+
+[[rule]]
+id = "vbs.base64"
+languages = ["vbs"]
+regex = '''(?:MSXML2\.DOMDocument|bin\.base64|DecodeBase64)'''
+explain = "decodes base64 (the MSXML2 bin.base64 trick)"
+operation = "base64"
+direction = "decode"
+
+[[rule]]
+id = "vbs.network"
+languages = ["vbs"]
+regex = '''(?:MSXML2\.(?:XMLHTTP|ServerXMLHTTP)|WinHttp\.WinHttpRequest|ADODB\.Stream)'''
+explain = "downloads from the network"
+behaviour = "network"
+
+[[rule]]
+id = "vbs.run"
+languages = ["vbs"]
+regex = '''(?:WScript\.Shell|\.Run\s|\.Exec\s|Shell\.Application)'''
+explain = "runs a command"
+behaviour = "process"
+
+[[rule]]
+id = "vbs.execute"
+languages = ["vbs"]
+regex = '''\b(?:Execute|ExecuteGlobal|Eval)\s*\('''
+explain = "runs the decoded string as code (Execute)"
+behaviour = "execute"
+
+[[rule]]
+id = "vbs.filesystem"
+languages = ["vbs"]
+regex = '''Scripting\.FileSystemObject'''
+explain = "reads or writes files"
+behaviour = "filesystem"
+
+# ---------------------------------------------------------------------------
+# Any language: values worth extracting
+# ---------------------------------------------------------------------------
+
+[[rule]]
+id = "any.url"
+languages = ["powershell", "javascript", "bash", "vbs", "python", "unknown"]
+regex = '''['"]([a-z][a-z0-9+.-]*://[^\s'"<>]{4,})['"]'''
+explain = "a URL written in the script"
+capture = "url"
+
+[[rule]]
+id = "any.blob.hex"
+languages = ["powershell", "javascript", "bash", "vbs", "python", "unknown"]
+regex = '''['"]((?:[0-9a-fA-F]{2}){32,})['"]'''
+explain = "a long hex string: probably the payload"
+capture = "blob"
+# Kept as the TEXT written in the script: the recovery chain starts by decoding it.
+capture_as = "text"
+
+[[rule]]
+id = "any.blob.base64"
+languages = ["powershell", "javascript", "bash", "vbs", "python", "unknown"]
+regex = '''['"]([A-Za-z0-9+/]{40,}={0,2})['"]'''
+explain = "a long base64 string: probably the payload"
+capture = "blob"
+
+[[rule]]
+id = "any.windows.path"
+languages = ["powershell", "javascript", "bash", "vbs", "python", "unknown"]
+regex = '''['"]((?:[A-Za-z]:\\|%[A-Z]+%\\|\\\\)[^'"\n]{3,})['"]'''
+explain = "a Windows file path"
+capture = "path"
+
+[[rule]]
+id = "any.key.variable"
+languages = ["powershell", "javascript", "bash", "vbs", "unknown"]
+regex = '''(?i)\$?(?:key|iv|salt|passphrase|password|secret)\w*\s*=\s*['"]([^'"\n]{4,64})['"]'''
+explain = "a variable named like a key / IV / salt / password, with a literal value"
+capture = "key"

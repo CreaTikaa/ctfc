@@ -134,6 +134,87 @@ def print_key_lengths(console: Console, lengths: list) -> None:
     )
 
 
+def print_lens(console: Console, report, show_code: bool = False) -> None:
+    """Code Lens: the summary, then the operations, artifacts and behaviours."""
+    lines = [f"[bold]language:[/] {escape(report.language)}", ""]
+    lines += [f"  - {safe(line, 200)}" for line in report.summary] or ["  (nothing recognised)"]
+    console.print(Panel("\n".join(lines), title="what this script does", expand=True))
+
+    if report.peeled:
+        table = Table(title="peeled blobs (the chain applied to each one)", expand=True)
+        table.add_column("score", justify="right", width=6)
+        table.add_column("line", justify="right", width=5)
+        table.add_column("chain", ratio=1)
+        table.add_column("output", ratio=4)
+        for peeled in report.peeled:
+            table.add_row(
+                f"[{score_style(peeled.score)}]{peeled.score:.2f}[/]",
+                str(peeled.line),
+                safe(peeled.label, 30),
+                preview(peeled.data, 90),
+            )
+        console.print(table)
+
+    if report.operations:
+        table = Table(title="operations, in order", expand=True)
+        table.add_column("#", justify="right", width=3)
+        table.add_column("line", justify="right", width=5)
+        table.add_column("step", width=10)
+        table.add_column("what", ratio=3)
+        table.add_column("rule", width=18)
+        for index, operation in enumerate(report.operations, start=1):
+            table.add_row(
+                str(index),
+                str(operation.line),
+                operation.kind or "-",
+                safe(operation.label, 80),
+                safe(operation.rule),
+            )
+        console.print(table)
+
+    if report.artifacts:
+        table = Table(title="extracted values", expand=True)
+        table.add_column("kind", width=9)
+        table.add_column("line", justify="right", width=5)
+        table.add_column("name", width=12)
+        table.add_column("value", ratio=3)
+        table.add_column("how", ratio=1)
+        for artifact in report.artifacts:
+            table.add_row(
+                artifact.kind,
+                str(artifact.line),
+                safe(artifact.name or "-", 12),
+                safe(artifact.preview(70)),
+                safe(artifact.how, 30),
+            )
+        console.print(table)
+
+    if report.behaviours:
+        table = Table(title="behaviour", expand=False)
+        table.add_column("kind", width=12)
+        table.add_column("line", justify="right", width=5)
+        table.add_column("what", ratio=3)
+        for behaviour in report.behaviours:
+            table.add_row(behaviour.kind, str(behaviour.line), safe(behaviour.label, 90))
+        console.print(table)
+
+    for note in report.notes:
+        console.print(f"[cyan]*[/] {safe(note)}")
+
+    if report.recovery is None:
+        console.print("[yellow]No recovery script:[/] no embedded blob and chain to replay.")
+        return
+    state = "complete" if report.recovery.complete else "PARTIAL, check it"
+    console.print(
+        f"[bold]recovery script[/] ({escape(report.recovery.label)}) - {state}, "
+        f"{len(report.recovery.blob)} bytes of input"
+    )
+    if show_code:
+        console.print(Syntax(report.recovery.python, "python", theme="monokai", word_wrap=True))
+    else:
+        console.print("[dim]Add --show-code to print it.[/]")
+
+
 def print_detect(console: Console, report: DetectReport) -> None:
     facts = Table(title="Facts", show_header=False, expand=False)
     facts.add_column("name", style="cyan")

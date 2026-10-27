@@ -1,6 +1,6 @@
 # Handoff notes (for the next agent)
 
-Last update: 2026-10-27, after milestone M3. Read `CLAUDE.md` first, then this file.
+Last update: 2026-10-27, after milestone M4. Read `CLAUDE.md` first, then this file.
 
 ## 1. Working agreement with the user
 
@@ -22,11 +22,16 @@ Last update: 2026-10-27, after milestone M3. Read `CLAUDE.md` first, then this f
 | M0 scaffold | `a8e1937` | pyproject, Makefile, types, inputs, config, strings, argparse CLI, Flask hello |
 | M1 detect + auto | `dcd775e` | encodings, scoring, flags, magic, detect, auto, rich CLI, web UI (Auto/Detect) |
 | M2 XOR | `369bfef` | xor.py, XOR in auto, `ctfc xor`, web jobs (progress/cancel), XOR tab |
-| M3 symmetric | this one | symmetric.py, kdf.py, tea.py, blockmodes.py, `ctfc sym`, `ctfc blob`, web Symmetric tab |
-| M4 Code Lens | - | **next**, plan in section 5 (ask for his OK first) |
+| M3 symmetric | `244a7ae` | symmetric.py, kdf.py, tea.py, blockmodes.py, `ctfc sym`, `ctfc blob`, web Symmetric tab |
+| M4 Code Lens | this one | lens.py, lens_python.py, lens_rules.py, data/lens_rules.toml, `ctfc lens`, web Code Lens tab |
+| M5 RSA + hashes | - | **next**, plan in section 5 |
 
-171 tests pass (`.venv/bin/python -m pytest -q`, ~9 s), `ruff check .` and `ruff format --check .`
+240 tests pass (`.venv/bin/python -m pytest -q`, ~9 s), `ruff check .` and `ruff format --check .`
 clean.
+
+**The user said on 2026-10-27, for M4: "tu peux directement commencer avec ton plan, pas besoin de
+me le présenter".** That waiver was for M4 only. For M5, post the plan in French and wait, unless
+he says otherwise again.
 
 ## 3. Environment
 
@@ -64,9 +69,23 @@ Added modules (small, one responsibility each):
 - `core/blockmodes.py` (M3): hand-written ECB / CBC / CBC-CTS working on any
   `block_decrypt(block, key, endian)` callable, plus the same code as text for generated scripts.
 - `core/tea.py` (M3): TEA and XTEA block functions (both endiannesses) + helper source text.
-- `render.py`: rich tables; all sample data goes through `safe()`. `print_notes()` added in M3.
+- `core/lens.py` (M4): the shared types (`Artifact`, `Operation`, `Behaviour`, `Peeled`,
+  `Recovery`, `LensReport`), language detection, `analyse()`, `build_recovery()`, `apply_chain()`
+  and `peel_blobs()`. `analyse(source, filename, flagset)` is the only entry point front-ends use.
+- `core/lens_python.py` (M4): `ast`-based analysis. `Folder.fold()` is the constant folder (the
+  thing that replaces `eval`): add a case there to support a new literal shape. `PythonLens`
+  walks statements in order and calls innermost-first.
+- `core/lens_rules.py` (M4): the regex engine for PowerShell / JS / bash / VBS, plus the two jobs
+  a regex cannot do: `_resolve_variable_keys` (follow `-bxor $k` back to `$k = 0x3b`) and
+  `_attach_keys` (match a key by size, marking it `key_guessed`).
+- `data/lens_rules.toml` (M4): 60 rules. **Adding support for an API is one TOML entry, not code.**
+  Fields: id, languages, regex, explain, operation, direction, capture, capture_as, behaviour,
+  cipher, mode. `tests/test_lens.py::test_every_rule_is_well_formed` validates them all.
+- `render.py`: rich tables; all sample data goes through `safe()`. `print_notes()` added in M3,
+  `print_lens()` in M4.
 - `web/jobs.py`: background jobs. Kinds handled in `web/app.py::prepare()`: `auto`, `xor`, `sym`,
-  `blob`. Sync twins: `/api/auto`, `/api/xor`, `/api/detect`, `/api/sym`.
+  `blob`. Sync twins: `/api/auto`, `/api/xor`, `/api/detect`, `/api/sym`, `/api/lens` (Code Lens
+  is static analysis, so it is fast enough to answer directly - no job needed).
 - `core/codegen.py`: a result chain is a list of `Step(name, params)`; `step_code()` maps a step to
   `StepCode(label, comment, python, imports, import_lines, helper, cyberchef)`. M3 added
   `Step("cipher", params)` (`cipher_step_code`) and the `import_lines` field (for
@@ -100,6 +119,22 @@ Scoring decisions (tuned against noise, keep the noise tests green):
   passes `MIN_SCORE`, the 3 least-bad are shown with a note saying so. Fernet candidates are
   **pinned**: their verdict is always shown, even "the HMAC does NOT verify".
 
+Code Lens decisions (M4), all with a test that pins them:
+- An assignment to a name containing key/iv/nonce/salt/password/secret is **setup**, not a data
+  step (`PythonLens.KEY_MATERIAL`), so a hex-decoded key is not reported as "decode hex".
+- A cipher operation is emitted at `.decrypt()`/`.encrypt()`, never at `.new()`, or the cipher
+  would be ordered before the base64 decode that feeds it (Python evaluates the callee first).
+- `"token"` means the *ciphertext* (Fernet token, JWT), never a key, in `NAME_HINTS`.
+- A key attached by size only is marked `key_guessed`; the recovery script then **stops before
+  that step** and a note says so. Better a short script that works than a long one that crashes.
+- Blob detection: 40+ characters by name, with a fallback (`promote_spare_blob`) that accepts a
+  16+ character literal when a decoding chain was found but no payload - a script that decodes
+  must have had something to decode.
+- The same source span is reported once, by the most specific rule (hex digits are also valid
+  base64, and a `.Key = @(0x..)` array also matches the generic char-code rule).
+- `peel_blobs()` applies the chain to *every* blob and ranks by `scoring.py`, so the flag regexes
+  fire; the answer is usually the first row.
+
 Conventions **verified against real implementations** in M3 (tests enforce them):
 - `openssl enc -aes-256-cfb` = pycryptodome `MODE_CFB, segment_size=128`; our separate `cfb8`
   mode is pycryptodome's default (one segment per byte).
@@ -123,40 +158,39 @@ Known limitations / open points:
 - No XChaCha20 (24-byte nonce), no AES-SIV, no DES degenerate-key handling beyond what
   pycryptodome refuses (caught as `CryptoError` and skipped).
 - `docs/cheatsheet.md` does not exist yet (CLAUDE.md puts it in M8 with the web tab).
+- Code Lens: a key computed at runtime cannot be recovered statically (the KDF call is reported);
+  control flow is not simulated, so a character-by-character loop with arithmetic is not folded
+  (the char-code *array* form is); the rule-based languages have no notion of scope.
+- `tests/fixtures/*` is excluded from ruff in `pyproject.toml`: the Code Lens samples are data,
+  deliberately written in obfuscated dropper style, and must stay byte-for-byte as they are.
 
-## 5. Plan for M4 (Code Lens) - propose it in French and wait for his OK
+## 5. Plan for M5 (RSA + hashes) - post it in French and wait for his OK
 
-CLAUDE.md section 4.4. The highest-value feature for forensics, and **static analysis only**
-(hard rule 3: never execute analysed content, no `eval`, no `exec`, no `pickle`).
+CLAUDE.md section 4.5.
 
-1. `core/lens.py`: the shared result type, e.g. `LensReport(language, operations, artifacts,
-   reasons, inverse_script)` where `operations` is the ordered list of what the script does
-   (`base64 -> zlib -> xor`) and `artifacts` holds the extracted keys/IVs/salts/URLs/paths with
-   their line numbers.
-2. Python first, with `ast`: walk the tree, recognise `AES.new(key, AES.MODE_CBC, iv)`,
-   `Fernet(key)`, `PKCS1_OAEP`, `hashlib.*`, `base64.*`, `zlib.*`, `bytes([...])`, XOR loops
-   (`^` inside a comprehension or a for loop), `open(...).read()`. Constant-fold literals
-   (string concatenation, `*`, `[::-1]`, char-code lists) **statically**, never with `eval`.
-3. Then PowerShell, JavaScript, bash, VBS with a **rule table** (`id`, regex, explanation) kept in
-   `data/lens_rules.toml` so it is easy to extend: `-bxor`, `FromBase64String`,
-   `ConvertTo-SecureString -Key`, `System.Security.Cryptography`, `CryptoJS.AES.decrypt`,
-   `atob`, `openssl enc`, `base64 -d`, `xxd -r`...
-4. Generated **inverse script**: reuse `codegen.Step`/`chain_snippet` - the operations found are
-   already expressible as steps (`base64`, `zlib`, `xor`, `cipher`), so the inverse is the
-   reversed chain. That is why M3 put cipher steps in codegen.
-5. "Peel the layers" static view for nested obfuscation (base64 / zlib / reversed strings /
-   char-code arrays), reusing `core/auto.py` on the *extracted blob*, not on the script.
-6. CLI `ctfc lens <script>` (`--json`, `--show-code`) + web Code Lens tab (paste a script,
-   get the summary, the artifacts table and the inverse script). Remove `"lens": "M4"` from
-   `PLANNED` and the `data-milestone` on the tab.
-7. Fixtures: the PowerShell dropper already exists (`powershell_xor.b64`, and
-   `powershell_dropper()` in make_fixtures); add a Python encryptor using AES-CBC with a
-   hardcoded key, a JS one using CryptoJS, a bash one using `openssl enc`, a VBS one, and a
-   layered Python obfuscation (base64 -> zlib -> XOR). Expected outputs in the tests.
-8. Docs: a `how-it-works.md` section on how static analysis differs from running the script, and
-   what the rule table can and cannot see.
+1. `core/rsa.py`: parse PEM/DER public and private keys (pycryptodome `RSA.import_key`), print n,
+   e, d, p, q, bit size; check that a private key matches a public one (compare moduli); decrypt
+   with OAEP (SHA-1/SHA-256) and PKCS#1 v1.5, trying both and scoring the result; build a key from
+   `n,e,p,q` or `n,e,d` (`RSA.construct`), including the `d` from `p,q,e` computation.
+2. Offline attacks on weak keys, each with a one-line explanation of *why* it works: small `e`
+   (integer cube root with `gmpy2` if present, else Newton on ints), shared factors across several
+   keys (gcd of moduli), Fermat (p and q close), Wiener (small `d`, continued fractions), trial
+   division by small primes, and Hastad for the same message under several keys if cheap.
+   factordb is an **opt-in online button** (config `offline`, `--offline`), with the warning.
+3. `core/hashes.py` + `data/hashcat_modes.toml`: identify a hash from its length, charset and
+   prefix, then print the ready `hashcat -m <mode>` and `john --format=<x>` commands. Include the
+   DB/auth formats CLAUDE.md names: MySQL native `$mysqlna$<salt>*<response>` (fixture exists),
+   NTLM, bcrypt `$2y$`, sha512crypt `$6$`, Kerberos AS-REP/TGS, plus the plain md5/sha family.
+   **No cracker**: identify + hand over (tiny wordlist / known-plaintext cases are fine).
+4. CLI `ctfc rsa` (`--key`, `--decrypt`, `--n/--e/--d/--p/--q`, `--attack`) and `ctfc hash <hash>`;
+   web RSA and Hash tabs. Remove `rsa`/`hash` from `PLANNED` and the `data-milestone` attributes.
+5. Fixtures: an RSA keypair with a known flag (OAEP and PKCS1v15 variants), a small-`e` key, two
+   keys sharing a prime, a Fermat-weak key, a Wiener-weak key, the RSA-OAEP-wrapped AES key||iv
+   blob CLAUDE.md asks for in section 9, and one hash per format in the table.
+6. Docs: a `how-it-works.md` section on RSA (why `e=3` on a short message is a cube root, what
+   OAEP padding is for, why sharing a prime breaks both keys), and the hash identification table.
 
-## 6. Improvement ideas (the user said: after M3, if it works - so they are open)
+## 6. Improvement ideas (open: he said "on les feras toutes apres si M3 est fonctionnel")
 
 1. "Apply" buttons on Detect guesses that open the right tab pre-filled (e.g. XOR keylen 6,
    openssl `Salted__` -> Symmetric with the passphrase field focused). Now easy: both tabs exist.
@@ -183,5 +217,7 @@ ctfc blob tests/fixtures/key_iv_blob.b64 --against tests/fixtures/aes_cbc_keyiv_
 ctfc sym tests/fixtures/aes_gcm_nonce_ct_tag.bin --key "$(cat tests/fixtures/aes_cbc_iv_prefix.key)" --show-code
 ctfc sym tests/fixtures/openssl_salted_pbkdf2.bin --passwords
 ctfc sym tests/fixtures/xtea_cbc.bin --pass tiny --cipher xtea
+ctfc lens tests/fixtures/lens_dropper.ps1 --show-code
+ctfc lens tests/fixtures/lens_layers.py
 ctfc serve   # http://127.0.0.1:8137
 ```

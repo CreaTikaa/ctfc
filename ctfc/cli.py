@@ -19,6 +19,7 @@ from ctfc.core.budget import Budget
 from ctfc.core.detect import detect
 from ctfc.core.flags import FlagSet, build_flagset
 from ctfc.core.inputs import InputError, parse_input
+from ctfc.core.lens import analyse as analyse_script
 from ctfc.core.symmetric import CryptoError, SolveReport, solve_symmetric
 from ctfc.core.types import Input
 from ctfc.core.xor import guess_key_lengths, solve_xor, xor_inputs
@@ -26,7 +27,6 @@ from ctfc.strings import t
 
 # Commands that exist in the interface but are built in a later milestone.
 PLANNED = {
-    "lens": "M4",
     "rsa": "M5",
     "hash": "M5",
     "recipe": "M6",
@@ -97,7 +97,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("hash", help="the hash string")
 
     p = add("lens")
-    p.add_argument("script", help="script file to analyse (never executed)")
+    p.add_argument("script", help=t("arg_script"))
 
     p = add("keys")
     p.add_argument("dump", help="memory dump / binary / strings output")
@@ -267,6 +267,18 @@ def cmd_blob(args: argparse.Namespace, config: Config, console: Console) -> int:
     return print_sym_report(args, ciphertext, report, console, "blob splits")
 
 
+def cmd_lens(args: argparse.Namespace, config: Config, console: Console) -> int:
+    """Static analysis of a script: what it does to the data, and how to undo it."""
+    inp = parse_input(args.script, decode_bare=False)
+    report = analyse_script(inp.data, filename=args.script, flagset=flagset_from(config))
+    if args.json:
+        print(json.dumps({"input": input_to_dict(inp), **report.to_dict()}, indent=2))
+        return 0 if report.operations else 1
+    render.print_input_notes(console, inp)
+    render.print_lens(console, report, show_code=args.show_code)
+    return 0 if report.operations else 1
+
+
 def cmd_serve(args: argparse.Namespace, config: Config) -> int:
     """Start the Flask web UI (bound to 127.0.0.1 unless --host says otherwise)."""
     from ctfc.web.app import create_app  # imported here so the CLI starts fast
@@ -310,6 +322,7 @@ def main(argv: list[str] | None = None) -> int:
         "xor": cmd_xor,
         "sym": cmd_sym,
         "blob": cmd_blob,
+        "lens": cmd_lens,
     }
     if args.command in commands:
         try:

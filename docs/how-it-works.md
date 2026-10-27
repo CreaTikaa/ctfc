@@ -371,3 +371,113 @@ pycryptodome does not implement them, so ctfc does, in about ten readable lines
 each. One catch: the 8-byte block is read as two 32-bit words, and implementations
 disagree on the byte order (C on x86 is little-endian, most Python and Java code is
 big-endian). ctfc tries both and tells you which one worked.
+
+## 7. Code Lens (`ctfc/core/lens.py`)
+
+The most useful tool here for forensics, because it answers the question you
+actually have: **"I found the encryptor, what does it do?"** When you have the
+code, you do not have to guess the cipher or the key layout: you mirror it.
+
+### Nothing is ever executed
+
+A sample may be malware, so Code Lens is *static analysis only* (hard rule 3 in
+`CLAUDE.md`). It never runs, imports or `eval`s the file. A test parses our own
+three lens modules and asserts there is no call to `eval`, `exec`, `compile` or
+`__import__` anywhere in them. The *data* a script carries does get decoded (see
+"peeling" below) - that is bytes going through base64 and XOR, not code running.
+
+### Python: a real parser
+
+For Python, `ast` gives something regexes cannot: **the order of operations**. In
+
+```python
+out = zlib.decompress(base64.b64decode(BLOB))
+```
+
+the innermost call runs first, and a parse tree knows it. Code Lens walks each
+statement in source order and, inside a statement, visits calls innermost-first.
+
+Values are recovered by **constant folding**: rebuilding what a literal
+expression is worth, the way you would read it by hand.
+
+| written in the script | folded to |
+|---|---|
+| `"ab" + "cd"` | `"abcd"` |
+| `"ab" * 3` | `"ababab"` |
+| `"hello"[::-1]` | `"olleh"` |
+| `bytes([0x41, 0x42, 67])` | `b"ABC"` |
+| `bytes.fromhex("414243")` | `b"ABC"` |
+| `base64.b64decode("QUJD")` | `b"ABC"` |
+| `"".join(["a","b","c"])` | `"abc"` |
+| `bytes(range(3))`, `open(f).read()` | **nothing** |
+
+The last line matters: when a value cannot be rebuilt from literals alone, the
+answer is `None`. Code Lens says "I could not read this" instead of guessing, and
+it never evaluates the expression to find out.
+
+Two details that took a while to get right:
+
+- **`KEY = bytes.fromhex("...")` is not a step in the data path.** An assignment
+  to a variable whose name says key / iv / salt / password / secret is *setup*:
+  its hex decoding is not reported as "decode hex", otherwise every script with a
+  hex key appears to start by decoding hex.
+- **the cipher step belongs where the data flows through it.** `AES.new(key, mode,
+  iv)` only records the parameters; the operation is emitted at `.decrypt()`.
+  Python evaluates `AES.new(...)` *before* the arguments of `.decrypt(...)`, so
+  reporting it at `.new()` would put AES before the base64 decode that feeds it.
+
+### The other languages: a rule table
+
+PowerShell, JavaScript, bash and VBScript are matched with a table of rules kept
+in `ctfc/data/lens_rules.toml`. Each rule is an id, a regex, an explanation, and
+what its captured group means (`blob`, `key`, `iv`, `password`, `url`, `path`...).
+Supporting a new API is then **one TOML entry, not code** - which is the point:
+during a CTF you can add a rule in thirty seconds.
+
+What you lose: a regex only knows *where* it matched, so operations are ordered by
+position in the file. That is right for the straight-line scripts droppers are
+made of, and wrong for code that defines a function at the bottom and calls it at
+the top. The report always says so in its notes.
+
+Two things regexes cannot do on their own, so they are code:
+
+- **following a variable**: one match sees `-bxor $k`, another sees `$k = 0x3b`,
+  and nothing ties them together. `_resolve_variable_keys` looks the name up.
+- **telling a guess from a fact**: a key attached to an operation because its
+  *size* fits (not because the data flows into it) is marked `key_guessed`, and
+  the recovery script then stops before that step rather than producing something
+  that crashes or lies.
+
+### Peeling the layers
+
+A dropper usually hides several strings the same way: a URL here, a flag there.
+So once the chain is known (`base64 -> xor(0x5a)`), ctfc applies it **to every
+embedded blob**, scores each result with `scoring.py` and ranks them. The flag
+regexes fire here, which is why the answer is often simply the first row of the
+"peeled blobs" table.
+
+### The recovery script
+
+The operations are turned back into `codegen.Step`s - the same ones `auto` and the
+symmetric solver use - so the generated script is a normal ctfc snippet. A script
+that *decodes* (the usual dropper) is replayed in the same order; a script that
+*encodes* is undone in reverse. If a step is missing (an unknown key, a guessed
+one), the script stops there, is marked **partial**, and a note says what was left
+out and why.
+
+When the cipher uses a **passphrase** rather than a key (`openssl enc -pass`, a
+CryptoJS passphrase), Code Lens cannot produce the key - deriving it is exactly
+what `ctfc sym` does. So it hands over with the ready-to-run command, for example:
+
+```
+ctfc sym <file> --pass "bashpass"
+```
+
+### Limits worth knowing
+
+- A key computed at runtime (from the hostname, a server reply, a timestamp) can
+  never be recovered statically. Code Lens reports the KDF call and stops.
+- Control flow is not simulated: a loop that builds a string character by
+  character with arithmetic is not folded (the char-code *array* form is).
+- The rule-based languages see no variable scope, so a name reused for two
+  different things can be mixed up. The line numbers in the report let you check.

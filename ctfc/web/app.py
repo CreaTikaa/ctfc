@@ -31,6 +31,7 @@ from ctfc.core.budget import Budget
 from ctfc.core.detect import detect
 from ctfc.core.flags import build_flagset
 from ctfc.core.inputs import InputError, decode_base64, decode_hex, parse_input
+from ctfc.core.lens import analyse as analyse_script
 from ctfc.core.symmetric import solve_symmetric
 from ctfc.core.types import Input
 from ctfc.core.xor import guess_key_lengths, solve_xor, xor_inputs
@@ -242,6 +243,16 @@ def create_app(config: Config | None = None) -> Flask:
     def api_sym():
         work, budget = prepare("sym")
         return jsonify(work(budget))
+
+    @app.post("/api/lens")
+    def api_lens():
+        """Code Lens: static analysis only, so it is fast enough to answer directly."""
+        payload = read_payload()
+        # A script stays text: never auto-decode it as hex/base64.
+        inp = input_from_payload(payload, decode_bare=False)
+        name = str(payload.get("name", ""))[:100]
+        report = analyse_script(inp.data, filename=name, flagset=flagset)
+        return jsonify({"input": input_summary(inp), **report.to_dict()})
 
     @app.post("/api/jobs/<kind>")
     def start_job(kind: str):

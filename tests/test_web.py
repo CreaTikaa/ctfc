@@ -187,3 +187,32 @@ def test_api_blob_needs_a_ciphertext(client):
     response = client.post("/api/jobs/blob", json={"input": "00" * 48, "options": {}})
     assert response.status_code == 400
     assert "ciphertext" in response.get_json()["error"]
+
+
+def test_api_lens_python(client, fixture_bytes):
+    """The Code Lens tab: a pasted script, analysed statically."""
+    payload = {"input": fixture_bytes("lens_layers.py").decode(), "format": "text", "name": "x.py"}
+    answer = client.post("/api/lens", json=payload).get_json()
+    assert answer["language"] == "python"
+    assert [operation["kind"] for operation in answer["operations"]] == ["base64", "zlib", "xor"]
+    assert answer["recovery"]["complete"] is True
+    assert "zlib.decompress" in answer["recovery"]["python"]
+
+
+def test_api_lens_uploaded_powershell(client, fixture_bytes):
+    import base64
+
+    payload = {
+        "data_b64": base64.b64encode(fixture_bytes("lens_dropper.ps1")).decode(),
+        "name": "dropper.ps1",
+    }
+    answer = client.post("/api/lens", json=payload).get_json()
+    assert answer["language"] == "powershell"
+    assert any(behaviour["kind"] == "network" for behaviour in answer["behaviours"])
+    assert any(artifact["kind"] == "url" for artifact in answer["artifacts"])
+
+
+def test_api_lens_keeps_a_script_as_text(client):
+    """A script that happens to look like base64 must not be decoded first."""
+    answer = client.post("/api/lens", json={"input": "YWJjZGVmZ2g=", "format": "auto"}).get_json()
+    assert answer["input"]["length"] == len("YWJjZGVmZ2g=")

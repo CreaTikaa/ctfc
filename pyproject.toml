@@ -32,7 +32,12 @@ ctfc = ["data/*", "web/static/*", "web/static/**/*"]
 [tool.ruff]
 line-length = 100
 target-version = "py311"
-extend-exclude = ["*.md"]  # only Python files are linted/formatted
+extend-exclude = [
+    "*.md",
+    # Sample scripts analysed by Code Lens: they are DATA (deliberately ugly,
+    # obfuscated dropper style) and must stay exactly as they are.
+    "tests/fixtures/*",
+]
 
 [tool.ruff.lint]
 # E/W: style, F: real bugs, I: import order, B: common pitfalls, UP: modern syntax
