@@ -134,6 +134,9 @@ EN: dict[str, str] = {
     "opt_report_lang": "language of the write-up: en or fr",
     "opt_report_out": "write the Markdown to this file instead of printing it",
     "opt_report_all": "also include the steps that led nowhere",
+    "cmd_cheatsheet": "the one-page decision tree: what to run for what you have",
+    "cmd_cheatsheet_ex": "example: ctfc cheatsheet  |  ctfc cheatsheet --raw > cheatsheet.md",
+    "opt_cheatsheet_raw": "print the Markdown source instead of rendering it",
     "cmd_session": "keep track of a challenge: every command is recorded for the write-up",
     "cmd_session_ex": (
         "example: ctfc session new cave-expedition --title 'Cave Expedition' --ctf "
@@ -326,6 +329,7 @@ EN: dict[str, str] = {
     "web_pipeline_bad_json": "The recipe is not valid JSON:",
     "web_pipeline_ask_key": "XOR key, in hex (e.g. 4b337921)",
     "web_open_pipeline": "Open in Pipeline",
+    "web_cheatsheet_help": "The one-page decision tree (also: ctfc cheatsheet in a terminal).",
     # Session bar (M8)
     "web_session": "session",
     "web_session_none": "(not recording)",

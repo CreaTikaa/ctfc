@@ -1,6 +1,7 @@
 # Handoff notes (for the next agent)
 
-Last update: 2026-10-28, **M7 done**; next is M8 (ask for plan approval first, see section 1).
+Last update: 2026-10-28, **M8 done: every milestone of CLAUDE.md is built.** What is left is
+listed in section 5ter (open points) - ask the user before starting anything new.
 Read `CLAUDE.md` first, then this file.
 
 ## 1. Working agreement with the user
@@ -29,9 +30,10 @@ Read `CLAUDE.md` first, then this file.
 | ideas 1 + 8 | `fb74064` | "Apply" buttons in Detect (`Guess.apply`), XOR key from a hash of a common word |
 | ideas 2 + 3 + 4 | this one | custom base64 alphabet in auto, `ctfc scan <folder>`, `ctfc pcap` (core/pcap.py) |
 | M6 pipeline + CyberChef + tools | `69ae63c`..`78bf9b7` | recipes, verified CyberChef deep links, embedded CyberChef (`make vendor`), tool bridge, web Pipeline tab + Suggested tools strip (section 5) |
-| M7 classical + key hunting | `180633d`..this one | classical.py, keyhunt.py, `ctfc classical`, `ctfc keys`, web Keys tab (section 5bis) |
+| M7 classical + key hunting | `180633d`..`bcdd550` | classical.py, keyhunt.py, `ctfc classical`, `ctfc keys`, web Keys tab (section 5bis) |
+| M8 sessions + report + bundle | `5e35985`..this one | write-up lessons (`lens --against`), sessions, `ctfc report`, cheat sheet, `make bundle` (section 5ter) |
 
-574 tests pass, 1 skipped (`.venv/bin/python -m pytest -q`, ~40 s), `ruff check .` and `ruff format --check .`
+614 tests pass, 1 skipped (`.venv/bin/python -m pytest -q`, ~40 s), `ruff check .` and `ruff format --check .`
 clean.
 
 **Plan approval: the user waived it twice on 2026-10-27.** For M4: "tu peux directement commencer
@@ -298,6 +300,51 @@ Key hunting (`core/keyhunt.py`, `ctfc keys`, web Keys tab, job kind `keys`):
   "key found at offset 0x...".
 - `PLANNED` in cli.py now holds `report` (M8).
 
+## 5ter. M8 (done): the user's write-ups, sessions, report, cheat sheet, bundle
+
+The user pointed at his write-ups (https://github.com/CreaTikaa/CTFs-Writeups) for the
+report format **and** as real use-cases. Four challenge shapes were rebuilt as fixtures
+(`writeup_*`, new keys, fake flags; never copy real flags) and each one exposed a gap,
+all fixed and pinned by `tests/test_writeups.py`:
+- Cave Expedition (PowerShell, obfuscated, two base64 keys, `-bxor $a -bxor $b`, base64
+  out) -> `core/lens_against.py`, `ctfc lens <script> --against <file>`: the script's
+  literals (raw/base64/hex) are tried as the keys of its own operations.
+- A new Hire (Python stager) -> `PythonLens.encoded_literal`: for `x = b64decode("...")`
+  the blob is the *encoded* literal (the recovery script used to decode twice and crash).
+- Ghost in the Dark (.NET AES) -> rule `ps.aes.create` + `_resolve_cipher_variables`
+  (`.Key = $k` back to `$k = [Convert]::FromBase64String(...)`, CipherMode read).
+- Silent Trap (RC4 over base64) -> `symmetric.decode_text_ciphertext`: base64/hex text
+  ciphertext is decoded first (was an M3 limitation), the snippet starts with that step.
+- `codegen.chain_snippet(save_as=...)`: binary results are written to a file.
+
+Sessions (`core/session.py`): `~/.ctfc/sessions/<name>/{session.json,steps.jsonl,inputs/}`,
+append-only steps, names `[A-Za-z0-9_-]{1,64}` only. `CTFC_SESSIONS_DIR` overrides the
+folder; **tests/conftest.py sets it** so the suite never writes into real sessions (keep
+that). CLI: `ctfc session new|use|stop|list|show|note|flag`, `--session` on every
+command, `remember()` in cli.py is called once per command. `config.sessions_dir` too.
+Web: session bar; `record()` in web/app.py, jobs are wrapped in `prepare()`.
+
+Report (`core/report.py`): layout of his write-ups (`# title`, `### statement`, `## Step
+N: <heading per tool>`, command, findings, output, "To redo it by hand", CyberChef,
+`## Flag`, "GGs !"). Phrases EN/FR in `strings.REPORT_TEXT`. Dead ends dropped unless
+followed by a note; retries deduplicated; `fence()` outlasts backticks in the output.
+
+Cheat sheet: `ctfc/data/cheatsheet.md` (packaged; `docs/cheatsheet.md` points to it),
+`ctfc cheatsheet`, web tab with a tiny textContent-only Markdown renderer.
+`tests/test_cheatsheet.py` checks every `ctfc <cmd> --option` it mentions exists.
+
+Bundle: `make bundle` -> `dist/ctfc-bundle/` (wheels incl. CyberChef inside the ctfc
+wheel, `install.sh` with `--no-index`, README-OFFLINE.md = docs/day-of-the-ctf.md).
+Verified: installed from a copy with PIP_NO_INDEX=1, commands run outside the repo.
+
+Open points (not started, ask first):
+- Keyword substitution solver (hill climbing needs n-gram tables: a data file, no dep).
+- `lens --against` for JS/bash/VBS ciphers relies on the same literal search but the
+  cipher rules of those languages do not resolve variables like PowerShell now does.
+- Bundle wheels are platform-specific (`BUNDLE_PLATFORM` adds another platform's).
+- The user dropped two Notion exports in `examples/` (untracked, not read, not
+  committed): ask him what they are for.
+
 ## 6bis. The improvement ideas (all five done)
 
 Order proposed, cheapest and most useful first. Each one ends with tests, a demo command and a
@@ -377,6 +424,11 @@ ctfc classical tests/fixtures/classical_vigenere.txt
 ctfc classical text:'PLOA{fvzcyr_fuvsg}'
 ctfc keys tests/fixtures/memdump_aes.bin --against tests/fixtures/memdump_aes_ct.bin
 ctfc keys tests/fixtures/strings_dump.txt
+ctfc lens tests/fixtures/writeup_cave_ransom.ps1 --against tests/fixtures/writeup_cave_map.pdf.secured --show-code
+ctfc session new demo --title "Demo"; ctfc auto tests/fixtures/layers_b64_zlib_xor.txt; ctfc report --lang fr
+ctfc session stop
+ctfc cheatsheet
+make bundle  # dist/ctfc-bundle/, installs without internet
 make vendor  # once: embedded CyberChef (already done on this machine)
 ctfc serve   # http://127.0.0.1:8137  (Pipeline tab, Open in CyberChef, Suggested tools)
 ```

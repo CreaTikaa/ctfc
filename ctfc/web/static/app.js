@@ -1055,6 +1055,77 @@ function toolRow(tool, payload) {
   return row;
 }
 
+// ---------------------------------------------------------------- cheat sheet
+async function showCheatsheet() {
+  try {
+    const answer = await (await fetch("/api/cheatsheet")).json();
+    $("results").replaceChildren(renderMarkdown(answer.markdown));
+  } catch (error) {
+    setStatus(error.message, true);
+  }
+}
+
+// A very small Markdown renderer for the cheat sheet: headings, paragraphs, lists,
+// tables, code blocks, `code` and **bold**. Every piece of text goes through
+// textContent, so nothing in the file can become HTML.
+function renderMarkdown(text) {
+  const root = el("div", "markdown");
+  const lines = text.split("\n");
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i];
+    if (line.startsWith("```")) {
+      const code = [];
+      for (i++; i < lines.length && !lines[i].startsWith("```"); i++) code.push(lines[i]);
+      root.append(el("pre", "code", code.join("\n")));
+      i++;
+    } else if (/^#{1,3} /.test(line)) {
+      const level = line.indexOf(" ");
+      root.append(inline(el("h" + level), line.slice(level + 1)));
+      i++;
+    } else if (line.startsWith("|")) {
+      const table = el("table", "facts");
+      for (; i < lines.length && lines[i].startsWith("|"); i++) {
+        if (/^\|[-| ]+\|$/.test(lines[i])) continue; // the |---|---| separator
+        const row = el("tr");
+        for (const cell of lines[i].slice(1, -1).split("|")) row.append(inline(el("td"), cell.trim()));
+        table.append(row);
+      }
+      root.append(table);
+    } else if (line.startsWith("- ")) {
+      const list = el("ul");
+      for (; i < lines.length && (lines[i].startsWith("- ") || lines[i].startsWith("  ")); i++) {
+        if (lines[i].startsWith("- ")) list.append(inline(el("li"), lines[i].slice(2)));
+        else list.lastChild.append(" ", ...inline(el("span"), lines[i].trim()).childNodes);
+      }
+      root.append(list);
+    } else if (line.trim()) {
+      const paragraph = [];
+      for (; i < lines.length && lines[i].trim() && !/^(#|\||- |```)/.test(lines[i]); i++) {
+        paragraph.push(lines[i]);
+      }
+      root.append(inline(el("p"), paragraph.join(" ")));
+    } else {
+      i++;
+    }
+  }
+  return root;
+}
+
+// `code` and **bold** inside a line, appended to `node` as safe text nodes.
+function inline(node, text) {
+  for (const part of text.split(/(`[^`]+`|\*\*[^*]+\*\*)/)) {
+    if (part.startsWith("`") && part.endsWith("`") && part.length > 1) {
+      node.append(el("code", "", part.slice(1, -1)));
+    } else if (part.startsWith("**") && part.endsWith("**") && part.length > 3) {
+      node.append(el("strong", "", part.slice(2, -2)));
+    } else if (part) {
+      node.append(document.createTextNode(part));
+    }
+  }
+  return node;
+}
+
 // ---------------------------------------------------------------- sessions
 async function loadSessions(select) {
   const answer = await (await fetch("/api/sessions")).json();
@@ -1141,6 +1212,9 @@ function selectTab(button) {
   $("results").replaceChildren();
   hideSuggestions();
   setStatus("");
+  // The cheat sheet is not a tool: it is shown as soon as the tab is opened.
+  $("run").classList.toggle("hidden", state.tab === "cheatsheet");
+  if (state.tab === "cheatsheet") showCheatsheet();
 }
 
 // ---------------------------------------------------------------- start-up

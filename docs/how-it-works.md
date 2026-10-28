@@ -473,6 +473,30 @@ what `ctfc sym` does. So it hands over with the ready-to-run command, for exampl
 ctfc sym <file> --pass "bashpass"
 ```
 
+### With the encrypted file (`--against`)
+
+Static analysis cannot always say *which* string is the key. In the
+"Cave Expedition" ransomware the names are obfuscated (`$a53Va`), the two keys
+are base64 strings decoded by a helper function, then passed through two more
+functions before reaching `$data -bxor $k1 -bxor $k2`. A regex cannot follow
+that. But the key can only be one of the script's own literals, so when you also
+have the file it produced:
+
+```
+ctfc lens ransom.ps1 --against map.pdf.secured
+```
+
+1. every string literal of the script is collected, as written and decoded
+   (base64, hex), plus the keys Code Lens extracted itself;
+2. the operations say what to try: how many keys the XOR line combines (two
+   `-bxor` = two keys), whether a cipher is used, and whether the output was
+   base64-encoded (then the file is base64 text: decode it first);
+3. every combination is tried on the first 4 KB and scored; the best is
+   replayed on the whole file. The reasons name the line and the variable of
+   each key, and the generated script writes the result back (`output.pdf`).
+
+It costs milliseconds: a script has a few dozen literals, not millions of keys.
+
 ### Limits worth knowing
 
 - A key computed at runtime (from the hostname, a server reply, a timestamp) can
@@ -821,3 +845,32 @@ ctfc detect tests/fixtures/memdump_aes.bin       # "AES-256 key in memory at off
 Out of scope, on purpose: RSA private keys in memory (search for `30 82` DER
 headers with `binwalk`), keys protected by DPAPI or a TPM, and the BitLocker /
 VeraCrypt master keys (Volatility plugins do that).
+
+## 13. Sessions, the write-up, the offline bundle
+
+**Sessions** (`ctfc/core/session.py`). `ctfc session new <name>` creates
+`~/.ctfc/sessions/<name>/` and makes it the current session: from then on every
+command appends one line to `steps.jsonl` - the command as typed, the input
+(copied into `inputs/` up to 10 MB, only its SHA-256 beyond), the best result
+with its reasons, the Python script and the CyberChef recipe. Append-only on
+purpose: a crash in the middle of a CTF loses at most one line. `ctfc session
+note "..."` puts your own words in between. The web UI has the same thing in the
+bar at the top. A session name is a folder name and nothing else
+(`[A-Za-z0-9_-]`): `../../etc` is refused.
+
+**The write-up** (`ctfc/core/report.py`, `ctfc report <name> --lang fr`) follows
+the layout of the user's own write-ups: title, statement, `## Step N` with the
+command, what ctfc found and why, the output, "to redo it by hand" and the
+CyberChef recipe, then the flag. Steps that found nothing are left out unless a
+note follows them (`--all` keeps everything); a retry of the same command shows
+once. Sample output is put in code blocks made longer than any backtick run it
+contains, so a malicious sample cannot break the Markdown around it. It is a
+draft: the commands and code are exact, the story is yours.
+
+**The offline bundle** (`make bundle`, `scripts/make_bundle.sh`): `pip wheel`
+collects ctfc and its dependencies into `dist/ctfc-bundle/wheels/` - with the
+embedded CyberChef inside the ctfc wheel when `make vendor` was run - plus an
+`install.sh` that runs `pip install --no-index --find-links wheels/ ctfc`, and
+the "day of the CTF" page (`docs/day-of-the-ctf.md`). The wheels match the
+machine that built them (pycryptodome has compiled code):
+`BUNDLE_PLATFORM=win_amd64 make bundle` adds the binary wheels of another one.

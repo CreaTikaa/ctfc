@@ -518,3 +518,11 @@ def test_web_session_names_are_checked(session_client):
     assert response.status_code == 400
     assert "bad session name" in response.get_json()["error"]
     assert client.get("/api/sessions/nope/report").status_code == 400
+
+
+def test_cheatsheet_tab_and_api(client):
+    page = client.get("/").data.decode()
+    assert 'data-tab="cheatsheet" data-milestone' not in page
+    assert "data-milestone" not in page  # every tab is built
+    markdown = client.get("/api/cheatsheet").get_json()["markdown"]
+    assert markdown.startswith("# ctfc cheat sheet")

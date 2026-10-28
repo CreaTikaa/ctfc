@@ -177,6 +177,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--out", help=t("opt_report_out"))
     p.add_argument("--all", action="store_true", help=t("opt_report_all"))
 
+    p = add("cheatsheet")
+    p.add_argument("--raw", action="store_true", help=t("opt_cheatsheet_raw"))
+
     p = add("serve")
     p.add_argument("--port", type=int, default=None, help=t("opt_port"))
     p.add_argument("--host", default=None, help=t("opt_host"))
@@ -317,6 +320,20 @@ def cmd_session(args: argparse.Namespace, config: Config, console: Console) -> i
         session.update_meta(flag=" ".join(args.text).strip())
         return 0
     render.print_session(console, session)  # show
+    return 0
+
+
+def cmd_cheatsheet(args: argparse.Namespace, config: Config, console: Console) -> int:
+    """The one-page decision tree, in the terminal."""
+    from rich.markdown import Markdown
+
+    from ctfc.core.datafiles import load_cheatsheet
+
+    text = load_cheatsheet()
+    if args.raw or args.json:
+        sys.stdout.write(text)
+    else:
+        console.print(Markdown(text))
     return 0
 
 
@@ -857,6 +874,7 @@ def main(argv: list[str] | None = None) -> int:
         "keys": cmd_keys,
         "session": cmd_session,
         "report": cmd_report,
+        "cheatsheet": cmd_cheatsheet,
         "rsa": cmd_rsa,
         "hash": cmd_hash,
         "scan": cmd_scan,

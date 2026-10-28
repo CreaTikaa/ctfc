@@ -247,3 +247,11 @@ table.facts td.th {
   border-radius: 3px; padding: 0.1rem 0.3rem; font: 12px var(--mono);
 }
 #session-bar input { width: 16rem; }
+
+/* Cheat sheet tab */
+.markdown { line-height: 1.5; max-width: 60rem; }
+.markdown h1 { font-size: 1.3rem; margin: 0.4rem 0; }
+.markdown h2 { font-size: 1.05rem; margin: 1rem 0 0.3rem; color: var(--accent); }
+.markdown code { font: 12px var(--mono); color: var(--mid); }
+.markdown table.facts td { border-bottom: 1px solid var(--border); padding: 0.2rem 0.8rem 0.2rem 0; }
+.markdown ul { padding-left: 1.2rem; }

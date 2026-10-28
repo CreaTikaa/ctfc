@@ -29,6 +29,9 @@ ctfc lens <script>       # static analysis of a dropper + generated inverse scri
 ctfc rsa / ctfc hash     # RSA keys and weak-key attacks; hash format + hashcat mode
 ctfc classical <input>   # Caesar, affine, Atbash, Vigenère, rail fence
 ctfc keys <dump> --against <ct>   # find the key in a memory dump / binary, test it
+ctfc lens <script> --against <file>   # mirror the encryptor on the file it produced
+ctfc session new <chall>     # record every command; ctfc report --lang fr = the write-up
+ctfc cheatsheet              # the one-page decision tree
 ctfc recipe run r.json <input>   # your own chain of steps, each output shown
 ctfc tools <input>       # which external tool fits (xortool, hashcat, CyberChef...)
 ctfc serve               # web UI on http://127.0.0.1:8137
@@ -54,7 +57,11 @@ ctfc xor tests/fixtures/two_time_pad_1.bin --with tests/fixtures/two_time_pad_2.
 ctfc auto tests/fixtures/powershell_xor.b64                    # base64 -> XOR -> PowerShell
 ```
 
+**The day of the CTF**: [docs/day-of-the-ctf.md](docs/day-of-the-ctf.md) (sessions,
+write-up, `make bundle` for a machine without internet).
+
 How it works, in plain language: [docs/how-it-works.md](docs/how-it-works.md).
+The decision tree: `ctfc cheatsheet` ([source](ctfc/data/cheatsheet.md)).
 
 ## Develop
 

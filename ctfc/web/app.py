@@ -576,6 +576,12 @@ def create_app(config: Config | None = None) -> Flask:
             result = toolbox.run_tool(tool, values)
         return jsonify(result.to_dict())
 
+    @app.get("/api/cheatsheet")
+    def cheatsheet():
+        from ctfc.core.datafiles import load_cheatsheet
+
+        return jsonify({"markdown": load_cheatsheet()})
+
     @app.get("/api/sessions")
     def list_sessions():
         current = sessions.current_session(sessions_base)
