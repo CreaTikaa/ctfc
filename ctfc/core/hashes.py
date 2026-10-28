@@ -193,9 +193,35 @@ def identify(value: str, try_passwords: bool = True) -> HashReport:
             "them apart, so the context decides (where did you find it?)"
         )
 
+    _explain_dump_line(report)
     if try_passwords:
         _try_the_password_list(report)
     return report
+
+
+# The LM / NT hash of an empty password: seen on every disabled account.
+EMPTY_LM = "aad3b435b51404eeaad3b435b51404ee"
+EMPTY_NT = "31d6cfe0d16ae931b73c59d7e0c089c0"
+
+
+def _explain_dump_line(report: HashReport) -> None:
+    """A `user:rid:lm:nt:::` line holds the hash to crack in its 4th field."""
+    if not any(match.format.id == "pwdump" for match in report.matches):
+        return
+    user, rid, lm, nt = report.value.split(":")[:4]
+    report.facts.append(("user", f"{user or '(no name)'} (RID {rid})"))
+    report.facts.append(("NT hash", nt))
+    report.notes.append(f"the hash to crack is the 4th field: {nt}")
+    if nt.lower() == EMPTY_NT:
+        report.notes.append(
+            "that NT hash is the hash of an EMPTY password: this account has no "
+            "password, nothing to crack (a deleted or disabled account, usually)"
+        )
+    if lm.lower() != EMPTY_LM:
+        report.notes.append(
+            f"the LM half is not the empty placeholder ({lm}): LM is much weaker, "
+            "crack it first with hashcat -m 3000"
+        )
 
 
 def _charset_of(value: str) -> str:

@@ -29,6 +29,8 @@ OPENSSL_LAYOUTS: tuple[tuple[str, int], ...] = (
     ("sha256", 10000),  # -pbkdf2 default iteration count
     ("sha1", 10000),
     ("sha256", 1000),
+    ("sha256", 10),  # `-iter 10`: seen in Dockerfiles and droppers, PBKDF2 is slow
+    ("sha256", 100),
     ("sha256", 1),
     ("sha256", 2048),
     ("sha256", 100000),
@@ -39,7 +41,7 @@ OPENSSL_LAYOUTS: tuple[tuple[str, int], ...] = (
 FAST_OPENSSL_LAYOUTS = OPENSSL_LAYOUTS[:3]
 
 # Iteration counts tried for a PBKDF2 that is not an openssl file.
-PBKDF2_ITERATIONS = (10000, 1000, 1, 2048, 4096, 100000)
+PBKDF2_ITERATIONS = (10000, 1000, 100, 10, 1, 2048, 4096, 100000)
 
 
 @dataclass(frozen=True)
