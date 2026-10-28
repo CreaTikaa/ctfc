@@ -826,7 +826,6 @@ def rc4(key: bytes, data: bytes) -> bytes:
     return bytes(out)
 
 
-
 # ---------------------------------------------------------------------------
 # Audit (after M8): shapes from the user's own challenge notes (Notion exports).
 # Hand-written formats, so `make fixtures` needs no external tool and stays
@@ -840,20 +839,38 @@ def seven_zip_stored(name: str, content: bytes) -> bytes:
     Checked with `7z t` / `7z x`. Sizes stay below 128 so every 7z number is one byte.
     """
     utf16 = name.encode("utf-16-le") + b"\x00\x00"
-    header = bytes(
-        [
-            0x01,  # kHeader
-            0x04,  # kMainStreamsInfo
-            0x06, 0x00, 0x01,  # kPackInfo: pack position 0, one pack stream
-            0x09, len(content), 0x00,  # kSize, kEnd
-            0x07, 0x0B, 0x01, 0x00,  # kUnPackInfo, kFolder, 1 folder, not external
-            0x01, 0x01, 0x00,  # 1 coder: id size 1, codec 0x00 = Copy
-            0x0C, len(content), 0x00,  # kCodersUnPackSize, kEnd
-            0x00,  # kEnd of MainStreamsInfo
-            0x05, 0x01,  # kFilesInfo, 1 file
-            0x11, 1 + len(utf16), 0x00,  # kName, property size, not external
-        ]
-    ) + utf16 + bytes([0x00, 0x00])
+    header = (
+        bytes(
+            [
+                0x01,  # kHeader
+                0x04,  # kMainStreamsInfo
+                0x06,
+                0x00,
+                0x01,  # kPackInfo: pack position 0, one pack stream
+                0x09,
+                len(content),
+                0x00,  # kSize, kEnd
+                0x07,
+                0x0B,
+                0x01,
+                0x00,  # kUnPackInfo, kFolder, 1 folder, not external
+                0x01,
+                0x01,
+                0x00,  # 1 coder: id size 1, codec 0x00 = Copy
+                0x0C,
+                len(content),
+                0x00,  # kCodersUnPackSize, kEnd
+                0x00,  # kEnd of MainStreamsInfo
+                0x05,
+                0x01,  # kFilesInfo, 1 file
+                0x11,
+                1 + len(utf16),
+                0x00,  # kName, property size, not external
+            ]
+        )
+        + utf16
+        + bytes([0x00, 0x00])
+    )
     next_header = (
         len(content).to_bytes(8, "little")
         + len(header).to_bytes(8, "little")
@@ -908,11 +925,16 @@ def write_audit_fixtures() -> None:
         name = ".".join(labels) + ".jz-n-bs.local"
         frames.append(
             pcap_packet(
-                ethernet_ipv4("10.0.0.5", "10.0.0.53", 17, udp_datagram(50000, 53, dns_query_name(name))),
+                ethernet_ipv4(
+                    "10.0.0.5", "10.0.0.53", 17, udp_datagram(50000, 53, dns_query_name(name))
+                ),
                 1700000000 + number,
             )
         )
-    write("audit_dns_tunnel.pcap", struct.pack("<IHHiIII", 0xA1B2C3D4, 2, 4, 0, 0, 65535, 1) + b"".join(frames))
+    write(
+        "audit_dns_tunnel.pcap",
+        struct.pack("<IHHiIII", 0xA1B2C3D4, 2, 4, 0, 0, 65535, 1) + b"".join(frames),
+    )
 
     # 3. pfSense backup: base64 of the XML config, the RADIUS secret hidden by ROT13.
     rot13 = str.maketrans(
@@ -920,7 +942,7 @@ def write_audit_fixtures() -> None:
         "NOPQRSTUVWXYZABCDEFGHIJKLMnopqrstuvwxyzabcdefghijklm",
     )
     config = (
-        "<?xml version=\"1.0\"?>\n<pfsense>\n  <system><hostname>gateway</hostname></system>\n"
+        '<?xml version="1.0"?>\n<pfsense>\n  <system><hostname>gateway</hostname></system>\n'
         "  <radius>\n    <!-- rotation policy applied to the shared secret -->\n"
         f"    <secret>{'L3g4cyOne!sn3o'.translate(rot13)}</secret>\n"
         "    <server>10.0.0.10</server>\n  </radius>\n</pfsense>\n"
@@ -930,7 +952,10 @@ def write_audit_fixtures() -> None:
     # 4. Docker layers: `openssl enc -aes-256-cbc -iter 10 -pass pass:<sha256 hex>`.
     password = hashlib.sha256(b"fixture docker layer").hexdigest()
     write("audit_docker_pass.txt", password + "\n")
-    write("audit_docker_flag.enc", openssl_enc_pbkdf2(password.encode(), b"CYBN{fixture_iter10}\n", 10))
+    write(
+        "audit_docker_flag.enc",
+        openssl_enc_pbkdf2(password.encode(), b"CYBN{fixture_iter10}\n", 10),
+    )
 
     # 5. secretsdump.py output: two real accounts, a disabled one with the empty hash.
     write(
@@ -939,6 +964,7 @@ def write_audit_fixtures() -> None:
         "DefaultAccount:503:aad3b435b51404eeaad3b435b51404ee:31d6cfe0d16ae931b73c59d7e0c089c0:::\n"
         "samwiseg:1013:aad3b435b51404eeaad3b435b51404ee:dcd99365563e67eb8fbe8c9d83b0ca6c:::\n",
     )
+
 
 def main() -> None:
     FIXTURES.mkdir(exist_ok=True)
