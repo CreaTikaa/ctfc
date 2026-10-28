@@ -609,6 +609,7 @@ def make_candidate(
     input_data: bytes,
     extra_reasons: tuple[str, ...] = (),
     container: OpensslEnc | None = None,
+    pre_steps: tuple[Step, ...] = (),
 ) -> Candidate:
     """Score one decryption and wrap it with its reasons, parameters and code."""
     spec = attempt.spec
@@ -621,6 +622,7 @@ def make_candidate(
     # The generated script starts from the file as the user has it, so a base64
     # `openssl enc -a` file needs a base64 step before the cipher step.
     steps = [Step("base64")] if container is not None and container.was_base64 else []
+    steps += pre_steps  # the ciphertext was given as base64 / hex text
     steps.append(Step("cipher", params))
     material = attempt.material
 
@@ -682,6 +684,26 @@ class OpensslEnc:
     salt: bytes
     ciphertext: bytes
     was_base64: bool
+
+
+def decode_text_ciphertext(data: bytes) -> tuple[Step, bytes] | None:
+    """A ciphertext written as base64 or hex text (mails, logs, C2 traffic).
+
+    Encrypted bytes never consist only of base64 or hex characters, so text like
+    that is an encoding of the ciphertext: decode it first. Hex is checked first
+    (hex digits are valid base64 too).
+    """
+    text = b"".join(data.split())
+    if len(text) < 16:
+        return None
+    if re.fullmatch(rb"[0-9A-Fa-f]+", text) and len(text) % 2 == 0:
+        return Step("hex"), bytes.fromhex(text.decode())
+    if re.fullmatch(rb"[A-Za-z0-9+/]+={0,2}", text) and len(text) % 4 == 0:
+        try:
+            return Step("base64"), base64.b64decode(text, validate=True)
+        except (binascii.Error, ValueError):
+            return None
+    return None
 
 
 def parse_openssl_enc(data: bytes) -> OpensslEnc | None:
@@ -886,6 +908,17 @@ def solve_symmetric(
                 "to try the embedded list"
             )
 
+    pre_steps: tuple[Step, ...] = ()
+    if container is None and not recognised:
+        text_form = decode_text_ciphertext(data)
+        if text_form is not None:
+            step, work_data = text_form
+            pre_steps = (step,)
+            report.notes.append(
+                f"the ciphertext is {step.name} text: decoded first "
+                f"({len(data)} characters -> {len(work_data)} bytes)"
+            )
+
     password_list: tuple[bytes, ...] = ()
     if try_passwords:
         password_list = load_passwords()
@@ -943,7 +976,9 @@ def solve_symmetric(
                             "the ciphertext is what follows the 16-byte openssl header",
                             "same thing with openssl: " + openssl_command(attempt, container),
                         )
-                    candidate = make_candidate(attempt, raw, flagset, data, extra, container)
+                    candidate = make_candidate(
+                        attempt, raw, flagset, data, extra, container, pre_steps
+                    )
                     candidates.append(candidate)
                     if candidate.score >= STOP_AT:
                         # Certain enough (a flag, or a tag that verified): no point

@@ -453,3 +453,19 @@ def test_api_recipe_with_a_classical_step(client):
     answer = client.post("/api/recipe", json=payload).get_json()
     assert answer["output_text"] == "CYBN{simple_shift}"
     assert answer["cyberchef"] == "ROT13(true,true,false,13)"
+
+
+def test_api_lens_against_the_encrypted_file(client, fixture_bytes):
+    import base64
+
+    payload = {
+        "input": fixture_bytes("writeup_cave_ransom.ps1").decode(),
+        "format": "text",
+        "name": "ransom.ps1",
+        "options": {
+            "against": "b64:"
+            + base64.b64encode(fixture_bytes("writeup_cave_map.pdf.secured")).decode()
+        },
+    }
+    answer = client.post("/api/lens", json=payload).get_json()
+    assert "CYBN{fixture_two_xor_keys}" in answer["against"][0]["data_text"]

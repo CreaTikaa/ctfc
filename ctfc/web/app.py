@@ -41,6 +41,7 @@ from ctfc.core.flags import build_flagset
 from ctfc.core.hashes import identify as identify_hash
 from ctfc.core.inputs import InputError, decode_base64, decode_hex, parse_input
 from ctfc.core.lens import analyse as analyse_script
+from ctfc.core.lens_against import mirror_against
 from ctfc.core.pipeline import RecipeError
 from ctfc.core.rsa import RsaError, build_key, parse_key, solve_rsa
 from ctfc.core.symmetric import solve_symmetric
@@ -379,7 +380,15 @@ def create_app(config: Config | None = None) -> Flask:
         inp = input_from_payload(payload, decode_bare=False)
         name = str(payload.get("name", ""))[:100]
         report = analyse_script(inp.data, filename=name, flagset=flagset)
-        return jsonify({"input": input_summary(inp), **report.to_dict()})
+        options = payload.get("options") or {}
+        encrypted = option_bytes(options, "against", decode_bare=False)
+        mirrored = []
+        if encrypted:
+            budget = Budget(max_attempts=200_000, max_seconds=30)
+            mirrored = mirror_against(inp.data, report, encrypted, flagset, budget, config.top_n)
+        answer = {"input": input_summary(inp), **report.to_dict()}
+        answer["against"] = [candidate.to_dict() for candidate in mirrored]
+        return jsonify(answer)
 
     def cyberchef_link(recipe: str | None, data: bytes) -> dict | None:
         """The "Open in CyberChef" link for a recipe, or why there is none."""

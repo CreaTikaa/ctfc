@@ -234,8 +234,10 @@ def apply_rules(source: str, language: str, report: LensReport) -> None:
     found.sort(key=lambda item: item[0])
     report.operations += [operation for _, operation in found]
 
-    # Follow `-bxor $k` back to `$k = 0x3b`, then attach keys to the operations.
+    # Follow `-bxor $k` back to `$k = 0x3b` and `.Key = $k` back to its value,
+    # then attach the remaining keys to the operations.
     _resolve_variable_keys(source, language, report)
+    _resolve_cipher_variables(source, language, report)
     _attach_keys(report)
     if report.operations:
         report.notes.append(
@@ -320,6 +322,93 @@ def _resolve_variable_keys(source: str, language: str, report: LensReport) -> No
                 )
             )
             break
+
+
+# PowerShell / .NET: `$aes.Key = $k` and `$aes.IV = $v`, then how `$k` got its bytes.
+CIPHER_USE = re.compile(r"\.(Key|IV)\s*=\s*\$(\w+)")
+CIPHER_MODE = re.compile(r"CipherMode\]::(\w+)")
+# (regex for `$name = ...` with {name} to fill in, how to read group 1)
+CIPHER_ASSIGNMENTS = (
+    (
+        r"\${name}\s*=\s*\[(?:System\.)?Convert\]::FromBase64String\(\s*['\"]([A-Za-z0-9+/=]+)['\"]",
+        "base64",
+    ),
+    (
+        r"\${name}\s*=\s*(?:\[byte\[\]\]\s*)?@?\(\s*((?:0x[0-9a-fA-F]{{1,2}}\s*,\s*){{7,}}"
+        r"0x[0-9a-fA-F]{{1,2}})",
+        "charcodes",
+    ),
+    (
+        r"\${name}\s*=\s*\[(?:System\.)?Text\.Encoding\]::\w+\.GetBytes\(\s*['\"]([^'\"\n]{{4,128}})['\"]",
+        "text",
+    ),
+    (r"\${name}\s*=\s*['\"]([^'\"\n]{{4,128}})['\"]", "text"),
+)
+
+
+def _resolve_cipher_variables(source: str, language: str, report: LensReport) -> None:
+    """Give a .NET cipher the key and IV the script assigns through variables.
+
+    `$aes.Key = $k` says nothing on its own; `$k = [Convert]::FromBase64String("...")`
+    a few lines above holds the bytes. That literal is then a key, not a payload
+    blob, and the base64 decode on its line is key setup, not a data step.
+    """
+    if language != "powershell" or not any(op.kind == "cipher" for op in report.operations):
+        return
+    found: dict[str, Artifact] = {}
+    setup_lines: set[int] = set()
+    for use in CIPHER_USE.finditer(source):
+        role, name = use.group(1).lower(), use.group(2)
+        for template, how in CIPHER_ASSIGNMENTS:
+            assignment = re.search(template.format(name=re.escape(name)), source)
+            if assignment is None:
+                continue
+            value = read_capture(assignment.group(1), how)
+            if not value:
+                continue
+            line = line_of(source, assignment.start())
+            setup_lines.add(line)
+            found[role] = Artifact(
+                kind=role,
+                value=value,
+                how=f"{how}, from the variable ${name} (.{use.group(1)} = ${name})",
+                line=line,
+                name=name,
+                context=context_of(source, assignment.start()),
+            )
+            break
+    if not found:
+        return
+    mode = CIPHER_MODE.search(source)
+    # Those literals are the key and the IV: not payloads.
+    report.artifacts = [
+        artifact
+        for artifact in report.artifacts
+        if not (artifact.kind == "blob" and artifact.line in setup_lines)
+    ]
+    report.artifacts += found.values()
+    kept = []
+    for operation in report.operations:
+        if operation.line in setup_lines and operation.kind != "cipher":
+            continue  # decoding the key is not a step of the data path
+        if operation.kind == "cipher":
+            params = dict(operation.params)
+            if "key" in found:
+                params["key"] = found["key"].value
+            if "iv" in found:
+                params["iv"] = found["iv"].value
+            if mode:
+                params["mode"] = mode.group(1).lower()
+            operation = Operation(
+                kind=operation.kind,
+                label=operation.label + ", key and IV from the script's variables",
+                line=operation.line,
+                direction=operation.direction,
+                rule=operation.rule,
+                params=params,
+            )
+        kept.append(operation)
+    report.operations = kept
 
 
 def _attach_keys(report: LensReport) -> None:

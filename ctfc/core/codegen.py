@@ -401,8 +401,12 @@ def input_line(data: bytes) -> str:
     return f'data = bytes.fromhex("{data.hex()}")'
 
 
-def chain_snippet(data: bytes, steps: list[Step]) -> str:
-    """Script that applies `steps` in order to `data` and prints the result."""
+def chain_snippet(data: bytes, steps: list[Step], save_as: str | None = None) -> str:
+    """Script that applies `steps` in order to `data` and prints the result.
+
+    `save_as` ("output.pdf"): the result is a binary file, so the script writes
+    it to disk instead of printing bytes to the terminal.
+    """
     codes = [step_code(step) for step in steps]
     imports = sorted({module for code in codes for module in code.imports})
     helpers: list[str] = []
@@ -425,7 +429,11 @@ def chain_snippet(data: bytes, steps: list[Step]) -> str:
     for number, code in enumerate(codes, start=1):
         lines.append(f"# step {number}: {code.comment}")
         lines.append(code.python)
-    lines.append('print(data.decode("utf-8", errors="replace"))')
+    if save_as:
+        lines.append(f'open("{save_as}", "wb").write(data)')
+        lines.append(f'print("wrote {save_as},", len(data), "bytes")')
+    else:
+        lines.append('print(data.decode("utf-8", errors="replace"))')
     return "\n".join(lines) + "\n"
 
 

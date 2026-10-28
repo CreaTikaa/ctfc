@@ -145,6 +145,16 @@
         <label class="checkbox"><input id="rsa-attack" type="checkbox">
           <span data-t="web_rsa_attack">look for a weakness (small primes, Fermat, Wiener, Pollard)</span></label>
       </div>
+      <!-- Options of the Code Lens tab: the file the script encrypted (optional) -->
+      <div id="options-lens" class="options hidden">
+        <label class="wide"><span data-t="web_lens_against">the file this script encrypted (optional): its literals are tried as keys</span>
+          <textarea id="lens-against" spellcheck="false" data-t-placeholder="web_keys_against_ph"></textarea></label>
+        <div class="wide step-buttons">
+          <button id="lens-load" class="small" data-t="web_lens_load">Load encrypted file</button>
+          <input type="file" id="lens-file" hidden>
+          <span id="lens-file-name" class="dim"></span>
+        </div>
+      </div>
       <!-- Options of the Keys tab: the dump is the input, the ciphertext goes here -->
       <div id="options-keys" class="options hidden">
         <label class="wide"><span data-t="web_keys_against">ciphertext to try the keys on (hex:, b64:, text:) - empty = only list the keys</span>

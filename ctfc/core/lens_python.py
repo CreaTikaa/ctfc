@@ -697,16 +697,40 @@ class PythonLens:
         for statement in body:
             self.walk_statement(statement)
 
+    def encoded_literal(self, node: ast.AST) -> object | None:
+        """For `base64.b64decode("...")` (a decoder applied to a literal): the literal.
+
+        The decode is recorded as the first step of the chain, so the blob the
+        recovery script starts from must be the *encoded* text, not the value the
+        folder already decoded - otherwise the script would decode it twice.
+        """
+        if not isinstance(node, ast.Call) or not node.args:
+            return None
+        short = dotted_name(node.func).split(".")[-1]
+        decoders = {
+            function
+            for (_module, function), (_kind, _label, direction) in DATA_CALLS.items()
+            if direction == "decode"
+        }
+        if short not in decoders:
+            return None
+        argument = self.folder.fold(node.args[0])
+        return argument if isinstance(argument, str | bytes) else None
+
     def walk_statement(self, statement: ast.stmt) -> None:
         # Remember assignments so later lines can use the value.
         targets: list[ast.AST] = []
         if isinstance(statement, ast.Assign):
             value = self.folder.fold(statement.value)
             targets = list(statement.targets)
+            encoded = self.encoded_literal(statement.value)
             for target in targets:
                 self.folder.remember(target, value)
                 if isinstance(target, ast.Name):
-                    self.classify_value(target.id, value, statement.lineno)
+                    is_key = any(m in target.id.lower() for m in self.KEY_MATERIAL)
+                    # Key material keeps its decoded value (no decode step is recorded).
+                    shown = encoded if encoded is not None and not is_key else value
+                    self.classify_value(target.id, shown, statement.lineno)
         elif isinstance(statement, ast.AnnAssign) and statement.value is not None:
             value = self.folder.fold(statement.value)
             targets = [statement.target]

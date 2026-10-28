@@ -34,7 +34,7 @@ const TOOLS = {
 const API_PATH = { pipeline: "/api/recipe" };
 
 // Tabs that have their own options panel (#options-<tab>).
-const OPTION_PANELS = ["xor", "sym", "rsa", "hash", "pipeline", "keys"];
+const OPTION_PANELS = ["xor", "sym", "rsa", "hash", "pipeline", "keys", "lens"];
 
 // Tabs after which the "Suggested tools" strip is computed (data tabs, not scripts).
 const SUGGEST_TABS = ["auto", "detect", "xor", "sym", "hash"];
@@ -165,6 +165,9 @@ function currentOptions() {
   }
   if (state.tab === "pipeline") {
     return { recipe: $("pipeline-recipe").value };
+  }
+  if (state.tab === "lens") {
+    return { against: $("lens-against").value };
   }
   if (state.tab === "keys") {
     return {
@@ -476,6 +479,12 @@ function simpleTable(headers, rows) {
 // Code Lens: what the script does, what was extracted, and how to undo it.
 function renderLens(report) {
   const results = $("results");
+
+  // With the encrypted file: what the script's literals decrypted, first.
+  if (report.against && report.against.length) {
+    results.append(el("h3", "", T("web_lens_against_results")));
+    for (const candidate of report.against) results.append(candidateCard(candidate));
+  }
 
   const card = el("div", "card good");
   const head = el("div", "card-head");
@@ -942,13 +951,14 @@ function isPrintableAscii(text) {
   return Boolean(text) && /^[\x20-\x7e]+$/.test(text);
 }
 
-// The ciphertext is often a file: read it and put it in the box as b64:...
-function loadKeysCiphertext(file) {
+// A ciphertext is often a file: read it and put it in the box as b64:...
+// `prefix` is the tab ("keys" or "lens"): the ids are <prefix>-against etc.
+function loadCiphertextFile(prefix, file) {
   const reader = new FileReader();
   reader.onload = () => {
-    $("keys-against").value = "b64:" + bytesToBase64(new Uint8Array(reader.result));
-    $("keys-file-name").textContent = file.name;
-    $("keys-file").value = "";
+    $(prefix + "-against").value = "b64:" + bytesToBase64(new Uint8Array(reader.result));
+    $(prefix + "-file-name").textContent = file.name;
+    $(prefix + "-file").value = "";
   };
   reader.readAsArrayBuffer(file);
 }
@@ -1111,10 +1121,12 @@ async function init() {
     button.addEventListener("click", () => addPipelineStep(template));
     $("pipeline-add").append(button);
   }
-  $("keys-load").addEventListener("click", () => $("keys-file").click());
-  $("keys-file").addEventListener("change", (event) => {
-    if (event.target.files[0]) loadKeysCiphertext(event.target.files[0]);
-  });
+  for (const prefix of ["keys", "lens"]) {
+    $(prefix + "-load").addEventListener("click", () => $(prefix + "-file").click());
+    $(prefix + "-file").addEventListener("change", (event) => {
+      if (event.target.files[0]) loadCiphertextFile(prefix, event.target.files[0]);
+    });
+  }
   $("pipeline-load").addEventListener("click", () => $("pipeline-file").click());
   $("pipeline-file").addEventListener("change", (event) => {
     if (event.target.files[0]) loadPipelineFile(event.target.files[0]);

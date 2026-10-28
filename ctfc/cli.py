@@ -25,6 +25,7 @@ from ctfc.core.flags import FlagSet, build_flagset
 from ctfc.core.hashes import identify as identify_hash
 from ctfc.core.inputs import InputError, parse_input
 from ctfc.core.lens import analyse as analyse_script
+from ctfc.core.lens_against import mirror_against
 from ctfc.core.pcap import PcapError
 from ctfc.core.pcap import solve as solve_pcap
 from ctfc.core.pipeline import RecipeError
@@ -121,6 +122,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = add("lens")
     p.add_argument("script", help=t("arg_script"))
+    p.add_argument("--against", help=t("opt_lens_against"))
 
     p = add("keys")
     p.add_argument("dump", help=t("arg_dump"))
@@ -369,12 +371,25 @@ def cmd_blob(args: argparse.Namespace, config: Config, console: Console) -> int:
 def cmd_lens(args: argparse.Namespace, config: Config, console: Console) -> int:
     """Static analysis of a script: what it does to the data, and how to undo it."""
     inp = parse_input(args.script, decode_bare=False)
-    report = analyse_script(inp.data, filename=args.script, flagset=flagset_from(config))
+    flagset = flagset_from(config)
+    report = analyse_script(inp.data, filename=args.script, flagset=flagset)
+    mirrored = []
+    if args.against:
+        # With the file the script produced, its literals can simply be tried as keys.
+        encrypted = parse_input(args.against, decode_bare=False).data
+        mirrored = mirror_against(inp.data, report, encrypted, flagset, top_n=config.top_n)
     if args.json:
-        print(json.dumps({"input": input_to_dict(inp), **report.to_dict()}, indent=2))
-        return 0 if report.operations else 1
+        payload = {"input": input_to_dict(inp), **report.to_dict()}
+        payload["against"] = [candidate.to_dict() for candidate in mirrored]
+        print(json.dumps(payload, indent=2))
+        return 0 if (mirrored if args.against else report.operations) else 1
     render.print_input_notes(console, inp)
-    render.print_lens(console, report, show_code=args.show_code)
+    render.print_lens(console, report, show_code=args.show_code and not mirrored)
+    if args.against:
+        render.print_candidates(
+            console, mirrored, show_code=args.show_code, title="the encrypted file, decrypted"
+        )
+        return 0 if mirrored else 1
     return 0 if report.operations else 1
 
 

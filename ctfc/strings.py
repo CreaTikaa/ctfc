@@ -109,10 +109,14 @@ EN: dict[str, str] = {
     "cmd_lens": "static crypto analysis of a script + generated recovery script",
     "cmd_lens_ex": (
         "examples: ctfc lens dropper.ps1  |  ctfc lens stage1.py --show-code  |  "
-        "ctfc lens obfuscated.js --json"
+        "ctfc lens ransom.ps1 --against map.pdf.secured  |  ctfc lens obfuscated.js --json"
     ),
     "arg_script": (
         "the script to analyse: a file path, '-' for stdin, or text:... (NEVER executed)"
+    ),
+    "opt_lens_against": (
+        "the file this script encrypted (e.g. map.pdf.secured): its literals are tried as "
+        "the keys of its own operations, and the file is decrypted"
     ),
     "cmd_keys": "hunt candidate keys in a dump and test them against a ciphertext",
     "cmd_keys_ex": (
@@ -303,6 +307,10 @@ EN: dict[str, str] = {
     "the candidate keys",
     "web_keys_against_ph": "b64:... or hex:... (or use the button below for a file)",
     "web_keys_load": "Load ciphertext file",
+    "web_lens_against": "the file this script encrypted (optional, e.g. map.pdf.secured): its "
+    "literals are tried as the keys of its own operations",
+    "web_lens_load": "Load encrypted file",
+    "web_lens_against_results": "The encrypted file, decrypted with the script's own literals",
     "web_keys_winner": "The key that works was found at offset",
     "web_keys_candidates": "Candidate keys, strongest first",
     # CyberChef links
