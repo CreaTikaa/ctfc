@@ -511,56 +511,169 @@ def parse_dns_question(payload: bytes) -> str | None:
 
 
 def extract_dns(packets: list[Packet]) -> list[Extracted]:
-    """Rebuild a DNS exfiltration: the payload is in the subdomain labels.
+    """Rebuild a DNS exfiltration: the payload travels in the subdomain labels.
 
-    The classic shape is one query per chunk:
+    Tunnelling tools differ in the details, so the queries are read in the most
+    general way and the likely variants are all offered:
 
-        MFRGGZDF.exfil.example.com
-        MZTWMZLU.exfil.example.com
+        MFRGGZDF.exfil.example.com                       one label per query
+        s001x.89504e470d0a1a0a.0000000d49.data.lab       several labels, a counter
 
-    so the secret is the first label of each query, in order, concatenated. ctfc
-    returns that concatenation and lets `auto` work out whether it is base32, hex
-    or base64 - which is exactly what it is good at.
+    1. queries are grouped by their last two labels (the domain the attacker
+       controls) and kept in capture order, exact repeats (retries) dropped;
+    2. labels that are the SAME in every query ("exfil", "data") carry nothing:
+       they are dropped, at both ends;
+    3. what is left is joined, query after query. When the first remaining label
+       changes every time but is short and regular (s001x, s002x...), it is a
+       sequence counter: a second variant without it is offered too;
+    4. a variant that decodes (hex, base32, base64) to bytes holding a known file
+       signature is ALSO given as that file, cut at the signature - junk before a
+       PNG's magic is what the challenge writers like to add.
+
+    `auto` then reads each text variant like any other input.
     """
-    by_domain: dict[str, list[str]] = {}
+    groups: dict[str, list[list[str]]] = {}
     for packet in packets:
         if packet.protocol != "udp" or not packet.destination.endswith(":53"):
             continue
         name = parse_dns_question(packet.payload)
-        if not name or "." not in name:
+        if not name:
             continue
-        first, parent = name.split(".", 1)
-        if len(first) < 3:
-            continue
-        by_domain.setdefault(parent, []).append(first)
+        labels = name.split(".")
+        if len(labels) < 3:
+            continue  # nothing in front of the domain
+        rows = groups.setdefault(".".join(labels[-2:]), [])
+        payload = labels[:-2]
+        if not rows or rows[-1] != payload:  # an exact repeat is a DNS retry
+            rows.append(payload)
 
     objects = []
-    for parent, chunks in by_domain.items():
-        if len(chunks) < 3:
+    for domain, rows in groups.items():
+        if len(rows) < 3:
             continue  # three queries is the minimum that looks deliberate
-        # Keep the order of the capture, and drop exact repeats (DNS retries).
-        ordered: list[str] = []
-        for chunk in chunks:
-            if not ordered or ordered[-1] != chunk:
-                ordered.append(chunk)
-        joined = "".join(ordered)
-        objects.append(
-            Extracted(
-                kind="dns-exfil",
-                name=f"dns_{parent.replace('.', '_')}.txt",
-                data=joined.encode(),
-                description=(
-                    f"{len(ordered)} DNS queries under {parent}: the first labels, "
-                    "concatenated, look like an exfiltration"
-                ),
-                details=[
-                    f"first queries: {', '.join(ordered[:3])}",
-                    f"{len(joined)} characters in total",
-                    "feed it to `ctfc auto`: base32 is the usual encoding here",
-                ],
+        rows = _drop_constant_labels(rows)
+        if not any(rows):
+            continue
+        variants = [("", rows, "all the labels in front of the domain")]
+        if _first_label_is_a_counter(rows):
+            variants.append(
+                (
+                    "_nocounter",
+                    [row[1:] for row in rows],
+                    f"without the first label ({rows[0][0]}, {rows[1][0]}, ...), "
+                    "a sequence counter",
+                )
             )
-        )
+        for suffix, chosen, how in variants:
+            joined = "".join("".join(row) for row in chosen)
+            if len(joined) < 8:
+                continue
+            base = f"dns_{domain.replace('.', '_')}{suffix}"
+            objects.append(
+                Extracted(
+                    kind="dns-exfil",
+                    name=f"{base}.txt",
+                    data=joined.encode(),
+                    description=f"{len(rows)} DNS queries under {domain}: {how}, concatenated",
+                    details=[
+                        "first queries: " + ", ".join(".".join(row) for row in rows[:3]),
+                        f"{len(joined)} characters in total",
+                        "feed it to `ctfc auto`: hex, base32 and base64 are the usual encodings",
+                    ],
+                )
+            )
+            hidden = _file_in_stream(joined)
+            if hidden is not None:
+                encoding, offset, item = hidden
+                objects.append(
+                    Extracted(
+                        kind="dns-exfil",
+                        name=f"{base}.{item.ext}",
+                        data=item.data,
+                        description=(
+                            f"the {encoding} stream of {domain} holds a {item.name}: cut at its "
+                            f"signature, {offset} junk byte(s) before it dropped"
+                        ),
+                        details=[
+                            f"{len(item.data)} bytes, decoded from {encoding}",
+                            "this is the exfiltrated file itself: open it, or ctfc detect it",
+                        ],
+                    )
+                )
     return objects
+
+
+def _drop_constant_labels(rows: list[list[str]]) -> list[list[str]]:
+    """Remove the labels that are identical in every query, at the front and the back."""
+    while all(len(row) > 1 for row in rows) and len({row[-1] for row in rows}) == 1:
+        rows = [row[:-1] for row in rows]
+    while all(len(row) > 1 for row in rows) and len({row[0] for row in rows}) == 1:
+        rows = [row[1:] for row in rows]
+    return rows
+
+
+def _first_label_is_a_counter(rows: list[list[str]]) -> bool:
+    """s001x, s002x, ...: short, the same length everywhere, different every time."""
+    if not all(len(row) >= 2 for row in rows):
+        return False
+    firsts = [row[0] for row in rows]
+    return (
+        len({len(label) for label in firsts}) == 1
+        and len(firsts[0]) <= 12
+        and len(set(firsts)) == len(firsts)
+        and any(char.isdigit() for char in firsts[0])
+    )
+
+
+def _file_in_stream(text: str):
+    """(encoding, junk bytes skipped, the carved file) if the decoded stream holds a file."""
+    from ctfc.core.magic import match_signature
+    from ctfc.core.repair import Carved, carve
+
+    for encoding, decoder in (
+        ("hex", _from_hex),
+        ("base32", _from_base32),
+        ("base64", _from_base64),
+    ):
+        raw = decoder(text)
+        if raw is None or len(raw) < 16:
+            continue
+        sig = match_signature(raw)
+        if sig is not None and not sig.weak:
+            return encoding, 0, Carved(0, sig.name, sig.ext, raw)
+        found = carve(raw)
+        if found:
+            return encoding, found[0].offset, found[0]
+    return None
+
+
+def _from_hex(text: str) -> bytes | None:
+    try:
+        return bytes.fromhex(text) if len(text) % 2 == 0 else None
+    except ValueError:
+        return None
+
+
+def _from_base32(text: str) -> bytes | None:
+    import base64
+    import binascii
+
+    cleaned = text.upper().rstrip("=")
+    try:
+        return base64.b32decode(cleaned + "=" * (-len(cleaned) % 8))
+    except (binascii.Error, ValueError):
+        return None
+
+
+def _from_base64(text: str) -> bytes | None:
+    import base64
+    import binascii
+
+    cleaned = text.replace("-", "+").replace("_", "/").rstrip("=")
+    try:
+        return base64.b64decode(cleaned + "=" * (-len(cleaned) % 4), validate=True)
+    except (binascii.Error, ValueError):
+        return None
 
 
 # ---------------------------------------------------------------------------

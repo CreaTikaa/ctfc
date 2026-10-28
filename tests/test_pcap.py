@@ -334,3 +334,36 @@ def test_http_objects_match_tshark(fixture_bytes, tmp_path):
         if item.kind in ("http-body", "http-request")
     }
     assert reference <= ours, "tshark found an object we missed"
+
+
+# --- DNS tunnelling with several labels per query (shape from the user's notes) ----
+
+
+def test_multi_label_dns_tunnel_gives_the_file_cut_at_its_magic(fixture_bytes):
+    """Hex over several labels, a counter label in front, junk before the PNG magic."""
+    from ctfc.core.pcap import solve
+
+    _report, findings = solve(fixture_bytes("audit_dns_tunnel.pcap"))
+    best = findings[0].extracted
+    assert best.name == "dns_jz-n-bs_local_nocounter.png"
+    assert best.data.startswith(b"\x89PNG\r\n\x1a\n")
+    assert b"CYBN{fixture_dns_tunnel}" in best.data
+    assert "3 junk byte(s)" in best.description
+
+
+def test_counter_label_is_offered_with_and_without(fixture_bytes):
+    from ctfc.core.pcap import analyse
+
+    names = {item.name for item in analyse(fixture_bytes("audit_dns_tunnel.pcap")).objects}
+    assert {"dns_jz-n-bs_local.txt", "dns_jz-n-bs_local_nocounter.txt"} <= names
+
+
+def test_constant_labels_are_dropped_at_both_ends():
+    from ctfc.core.pcap import _drop_constant_labels, _first_label_is_a_counter
+
+    rows = [["MFRG", "exfil"], ["GZDF", "exfil"], ["MZTW", "exfil"]]
+    assert _drop_constant_labels(rows) == [["MFRG"], ["GZDF"], ["MZTW"]]
+    rows = [["data", "s001", "aa"], ["data", "s002", "bb"], ["data", "s003", "cc"]]
+    assert _drop_constant_labels(rows) == [["s001", "aa"], ["s002", "bb"], ["s003", "cc"]]
+    assert _first_label_is_a_counter([["s001", "aa"], ["s002", "bb"], ["s003", "cc"]])
+    assert not _first_label_is_a_counter([["MFRG"], ["GZDF"], ["MZTW"]])
