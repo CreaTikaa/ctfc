@@ -112,3 +112,26 @@ def test_against_says_so_when_nothing_works(fixture_bytes):
     report = analyse(source, "ransom.ps1")
     assert mirror_against(source, report, os.urandom(300)) == []
     assert any("no combination" in note for note in report.notes)
+
+
+def test_zero_iv_wins_when_the_first_block_reads(fixture_bytes, tmp_path):
+    """Android locker shape: the first 16 bytes are ciphertext, not an IV prefix.
+
+    Both readings give valid padding (in CBC the IV only touches block 1); the
+    zero-IV one keeps the first block of plaintext.
+    """
+    data = fixture_bytes("audit_android_doc.enc")
+    report = solve_symmetric(data, passphrase=b"fixture_locker_pw", cipher="aes")
+    best = report.candidates[0]
+    assert best.data.startswith(b"Private document.")
+    assert "iv = 16 zero bytes" in best.label
+    done = run_script(tmp_path, best.python, data)
+    assert done.returncode == 0, done.stderr.decode()
+    assert "Private document. The flag is CYBN{fixture_zero_iv}" in done.stdout.decode()
+
+
+def test_a_real_prefixed_iv_is_still_a_prefix(fixture_bytes):
+    key = bytes.fromhex(fixture_bytes("aes_cbc_iv_prefix.key").decode().strip())
+    best = solve_symmetric(fixture_bytes("aes_cbc_iv_prefix.bin"), key=key).candidates[0]
+    assert "first 16 bytes of the ciphertext" in best.label
+    assert best.data.startswith(b"CYBN{fixture_iv_prefixed}")

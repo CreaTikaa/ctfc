@@ -957,6 +957,11 @@ def write_audit_fixtures() -> None:
         openssl_enc_pbkdf2(password.encode(), b"CYBN{fixture_iter10}\n", 10),
     )
 
+    # 6. Android ransomware shape: AES-CBC, key = SHA-256(hardcoded password), IV = zeros.
+    key = hashlib.sha256(b"fixture_locker_pw").digest()
+    document = b"Private document. The flag is CYBN{fixture_zero_iv}.\n"
+    write("audit_android_doc.enc", AES.new(key, AES.MODE_CBC, bytes(16)).encrypt(pad(document, 16)))
+
     # 5. secretsdump.py output: two real accounts, a disabled one with the empty hash.
     write(
         "audit_secretsdump.txt",

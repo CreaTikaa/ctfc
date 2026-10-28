@@ -32,7 +32,7 @@ import hashlib
 import hmac
 import re
 from collections.abc import Iterator
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from Crypto.Cipher import AES, ARC4, DES, DES3, Blowfish, ChaCha20, Salsa20
 
@@ -980,6 +980,16 @@ def solve_symmetric(
                         attempt, raw, flagset, data, extra, container, pre_steps
                     )
                     candidates.append(candidate)
+                    better = _zero_iv_instead(attempt, flagset, data, extra, container, pre_steps)
+                    if better is not None:
+                        # The "IV" was the first ciphertext block: the zero-IV reading
+                        # holds the same plaintext plus that first block.
+                        candidates[-1] = better
+                        candidate = better
+                        report.notes.append(
+                            "the first 16 bytes are not an IV: with an all-zero IV the first "
+                            "block decrypts to readable text, so the whole input is ciphertext"
+                        )
                     if candidate.score >= STOP_AT:
                         # Certain enough (a flag, or a tag that verified): no point
                         # in burning the rest of the budget.
@@ -995,6 +1005,37 @@ def solve_symmetric(
     if budget.stopped_reason:
         report.notes.append("the search stopped early: " + budget.summary())
     return report
+
+
+def _zero_iv_instead(attempt, flagset, data, extra, container, pre_steps):
+    """CBC with "IV = the first block": is it really an IV, or the start of the data?
+
+    In CBC the IV only changes the first plaintext block, so both readings give
+    the same text from block 2 on, with the same valid padding. They differ on the
+    first block: decrypted with a zero IV, the real first block is readable text.
+    """
+    if not attempt.iv_from_prefix or attempt.mode != "cbc" or attempt.iv is None:
+        return None
+    size = len(attempt.iv)
+    whole = attempt.iv + attempt.ct
+    try:
+        raw = decrypt_raw(
+            attempt.spec, "cbc", attempt.material.key, bytes(size), whole, attempt.endian
+        )
+    except CryptoError:
+        return None
+    first = raw[:size]
+    if sum(32 <= b < 127 or b in (9, 10, 13) for b in first) < 0.9 * size:
+        return None  # the first block is noise: the prefix really was the IV
+    alternative = replace(
+        attempt,
+        ct=whole,
+        iv=bytes(size),
+        iv_reason=f"iv = {size} zero bytes",
+        iv_from_prefix=False,
+        skip=max(0, attempt.skip - size),
+    )
+    return make_candidate(alternative, raw, flagset, data, extra, container, pre_steps)
 
 
 def _finish(
