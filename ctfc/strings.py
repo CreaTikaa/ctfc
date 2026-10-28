@@ -259,6 +259,36 @@ EN: dict[str, str] = {
     "web_view_text": "text view",
     "web_bytes": "bytes",
     "web_empty_input": "The input is empty.",
+    # Pipeline tab (M6)
+    "web_pipeline_help": "Your own chain of operations, applied in order, with the output of "
+    "every step. Ctrl+Enter runs it; Auto results have an 'Open in Pipeline' button.",
+    "web_pipeline_recipe": 'recipe (JSON): {"name": ..., "steps": [{"op": "base64"}, ...]}',
+    "web_pipeline_add": "add a step:",
+    "web_pipeline_load": "Load .json",
+    "web_pipeline_save": "Save .json",
+    "web_pipeline_clear": "Clear",
+    "web_pipeline_step": "step",
+    "web_pipeline_failed": "A step failed: the output of the step before it is shown above.",
+    "web_pipeline_export": "The whole recipe",
+    "web_pipeline_no_cyberchef": "(no CyberChef equivalent for one of the steps)",
+    "web_pipeline_bad_json": "The recipe is not valid JSON:",
+    "web_pipeline_ask_key": "XOR key, in hex (e.g. 4b337921)",
+    "web_open_pipeline": "Open in Pipeline",
+    # CyberChef links
+    "web_open_cyberchef": "Open in CyberChef",
+    "web_no_cyberchef": "No CyberChef link for this result.",
+    "web_cyberchef_confirm": "{note}\n\nOpen it anyway?",
+    "web_cyberchef_truncated": "CyberChef got the first 4096 bytes only (a URL cannot carry more).",
+    # Suggested tools strip
+    "web_suggested": "Suggested tools",
+    "web_tool_online": "online",
+    "web_tool_local": "local copy",
+    "web_tool_installed": "installed",
+    "web_tool_missing": "not installed",
+    "web_tool_install": "install",
+    "web_tool_copy_command": "Copy command",
+    "web_tool_open": "Open",
+    "web_tool_run": "Run",
     "upload_too_big": "upload too large (limit {limit} MB, set max_upload_mb in config)",
 }
 

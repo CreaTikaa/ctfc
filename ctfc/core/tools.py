@@ -313,6 +313,29 @@ def gather(data: bytes, input_path: str | None, flagset=None) -> tuple[list[Sign
     return signals, values
 
 
+def cyberchef_target(config_url: str, offline: bool, for_web: bool) -> tuple[str, str]:
+    """Which CyberChef to open a result in: (base URL, note for the user).
+
+    The base URL is "" when nothing is allowed (offline, and no embedded copy).
+    Preference: the embedded copy, then the configured server, then - only when
+    not offline, and with a warning - the public instance.
+    """
+    from ctfc.core.cyberchef import PUBLIC_URL, is_public
+
+    if config_url.startswith("/"):  # the default: the embedded copy
+        if embedded_cyberchef_installed():
+            return cyberchef_base(config_url, for_web), ""
+        missing = "the embedded CyberChef is not installed (run scripts/fetch_vendor.sh)"
+        if offline:
+            return "", missing + " and offline mode forbids the public instance"
+        return PUBLIC_URL, f"{missing}: using the public instance - {THIRD_PARTY_WARNING}"
+    if is_public(config_url):
+        if offline:
+            return "", "offline mode: the configured cyberchef_url is a public server"
+        return config_url, THIRD_PARTY_WARNING
+    return config_url, ""
+
+
 def cyberchef_base(config_url: str, for_web: bool) -> str:
     """The address of the embedded CyberChef, as the caller can open it.
 
@@ -358,6 +381,19 @@ def run_tool(tool: Tool, values: dict, timeout: int = RUN_TIMEOUT) -> RunResult:
     if not tool.command_template:
         return RunResult([], -1, "", "", f"{tool.name} has no command in tools.toml")
     command, missing = fill(tool.command_template, values)
+    for piece in tool.command_template:
+        # A value that *is* a whole argument and starts with "-" would be read by
+        # the tool as an option ("--outfile=~/.bashrc" given as a wordlist).
+        name = piece.strip("{}")
+        if piece == "{" + name + "}" and str(values.get(name, "")).startswith("-"):
+            return RunResult(
+                command,
+                -1,
+                "",
+                "",
+                f"{piece} starts with '-': the tool would read it as an option, so ctfc "
+                "refuses it (write ./name for a file whose name starts with '-')",
+            )
     if missing:
         return RunResult(
             command,

@@ -463,11 +463,12 @@ def cmd_recipe(args: argparse.Namespace, config: Config, console: Console) -> in
     inp = parse_input(args.input, decode_bare=False)
     result = pipeline.run_file(inp.data, args.recipe, flagset_from(config))
     if args.cyberchef and result.cyberchef:
-        url = deep_link(result.cyberchef, inp.data, config.cyberchef_url)
-        if not config.offline:
-            result.notes.append("CyberChef: " + url)
-        else:
-            result.notes.append("CyberChef link not built: offline mode is on")
+        base, note = toolbox.cyberchef_target(config.cyberchef_url, config.offline, for_web=False)
+        if note:
+            result.notes.append("CyberChef: " + note)
+        if base:
+            data = inp.data[: toolbox.CYBERCHEF_DATA_LIMIT]
+            result.notes.append("CyberChef: " + deep_link(result.cyberchef, data, base))
     if args.json:
         print(json.dumps(result.to_dict(), indent=2))
         return 0 if result.ok else 1

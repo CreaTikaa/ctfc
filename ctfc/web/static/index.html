@@ -47,7 +47,7 @@
       <nav id="tabs">
         <button class="tab active" data-tab="auto" data-t="web_tab_auto">Auto</button>
         <button class="tab" data-tab="detect" data-t="web_tab_detect">Detect</button>
-        <button class="tab" data-tab="pipeline" data-milestone="M6" data-t="web_tab_pipeline">Pipeline</button>
+        <button class="tab" data-tab="pipeline" data-t="web_tab_pipeline">Pipeline</button>
         <button class="tab" data-tab="xor" data-t="web_tab_xor">XOR</button>
         <button class="tab" data-tab="sym" data-t="web_tab_sym">Symmetric</button>
         <button class="tab" data-tab="rsa" data-t="web_tab_rsa">RSA</button>
@@ -56,6 +56,20 @@
         <button class="tab" data-tab="keys" data-milestone="M7" data-t="web_tab_keys">Keys</button>
         <button class="tab" data-tab="cheatsheet" data-milestone="M8" data-t="web_tab_cheatsheet">Cheatsheet</button>
       </nav>
+      <!-- Options of the Pipeline tab: the recipe, as editable JSON -->
+      <div id="options-pipeline" class="options hidden">
+        <label class="wide"><span data-t="web_pipeline_recipe">recipe (JSON)</span>
+          <textarea id="pipeline-recipe" class="recipe" spellcheck="false"></textarea></label>
+        <div class="wide step-buttons" id="pipeline-add">
+          <span class="dim" data-t="web_pipeline_add">add a step:</span>
+        </div>
+        <div class="wide step-buttons">
+          <button id="pipeline-load" class="small" data-t="web_pipeline_load">Load .json</button>
+          <input type="file" id="pipeline-file" accept=".json,application/json" hidden>
+          <button id="pipeline-save" class="small" data-t="web_pipeline_save">Save .json</button>
+          <button id="pipeline-clear" class="small" data-t="web_pipeline_clear">Clear</button>
+        </div>
+      </div>
       <!-- Options of the XOR tab (shown only when that tab is active) -->
       <div id="options-xor" class="options hidden">
         <label><span data-t="web_xor_key">key</span>
@@ -144,6 +158,8 @@
       </div>
       <div id="progress" class="hidden"><div id="progress-bar"></div></div>
       <div id="status" class="dim"></div>
+      <!-- "Suggested tools": filled only when a rule fired confidently (tools.toml) -->
+      <div id="suggested" class="hidden"></div>
       <div id="results"></div>
     </section>
   </main>

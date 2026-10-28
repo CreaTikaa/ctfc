@@ -267,3 +267,12 @@ def test_run_real_openssl_on_the_fixture():
     result = run_tool(tool_by_id("openssl"), values)
     assert result.returncode == 0, result.stderr
     assert "CYBN{fixture_openssl_md5}" in result.stdout
+
+
+def test_a_value_starting_with_a_dash_is_refused(monkeypatch):
+    """`--outfile=~/.bashrc` given as a wordlist must not become a hashcat option."""
+    monkeypatch.setattr(tools.shutil, "which", lambda name: f"/usr/bin/{name}")
+    monkeypatch.setattr(tools.subprocess, "run", lambda *a, **k: pytest.fail("must not run"))
+    values = {"hashcat_mode": 0, "input": "h.txt", "wordlist": "--outfile=/tmp/x"}
+    result = run_tool(tool_by_id("hashcat"), values)
+    assert "starts with '-'" in result.error

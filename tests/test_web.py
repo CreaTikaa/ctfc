@@ -280,3 +280,130 @@ def test_api_hash_without_the_password_list(client):
         "/api/hash", json={"input": digest, "options": {"no_passwords": True}}
     ).get_json()
     assert answer["matches"][0]["cracked"] is None
+
+
+# --- M6: recipes, CyberChef links, suggested tools -------------------------
+
+
+def b64_payload(fixture_bytes, name: str) -> dict:
+    import base64
+
+    return {"data_b64": base64.b64encode(fixture_bytes(name)).decode(), "name": name}
+
+
+def test_pipeline_tab_is_enabled(client):
+    page = client.get("/").data.decode()
+    assert 'data-tab="pipeline" data-milestone' not in page
+    assert 'id="options-pipeline"' in page
+    assert 'id="suggested"' in page
+
+
+def test_api_recipe_runs_step_by_step(client, fixture_bytes):
+    payload = b64_payload(fixture_bytes, "layers_b64_zlib_xor.txt")
+    payload["options"] = {
+        "recipe": '{"name": "t", "steps": ["base64", "zlib", '
+        '{"op": "xor", "args": {"key": "4b337921"}}]}'
+    }
+    answer = client.post("/api/recipe", json=payload).get_json()
+    assert answer["ok"] is True
+    assert len(answer["steps"]) == 3
+    assert "CYBN{" in answer["output_text"]
+    assert answer["cyberchef"].startswith("From_Base64(")
+    assert '"op": "xor"' in answer["recipe_json"]
+
+
+def test_api_recipe_does_not_decode_the_input_first(client):
+    """The recipe says "base64": the pasted base64 must reach that step untouched."""
+    payload = {"input": "Q1lCTnt3ZWJ9", "format": "auto", "options": {"recipe": '["base64"]'}}
+    answer = client.post("/api/recipe", json=payload).get_json()
+    assert answer["output_text"] == "CYBN{web}"
+
+
+def test_api_recipe_failing_step(client):
+    payload = {
+        "input": "Q1lCTnt3ZWJ9",
+        "format": "text",
+        "options": {"recipe": '["base64", "zlib"]'},
+    }
+    answer = client.post("/api/recipe", json=payload).get_json()
+    assert answer["ok"] is False
+    assert answer["steps"][1]["error"]
+    assert answer["output_text"] == "CYBN{web}"
+
+
+@pytest.mark.parametrize("recipe", ["{nope", "", '{"steps": "x"}', '["rot1000"]'])
+def test_api_recipe_bad_recipe_is_json_400(client, recipe):
+    payload = {"input": "abc", "format": "text", "options": {"recipe": recipe}}
+    response = client.post("/api/recipe", json=payload)
+    assert response.status_code == 400
+    assert response.get_json()["error"]
+
+
+def test_cyberchef_link_prefers_the_embedded_copy(client, monkeypatch):
+    from ctfc.core import tools
+
+    monkeypatch.setattr(tools, "embedded_cyberchef_installed", lambda: True)
+    payload = {"input": "A", "format": "text", "options": {"recipe": "From_Hex('Auto')"}}
+    link = client.post("/api/cyberchef", json=payload).get_json()
+    assert link["url"] == "/vendor/cyberchef/index.html#recipe=From_Hex('Auto')&input=QQ%3D%3D"
+    assert link["public"] is False
+
+
+def test_cyberchef_link_falls_back_to_public_with_a_warning(client, monkeypatch):
+    from ctfc.core import tools
+
+    monkeypatch.setattr(tools, "embedded_cyberchef_installed", lambda: False)
+    payload = {"input": "A", "format": "text", "options": {"recipe": "From_Hex('Auto')"}}
+    link = client.post("/api/cyberchef", json=payload).get_json()
+    assert link["url"].startswith("https://gchq.github.io/CyberChef/#recipe=")
+    assert link["public"] is True
+    assert "third party" in link["note"]
+
+
+def test_cyberchef_link_offline_without_embedded_copy_is_refused(monkeypatch):
+    from ctfc.core import tools
+
+    monkeypatch.setattr(tools, "embedded_cyberchef_installed", lambda: False)
+    app = create_app(Config(offline=True))
+    payload = {"input": "A", "format": "text", "options": {"recipe": "From_Hex('Auto')"}}
+    link = app.test_client().post("/api/cyberchef", json=payload).get_json()
+    assert link["url"] == ""
+    assert "offline" in link["note"]
+
+
+def test_api_tools_suggests_hashcat_for_md5(client):
+    payload = {"input": "482c811da5d5b4bc6d497ffa98491e38", "format": "text"}
+    answer = client.post("/api/tools", json=payload).get_json()
+    assert answer["suggestions"][0]["id"] == "hashcat"
+    assert answer["suggestions"][0]["command"][:3] == ["hashcat", "-m", "0"]
+
+
+def test_api_tools_is_empty_when_nothing_fires(client):
+    answer = client.post("/api/tools", json={"input": "hello there", "format": "text"}).get_json()
+    assert answer["suggestions"] == []
+
+
+@pytest.mark.skipif(__import__("shutil").which("openssl") is None, reason="no openssl")
+def test_api_tools_run_openssl(client, fixture_bytes):
+    payload = b64_payload(fixture_bytes, "openssl_salted_md5.bin")
+    payload["options"] = {"tool": "openssl", "password": "password123"}
+    result = client.post("/api/tools/run", json=payload).get_json()
+    assert result["returncode"] == 0, result
+    assert "CYBN{fixture_openssl_md5}" in result["stdout"]
+
+
+def test_api_tools_run_refuses_online_and_unknown_tools(client):
+    for tool in ("factordb", "cyberchef_public", "nc"):
+        payload = {"input": "abc", "format": "text", "options": {"tool": tool}}
+        assert client.post("/api/tools/run", json=payload).status_code == 400
+
+
+def test_api_tools_run_checks_the_wordlist(client):
+    payload = {
+        "input": "482c811da5d5b4bc6d497ffa98491e38",
+        "format": "text",
+        "options": {"tool": "hashcat", "wordlist": "/nonexistent/rockyou.txt"},
+    }
+    response = client.post("/api/tools/run", json=payload)
+    assert response.status_code == 400
+    assert "wordlist not found" in response.get_json()["error"]

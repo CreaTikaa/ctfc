@@ -122,7 +122,7 @@ pre {
   margin-top: 0.6rem;
 }
 .options label { display: flex; flex-direction: column; gap: 0.15rem; font-size: 0.85rem; color: var(--dim); }
-.options label.wide { grid-column: 1 / -1; }
+.options .wide { grid-column: 1 / -1; }
 .options input, .options textarea {
   background: var(--panel);
   color: var(--text);
@@ -204,3 +204,37 @@ table.facts td.th {
   color: #9fb4c7;
   border-bottom: 1px solid #2c3a49;
 }
+
+/* Pipeline tab: the recipe editor and its "add a step" buttons. */
+.options textarea.recipe { height: 9rem; }
+.step-buttons { display: flex; flex-wrap: wrap; gap: 0.3rem; align-items: center; font-size: 0.85rem; }
+.card .step-comment { color: var(--dim); font-size: 0.85rem; margin: 0.2rem 0; }
+.card .step-error { color: var(--error); margin: 0.3rem 0; }
+.card.failed { border-left-color: var(--error); }
+.step-arrow { color: var(--dim); text-align: center; margin: -0.3rem 0 0.3rem; }
+.warning { color: var(--mid); font-size: 0.85rem; }
+
+/* "Suggested tools" strip: at most three tools, only when a rule fired. */
+#suggested {
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--accent);
+  border-radius: 4px;
+  background: var(--panel);
+  padding: 0.4rem 0.8rem;
+  margin-bottom: 0.6rem;
+}
+#suggested h3 { margin-top: 0.2rem; }
+.tool { padding: 0.3rem 0; border-top: 1px solid var(--border); }
+.tool:first-of-type { border-top: none; }
+.tool .card-head .rule { margin-left: auto; }
+.tool pre { margin: 0.3rem 0; white-space: pre-wrap; word-break: break-all; }
+.tool .actions { display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: center; }
+.tool .actions input {
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 0 0.3rem;
+  font: 12px var(--mono);
+}
+.tool .run-output { max-height: 14rem; overflow: auto; background: var(--bg); padding: 0.4rem; }

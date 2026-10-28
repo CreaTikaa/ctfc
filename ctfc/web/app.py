@@ -11,6 +11,9 @@ API (all POST bodies are JSON):
     {"data_b64": "<base64 of the file>", "name": "x.bin"}  uploaded file
     + "options": {...} for tools that take options (xor: key, keylen, crib, other)
 
+Recipes (POST /api/recipe), external tool suggestions (POST /api/tools) and
+running one of them (POST /api/tools/run) answer directly.
+
 Long searches (auto, xor) exist twice: POST /api/<kind> answers when finished,
 POST /api/jobs/<kind> runs in the background (progress + cancel, see jobs.py).
 """
@@ -19,6 +22,8 @@ from __future__ import annotations
 
 import base64
 import binascii
+import json
+import tempfile
 from collections.abc import Callable
 from pathlib import Path
 
@@ -26,13 +31,17 @@ from flask import Flask, jsonify, request, send_from_directory
 
 from ctfc import __version__
 from ctfc.config import Config
+from ctfc.core import pipeline
+from ctfc.core import tools as toolbox
 from ctfc.core.auto import auto_decode
 from ctfc.core.budget import Budget
+from ctfc.core.cyberchef import deep_link
 from ctfc.core.detect import detect
 from ctfc.core.flags import build_flagset
 from ctfc.core.hashes import identify as identify_hash
 from ctfc.core.inputs import InputError, decode_base64, decode_hex, parse_input
 from ctfc.core.lens import analyse as analyse_script
+from ctfc.core.pipeline import RecipeError
 from ctfc.core.rsa import RsaError, build_key, parse_key, solve_rsa
 from ctfc.core.symmetric import solve_symmetric
 from ctfc.core.types import Input
@@ -76,6 +85,22 @@ def _number(value: object) -> int | None:
         return int(text, 16) if text.lower().startswith("0x") else int(text)
     except ValueError as exc:
         raise InputError(f"{text[:40]!r} is not a number (decimal, or 0x for hex)") from exc
+
+
+def recipe_from_option(value: object) -> tuple[str, list]:
+    """The recipe sent by the browser: JSON text, or an already-parsed object/list."""
+    if isinstance(value, str):
+        if not value.strip():
+            raise RecipeError("the recipe is empty: add a step first")
+        try:
+            value = json.loads(value)
+        except json.JSONDecodeError as exc:
+            raise RecipeError(f"the recipe is not valid JSON: {exc}") from exc
+    if isinstance(value, list):
+        value = {"steps": value}
+    if not isinstance(value, dict) or not isinstance(value.get("steps"), list):
+        raise RecipeError('expected {"name": ..., "steps": [...]} or a list of steps')
+    return str(value.get("name") or "recipe"), pipeline.parse_steps(value["steps"])
 
 
 def input_summary(inp: Input) -> dict:
@@ -328,6 +353,85 @@ def create_app(config: Config | None = None) -> Flask:
         report = analyse_script(inp.data, filename=name, flagset=flagset)
         return jsonify({"input": input_summary(inp), **report.to_dict()})
 
+    def cyberchef_link(recipe: str | None, data: bytes) -> dict | None:
+        """The "Open in CyberChef" link for a recipe, or why there is none."""
+        if not recipe:
+            return None
+        base, note = toolbox.cyberchef_target(config.cyberchef_url, config.offline, for_web=True)
+        limit = toolbox.CYBERCHEF_DATA_LIMIT
+        return {
+            "url": deep_link(recipe, data[:limit], base) if base else "",
+            "public": bool(note) and bool(base),
+            "note": note,
+            "truncated": len(data) > limit,
+        }
+
+    @app.post("/api/recipe")
+    def api_recipe():
+        """Run a recipe step by step (fast: no search, only the given operations)."""
+        payload = read_payload()
+        # The recipe says which decodings to do: do not decode bare hex/base64 first.
+        inp = input_from_payload(payload, decode_bare=False)
+        options = payload.get("options") or {}
+        name, steps = recipe_from_option(options.get("recipe"))
+        result = pipeline.run(inp.data, steps, name, flagset)
+        answer = {"input": input_summary(inp), **result.to_dict()}
+        answer["recipe_json"] = pipeline.dump(name, steps)
+        answer["cyberchef_link"] = cyberchef_link(result.cyberchef, inp.data)
+        return jsonify(answer)
+
+    @app.post("/api/cyberchef")
+    def api_cyberchef():
+        """Deep link for a result card's CyberChef recipe and the current input."""
+        payload = read_payload()
+        inp = input_from_payload(payload, decode_bare=False)
+        recipe = str((payload.get("options") or {}).get("recipe") or "")
+        link = cyberchef_link(recipe, inp.data)
+        if link is None:
+            raise InputError("no CyberChef recipe for this result")
+        return jsonify(link)
+
+    @app.post("/api/tools")
+    def api_tools():
+        """External tools worth trying here (empty list when nothing is confident)."""
+        inp = read_input(decode_bare=False)
+        signals, values = toolbox.gather(inp.data, None, flagset)
+        values["cyberchef_url"] = toolbox.cyberchef_base(config.cyberchef_url, for_web=True)
+        suggestions = toolbox.suggest(
+            signals,
+            values=values,
+            offline=config.offline,
+            threshold=config.suggest_threshold,
+            limit=config.max_suggestions,
+        )
+        return jsonify({"suggestions": [item.to_dict() for item in suggestions]})
+
+    @app.post("/api/tools/run")
+    def api_tools_run():
+        """Run one local tool from tools.toml on the input (argument list, no shell)."""
+        payload = read_payload()
+        inp = input_from_payload(payload, decode_bare=False)
+        options = payload.get("options") or {}
+        try:
+            tool = toolbox.tool_by_id(str(options.get("tool") or ""))
+        except ValueError as exc:
+            raise InputError(str(exc)) from exc
+        if tool.kind != "local":
+            raise InputError(f"{tool.name} is not a local program: open it instead")
+        _signals, values = toolbox.gather(inp.data, None, flagset)
+        wordlist = str(options.get("wordlist") or "").strip()
+        if wordlist:
+            if not Path(wordlist).expanduser().is_file():
+                raise InputError(f"wordlist not found: {wordlist}")
+            values["wordlist"] = str(Path(wordlist).expanduser())
+        if options.get("password"):
+            values["password"] = str(options["password"])
+        # Tools read files: give it a private copy of the input, removed afterwards.
+        with tempfile.TemporaryDirectory(prefix="ctfc-") as folder:
+            values["input"] = str(toolbox.write_input(inp.data, Path(folder)))
+            result = toolbox.run_tool(tool, values)
+        return jsonify(result.to_dict())
+
     @app.post("/api/jobs/<kind>")
     def start_job(kind: str):
         work, budget = prepare(kind)
@@ -346,6 +450,10 @@ def create_app(config: Config | None = None) -> Flask:
 
     @app.errorhandler(RsaError)
     def bad_key(error: RsaError):
+        return jsonify({"error": str(error)}), 400
+
+    @app.errorhandler(RecipeError)
+    def bad_recipe(error: RecipeError):
         return jsonify({"error": str(error)}), 400
 
     @app.errorhandler(InputError)

@@ -26,10 +26,42 @@ const TOOLS = {
   lens: "sync",
   rsa: "job",
   hash: "sync",
+  pipeline: "sync",
 };
 
+// API route of a tab, when it is not /api/<tab>.
+const API_PATH = { pipeline: "/api/recipe" };
+
 // Tabs that have their own options panel (#options-<tab>).
-const OPTION_PANELS = ["xor", "sym", "rsa", "hash"];
+const OPTION_PANELS = ["xor", "sym", "rsa", "hash", "pipeline"];
+
+// Tabs after which the "Suggested tools" strip is computed (data tabs, not scripts).
+const SUGGEST_TABS = ["auto", "detect", "xor", "sym", "hash"];
+
+// "Add a step" buttons of the Pipeline tab. `args` is a template the user edits;
+// `ask` prompts for one argument (the XOR key) before adding the step.
+const PIPELINE_STEPS = [
+  { op: "base64" },
+  { op: "hex" },
+  { op: "base32" },
+  { op: "base58" },
+  { op: "base85" },
+  { op: "url" },
+  { op: "html" },
+  { op: "zlib" },
+  { op: "gzip" },
+  { op: "deflate" },
+  { op: "bz2" },
+  { op: "lzma" },
+  { op: "reverse" },
+  { op: "rot13" },
+  { op: "rot47" },
+  { op: "xor", ask: "key" },
+  {
+    op: "cipher",
+    args: { cipher: "aes", mode: "cbc", key: "<hex key>", iv: "<hex iv>", unpad: "pkcs7" },
+  },
+];
 
 const $ = (id) => document.getElementById(id);
 
@@ -124,6 +156,9 @@ function currentOptions() {
   if (state.tab === "hash") {
     return { no_passwords: $("hash-no-passwords").checked };
   }
+  if (state.tab === "pipeline") {
+    return { recipe: $("pipeline-recipe").value };
+  }
   if (state.tab === "sym") {
     return {
       key: $("sym-key").value,
@@ -194,9 +229,12 @@ async function run() {
   $("run").disabled = true;
   setStatus(T("web_running"));
   $("results").replaceChildren();
+  hideSuggestions();
   try {
-    const answer = TOOLS[tab] === "job" ? await runJob(tab, payload) : await post("/api/" + tab, payload);
+    const path = API_PATH[tab] || "/api/" + tab;
+    const answer = TOOLS[tab] === "job" ? await runJob(tab, payload) : await post(path, payload);
     if (answer) showAnswer(tab, answer);
+    if (answer && SUGGEST_TABS.includes(tab)) loadSuggestions(payload);
   } catch (error) {
     setStatus(error.message, true);
   } finally {
@@ -255,6 +293,11 @@ function showAnswer(tab, answer) {
     setStatus(answer.budget || "");
     return;
   }
+  if (tab === "pipeline") {
+    renderPipeline(answer);
+    setStatus(answer.ok ? "" : T("web_pipeline_failed"), !answer.ok);
+    return;
+  }
   if (answer.notes && answer.notes.length) renderNotes(answer.notes);
   if (answer.key_lengths && answer.key_lengths.length) renderKeyLengths(answer.key_lengths);
   renderCandidates(answer.candidates);
@@ -304,27 +347,12 @@ function candidateCard(candidate) {
   for (const reason of candidate.reasons) reasons.append(el("li", "", reason));
   card.append(reasons);
 
-  // Output: text view if readable, otherwise hexdump. A button switches views.
-  const bytes = hexToBytes(candidate.data_hex);
-  const readable = isReadable(candidate.data_text);
-  const output = el("pre", "output");
-  let showingHex = !readable;
-  const drawOutput = () => {
-    output.textContent = showingHex ? hexdump(bytes, 4096) : candidate.data_text;
-  };
-  drawOutput();
-  card.append(output);
+  const view = outputView(candidate.data_hex, candidate.data_text);
+  const readable = view.readable;
+  card.append(view.output);
 
   const actions = el("div", "actions");
-  actions.append(copyButton(T("web_copy"), () => (showingHex ? candidate.data_hex : candidate.data_text)));
-
-  const viewButton = el("button", "small", showingHex ? T("web_view_text") : T("web_view_hex"));
-  viewButton.addEventListener("click", () => {
-    showingHex = !showingHex;
-    viewButton.textContent = showingHex ? T("web_view_text") : T("web_view_hex");
-    drawOutput();
-  });
-  actions.append(viewButton);
+  actions.append(copyButton(T("web_copy"), view.currentText), view.button);
 
   if (candidate.python) {
     const code = el("pre", "code hidden", candidate.python);
@@ -340,12 +368,41 @@ function candidateCard(candidate) {
   }
   if (candidate.cyberchef) {
     actions.append(copyButton(T("web_copy_cyberchef"), () => candidate.cyberchef));
+    const chef = el("button", "small", T("web_open_cyberchef"));
+    chef.addEventListener("click", () => openCyberChef(candidate.cyberchef));
+    actions.append(chef);
+  }
+  // A result found by a chain of steps (Auto) can be replayed and edited as a recipe.
+  const chain = candidate.params && candidate.params.chain;
+  if (Array.isArray(chain) && chain.length) {
+    const toPipeline = el("button", "small", T("web_open_pipeline"));
+    toPipeline.addEventListener("click", () => openInPipeline(chain));
+    actions.append(toPipeline);
   }
 
   const nextButton = el("button", "small", T("web_next_input"));
   nextButton.addEventListener("click", () => useAsInput(candidate, readable));
   actions.append(nextButton);
   return card;
+}
+
+// Output of a result: text view if readable, otherwise hexdump; a button switches.
+function outputView(dataHex, dataText) {
+  const bytes = hexToBytes(dataHex);
+  const readable = isReadable(dataText);
+  const output = el("pre", "output");
+  let showingHex = !readable;
+  const draw = () => {
+    output.textContent = showingHex ? hexdump(bytes, 4096) : dataText;
+  };
+  draw();
+  const button = el("button", "small", showingHex ? T("web_view_text") : T("web_view_hex"));
+  button.addEventListener("click", () => {
+    showingHex = !showingHex;
+    button.textContent = showingHex ? T("web_view_text") : T("web_view_hex");
+    draw();
+  });
+  return { output, button, readable, currentText: () => (showingHex ? dataHex : dataText) };
 }
 
 // Put a result back into the input box, to keep working on it.
@@ -670,6 +727,250 @@ function entropyChart(windows) {
   return wrap;
 }
 
+// ---------------------------------------------------------------- CyberChef
+// Ask the server for the deep link (it knows whether the embedded copy exists
+// and whether offline mode forbids the public one), then open it.
+async function openCyberChef(recipe) {
+  const payload = currentPayload();
+  payload.options = { recipe };
+  try {
+    openLink(await post("/api/cyberchef", payload));
+  } catch (error) {
+    setStatus(error.message, true);
+  }
+}
+
+function openLink(link) {
+  if (!link || !link.url) {
+    setStatus(link ? link.note : T("web_no_cyberchef"), true);
+    return;
+  }
+  // The public instance receives the data: say so, and let the user decline.
+  if (link.public && !window.confirm(T("web_cyberchef_confirm", { note: link.note }))) return;
+  if (link.truncated) setStatus(T("web_cyberchef_truncated"));
+  window.open(link.url, "_blank", "noopener");
+}
+
+// ---------------------------------------------------------------- pipeline
+function readRecipe() {
+  const text = $("pipeline-recipe").value.trim();
+  if (!text) return { name: "recipe", steps: [] };
+  const recipe = JSON.parse(text); // throws on bad JSON: the caller reports it
+  return Array.isArray(recipe) ? { name: "recipe", steps: recipe } : recipe;
+}
+
+function writeRecipe(recipe) {
+  $("pipeline-recipe").value = JSON.stringify(recipe, null, 2);
+}
+
+function addPipelineStep(template) {
+  let recipe;
+  try {
+    recipe = readRecipe();
+  } catch (error) {
+    setStatus(T("web_pipeline_bad_json") + " " + error.message, true);
+    return;
+  }
+  const step = { op: template.op };
+  if (template.ask) {
+    const value = window.prompt(T("web_pipeline_ask_" + template.ask));
+    if (value === null) return;
+    step.args = { [template.ask]: value.trim() };
+  } else if (template.args) {
+    step.args = { ...template.args };
+  }
+  recipe.steps = recipe.steps || [];
+  recipe.steps.push(step);
+  writeRecipe(recipe);
+  setStatus("");
+}
+
+// From an Auto result: load its chain as a recipe, on the same input, and run it.
+function openInPipeline(chain) {
+  const steps = chain.map((step) => {
+    const entry = { op: step.name };
+    if (step.params && Object.keys(step.params).length) entry.args = step.params;
+    return entry;
+  });
+  // Named after its operations ("base64_zlib_xor"): also the file name on Save.
+  writeRecipe({ name: steps.map((step) => step.op).join("_").slice(0, 40), steps });
+  selectTab(document.querySelector('.tab[data-tab="pipeline"]'));
+  run();
+}
+
+function savePipeline() {
+  let recipe;
+  try {
+    recipe = readRecipe();
+  } catch (error) {
+    setStatus(T("web_pipeline_bad_json") + " " + error.message, true);
+    return;
+  }
+  const blob = new Blob([JSON.stringify(recipe, null, 2) + "\n"], { type: "application/json" });
+  const link = document.createElement("a");
+  link.href = URL.createObjectURL(blob);
+  link.download = (recipe.name || "recipe") + ".json";
+  link.click();
+  URL.revokeObjectURL(link.href);
+}
+
+function loadPipelineFile(file) {
+  const reader = new FileReader();
+  reader.onload = () => {
+    $("pipeline-recipe").value = reader.result;
+    $("pipeline-file").value = "";
+    setStatus("");
+  };
+  reader.readAsText(file);
+}
+
+// One card per step, each with its own output: you see where a recipe goes wrong.
+function renderPipeline(answer) {
+  const results = $("results");
+  if (answer.notes.length) renderNotes(answer.notes);
+  answer.steps.forEach((step, index) => {
+    if (index) results.append(el("div", "step-arrow", "↓"));
+    const card = el("div", "card " + (step.error ? "failed" : levelClass(step.score)));
+    const head = el("div", "card-head");
+    head.append(
+      el("span", "score", step.error ? "✗" : step.score.toFixed(2)),
+      el("span", "label", T("web_pipeline_step") + " " + step.index + ": " + step.label),
+      el("span", "rule", step.error ? "" : step.length + " " + T("web_bytes")),
+    );
+    card.append(head);
+    if (step.comment) card.append(el("div", "step-comment", step.comment));
+    if (step.error) {
+      card.append(el("div", "step-error", step.error));
+      results.append(card);
+      return;
+    }
+    const reasons = el("ul");
+    for (const reason of step.reasons.slice(0, 3)) reasons.append(el("li", "", reason));
+    card.append(reasons);
+    const view = outputView(step.data_hex, step.data_text);
+    card.append(view.output);
+    const actions = el("div", "actions");
+    actions.append(copyButton(T("web_copy"), view.currentText), view.button);
+    const next = el("button", "small", T("web_next_input"));
+    next.addEventListener("click", () =>
+      useAsInput({ data_text: step.data_text, data_hex: step.data_hex }, view.readable),
+    );
+    actions.append(next);
+    card.append(actions);
+    results.append(card);
+  });
+
+  // The whole recipe, exported: Python script, CyberChef, JSON.
+  const card = el("div", "card " + (answer.ok ? "good" : "mid"));
+  const head = el("div", "card-head");
+  head.append(el("span", "label", T("web_pipeline_export")));
+  card.append(head);
+  const actions = el("div", "actions");
+  if (answer.python) actions.append(copyButton(T("web_copy") + " Python", () => answer.python));
+  if (answer.cyberchef) {
+    actions.append(copyButton(T("web_copy_cyberchef"), () => answer.cyberchef));
+    const chef = el("button", "small", T("web_open_cyberchef"));
+    chef.addEventListener("click", () => openLink(answer.cyberchef_link));
+    actions.append(chef);
+  } else if (answer.python) {
+    actions.append(el("span", "dim", T("web_pipeline_no_cyberchef")));
+  }
+  actions.append(copyButton(T("web_copy") + " JSON", () => answer.recipe_json));
+  card.append(actions);
+  if (answer.python) card.append(el("pre", "code", answer.python));
+  results.append(card);
+}
+
+// ---------------------------------------------------------------- suggested tools
+function hideSuggestions() {
+  $("suggested").classList.add("hidden");
+  $("suggested").replaceChildren();
+}
+
+// Computed after the main result, so it never delays it. Shows nothing at all
+// when no rule fired confidently: no noise during a timed CTF.
+async function loadSuggestions(payload) {
+  let answer;
+  try {
+    answer = await post("/api/tools", { ...payload, options: {} });
+  } catch (error) {
+    return; // the suggestions are a bonus: never turn them into an error
+  }
+  if (!answer.suggestions.length) return;
+  const strip = $("suggested");
+  strip.replaceChildren(el("h3", "", T("web_suggested")));
+  for (const tool of answer.suggestions) strip.append(toolRow(tool, payload));
+  strip.classList.remove("hidden");
+}
+
+function toolRow(tool, payload) {
+  const row = el("div", "tool");
+  const head = el("div", "card-head");
+  let state = tool.kind === "online" ? T("web_tool_online") : T("web_tool_local");
+  if (tool.kind === "local") state = tool.available ? T("web_tool_installed") : T("web_tool_missing");
+  head.append(el("span", "label", tool.name), el("span", "dim", tool.reason), el("span", "rule", state));
+  row.append(head);
+  if (tool.notes) row.append(el("div", "step-comment", tool.notes));
+  if (tool.warning) row.append(el("div", "warning", "⚠ " + tool.warning));
+
+  const actions = el("div", "actions");
+  if (tool.command.length) {
+    row.append(el("pre", "code", tool.command_line));
+    actions.append(copyButton(T("web_tool_copy_command"), () => tool.command_line));
+  }
+  if (tool.url) {
+    const open = el("button", "small", T("web_tool_open"));
+    open.addEventListener("click", () => {
+      if (!tool.offline_safe && !window.confirm(T("web_cyberchef_confirm", { note: tool.warning }))) return;
+      window.open(tool.url, "_blank", "noopener");
+    });
+    actions.append(open);
+  }
+  if (tool.kind === "local" && !tool.available && tool.install) {
+    actions.append(el("span", "dim", T("web_tool_install") + ": " + tool.install));
+  }
+  if (tool.kind === "local" && tool.available) {
+    // {input} is filled by the server (a temporary copy of the input); the
+    // other placeholders the user types here.
+    const fields = {};
+    for (const name of tool.placeholders) {
+      if (name === "{input}") continue;
+      const key = name.replace(/[{}]/g, "");
+      const field = el("input");
+      field.type = key === "password" ? "password" : "text";
+      field.placeholder = key;
+      field.size = key === "wordlist" ? 28 : 12;
+      fields[key] = field;
+      actions.append(field);
+    }
+    const output = el("pre", "run-output hidden");
+    const runButton = el("button", "small", T("web_tool_run"));
+    runButton.addEventListener("click", async () => {
+      const options = { tool: tool.id };
+      for (const [key, field] of Object.entries(fields)) options[key] = field.value;
+      runButton.disabled = true;
+      output.classList.remove("hidden");
+      output.textContent = T("web_running");
+      try {
+        const result = await post("/api/tools/run", { ...payload, options });
+        output.textContent =
+          "$ " + result.command_line + "\n" +
+          (result.error ? result.error + "\n" : "exit code " + result.returncode + "\n") +
+          result.stdout + (result.stderr ? "\n--- stderr ---\n" + result.stderr : "");
+      } catch (error) {
+        output.textContent = error.message;
+      } finally {
+        runButton.disabled = false;
+      }
+    });
+    actions.append(runButton);
+    row.append(actions, output);
+    return row;
+  }
+  row.append(actions);
+  return row;
+}
+
 // ---------------------------------------------------------------- file input
 function loadFile(file) {
   const reader = new FileReader();
@@ -701,6 +1002,7 @@ function selectTab(button) {
   }
   $("tab-help").textContent = T("web_" + state.tab + "_help");
   $("results").replaceChildren();
+  hideSuggestions();
   setStatus("");
 }
 
@@ -729,6 +1031,22 @@ async function init() {
   fetch("/api/health").then((r) => r.json()).then((health) => {
     $("version").textContent = "v" + health.version;
     $("offline-badge").classList.toggle("hidden", !health.offline);
+  });
+
+  // Pipeline tab: one button per common operation, plus load / save / clear.
+  for (const template of PIPELINE_STEPS) {
+    const button = el("button", "small", template.op === "cipher" ? "aes/cipher" : template.op);
+    button.addEventListener("click", () => addPipelineStep(template));
+    $("pipeline-add").append(button);
+  }
+  $("pipeline-load").addEventListener("click", () => $("pipeline-file").click());
+  $("pipeline-file").addEventListener("change", (event) => {
+    if (event.target.files[0]) loadPipelineFile(event.target.files[0]);
+  });
+  $("pipeline-save").addEventListener("click", savePipeline);
+  $("pipeline-clear").addEventListener("click", () => {
+    $("pipeline-recipe").value = "";
+    $("results").replaceChildren();
   });
 
   $("run").addEventListener("click", run);
