@@ -345,6 +345,66 @@ Open points (not started, ask first):
 - The user dropped two Notion exports in `examples/` (untracked, not read, not
   committed): ask him what they are for.
 
+## 5quater. IN PROGRESS: audit against the user's real challenges
+
+On 2026-10-28 the user put two Notion exports of his challenge notes in `examples/`
+(untracked, French + English, mostly Forensics) and asked: **"check the tool covers
+every use case in there - I should have been able to flag them just by pasting the
+artifacts into ctfc, without an LLM"**. He also said any feature that makes the tool
+richer is welcome, as long as it stays fast and **deduces parameters instead of asking
+for them**.
+
+The two exports are also saved outside the repo in the session scratchpad; if they are
+gone, re-extract `examples/*.zip` (each holds one `Forensics *.md`, the second also two
+screenshots).
+
+### Audit method (redo it this way)
+
+`/tmp/.../scratchpad/audit/build.py` and `build2.py` rebuild each case in miniature
+(own encryptors, fake `CYBN{...}` flags) into `cases/`, then each one is run through
+ctfc. **Those scripts are in the scratchpad and will be deleted** - rewrite them from
+the table below, they are ~60 lines each.
+
+### Coverage table (status at the end of this session)
+
+| # | Challenge / step | ctfc | Done? |
+|---|---|---|---|
+| A | Docker Layers: `openssl enc -aes-256-cbc -iter 10 -pass pass:<sha256>` | `ctfc sym --pass` | **FIXED** (`-iter` 10 and 100 added to kdf.py) |
+| B | Android SimpleLocker: AES-CBC, key = sha256(password), IV = 16 zero bytes | `ctfc sym --pass` | already worked; **but** it answers "iv = the first 16 bytes" (loses block 1) before the zero-IV reading - the zero-IV variant should outrank it |
+| C | pfSense `gateway.bak`: base64 XML, `<secret>` field, ROT13 hint | `ctfc auto` | half: the XML comes out, but the `<secret>` value is not surfaced and nothing suggests ROT13 on it |
+| D | RADIUS PAP password in a pcap (password XOR MD5(secret+authenticator)) | - | **NOT COVERED** |
+| E | Pixel Rehab: PNG magic byte 0x88, 7z appended after IEND, PNG header pasted over the 7z magic | - | **core/repair.py written** (commit 445f2ec), NOT wired to the CLI/web yet |
+| F | DNS tunnelling: hex payload over SEVERAL labels, junk prefix label, junk before the PNG magic | `ctfc pcap` | **NOT COVERED**: `extract_dns` takes only the first label and groups by `name.split(".", 1)`, so multi-label queries give one group per query and are dropped |
+| G | Encrypted ZIP, known-plaintext with bkcrack (offset 5 for a Deflate-stored PNG) | - | **NOT COVERED** (a tools.toml entry + the computed offset would do it) |
+| H | qcow2 + LUKS, `aeskeyfind`, then master key = key1\|\|key2 or key2\|\|key1 | `ctfc keys` | finds both 32-byte halves exactly; **missing**: print the `cryptsetup open --master-key-file` commands for both orders |
+| I | SAM/NTDS: `user:rid:lm:nt:::` line | `ctfc hash` | **FIXED** (format `pwdump`, NT hash named, empty-password hash flagged) |
+| J | pdf2john / 7z2john / keepass2john, oleid/olevba, Volatility, ewfexport, WinDefReleaser | - | tool-bridge suggestions, none added |
+
+### What is left, in the order I would do it
+
+1. **Wire `core/repair.py`**: `ctfc repair <input> [--out <dir>]` (write the repaired
+   file + the carved pieces), a `magic.corrupted` rule in `detect` (with `apply` to the
+   repair tab), and a web tab. The module already returns fixes (with a ready `dd`
+   command), carved pieces and notes. **Two known rough edges**: (a) a 6-byte pasted
+   header yields the 7 formats whose magic is 6 bytes long (7z among them) - the real
+   deduction needs a *content* check, e.g. the 7z start-header CRC32, which would pick
+   exactly one; (b) `MAX_FITS` (8) is a blunt instrument, replace it with that check.
+   There is **no test file for repair.py yet** - write `tests/test_repair.py`.
+2. **DNS exfiltration** (`core/pcap.py::extract_dns`): group queries by their last two
+   labels, join *all* the labels before that suffix, drop the leading labels that are
+   constant across queries (and offer the variant without the first varying label when
+   it looks like a counter), then, after decoding, **cut the junk before a known
+   signature** (`repair.carve` does exactly that). The write-up did all of this by hand.
+3. **Secrets in decoded configs**: `keyhunt.find_labelled` already reads `key = x` /
+   `password: x`; add `<tag>value</tag>` and `"key": "value"`, and report them in
+   `detect` (rule `creds.found`). That covers the pfSense secret and `pass.txt`.
+4. **LUKS hand-off** in `core/keyhunt.py`: when `--against` is a LUKS container (magic
+   `4c554b53babe`, already in magic.toml), do not run the symmetric solver (it cannot
+   decrypt LUKS); emit the candidate master keys instead, with the `cryptsetup open
+   --master-key-file` command for `key1||key2` and `key2||key1`.
+5. **Zero-IV ranking** (case B) and **bkcrack / *2john tool entries** (G, J).
+6. RADIUS PAP (D) is a real crypto gap but a niche one: ask him first.
+
 ## 6bis. The improvement ideas (all five done)
 
 Order proposed, cheapest and most useful first. Each one ends with tests, a demo command and a
