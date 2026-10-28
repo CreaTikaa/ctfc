@@ -24,8 +24,16 @@ ctfc --help              # list commands (each has an example in its --help)
 ctfc detect <input>      # fingerprint + ranked guesses
 ctfc auto <input>        # try decoding chains until something readable appears
 ctfc xor <input>         # XOR: single byte, repeating key, known plaintext, two inputs
+ctfc sym <input>         # AES/DES/ChaCha20/... with whatever key material you have
+ctfc lens <script>       # static analysis of a dropper + generated inverse script
+ctfc rsa / ctfc hash     # RSA keys and weak-key attacks; hash format + hashcat mode
+ctfc recipe run r.json <input>   # your own chain of steps, each output shown
+ctfc tools <input>       # which external tool fits (xortool, hashcat, CyberChef...)
 ctfc serve               # web UI on http://127.0.0.1:8137
 ```
+
+Once, with internet: `make vendor` downloads the official CyberChef (v11.5.0,
+hash-checked) so that "Open in CyberChef" works offline.
 
 `<input>` is a file path, `-` for stdin, or `hex:...`, `b64:...`, `text:...`.
 

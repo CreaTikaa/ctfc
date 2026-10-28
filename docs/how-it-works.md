@@ -585,3 +585,134 @@ One exception to "no cracking": for the unsalted formats (md5, sha1, sha256, NTL
 and friends) ctfc hashes the 10000 embedded passwords and compares. That is the
 thirty-second check you would do by hand anyway, it is instant, and it is skipped
 for anything salted or iterated - which is precisely why salting exists.
+
+## 10. Recipes, CyberChef and external tools
+
+### Recipes (`ctfc/core/pipeline.py`)
+
+`auto` *searches*. A recipe does the opposite: you already know the steps
+("base64, then zlib, then XOR with 4b337921") and you want exactly those, with
+the output of **every** step in front of you so you can see where it goes wrong.
+
+A recipe is a small JSON file you can write by hand:
+
+```json
+{
+  "name": "stage1",
+  "steps": [
+    {"op": "base64"},
+    {"op": "zlib"},
+    {"op": "xor", "args": {"key": "4b337921"}},
+    {"op": "cipher", "args": {"cipher": "aes", "mode": "cbc",
+                              "key": "<hex>", "iv": "<hex>", "unpad": "pkcs7"}}
+  ]
+}
+```
+
+- The operation names are the decoders of `encodings.py` (`base64`, `hex`,
+  `zlib`, `gzip`, `rot13`, `reverse`...) plus `xor`, `cipher` and `base64_custom`.
+  They are the same names `auto` uses, which is why an `auto` result can be saved
+  as a recipe (`ctfc recipe save`, or **Open in Pipeline** in the web UI) and then
+  edited.
+- A `cipher` step understands the same fields as the Python ctfc generates:
+  `iv_from: "prefix"` (the IV is the first `iv_size` bytes of the data),
+  `tag` (the data *ends* with this 16-byte GCM tag), `header_skip` (drop N bytes,
+  e.g. openssl's 16-byte `Salted__` header). `mode` defaults to `cbc`.
+- `"unpad": "pkcs7"` is **strict**: a bad padding stops the recipe with an error,
+  exactly like `unpad()` in the exported script. A wrong key then fails loudly
+  instead of handing you garbage that looks like a result.
+- When a step fails, the run stops there, and the output of the step *before* it
+  is kept: that is the data the failing step did not like, the thing to look at.
+
+Every run exports the steps that worked as a Python script and, when every step
+has an equivalent, as a CyberChef recipe.
+
+```
+ctfc recipe save stage1.json tests/fixtures/layers_b64_zlib_xor.txt   # from auto
+ctfc recipe show stage1.json
+ctfc recipe run  stage1.json tests/fixtures/layers_b64_zlib_xor.txt --show-code --cyberchef
+```
+
+### CyberChef links (`ctfc/core/cyberchef.py`)
+
+A CyberChef deep link is `<base>#recipe=<recipe>&input=<base64 of the data>`.
+The format is not documented, so it was read from the CyberChef source and then
+**checked by opening ctfc's links in the real CyberChef v11.5.0** (the version
+`scripts/fetch_vendor.sh` installs): base64 -> zlib -> XOR, and AES-256-CBC,
+both give the flag. Two details mattered:
+
+- the escaping is CyberChef's own `encodeURIFragment`: `&`, `+` and `=` stay
+  percent-encoded (they would break base64 input), `@ / ? : , ;` do not;
+- argument lists differ per operation and must be exact. `AES Decrypt` takes
+  **9** arguments (Key, IV, IV length, Mode, Input, Output, GCM tag, AAD, IV from
+  input). An older ctfc emitted 6, so the mode landed in the "IV length" field:
+  the recipe still ran, and gave a wrong answer. Those strings are now pinned by
+  `tests/test_cyberchef.py`, and a test checks that the version in
+  `fetch_vendor.sh` is the one the strings were verified against.
+
+When a recipe *cannot* be expressed (an IV read from the start of the data, a
+header to strip), ctfc gives no CyberChef recipe at all rather than a wrong one.
+
+**Which CyberChef opens.** In this order:
+
+1. the **embedded copy** (`make vendor` once, on a machine with internet): the
+   web UI serves it at `/vendor/cyberchef/`, the terminal opens it from
+   `file://`. Nothing leaves the machine; this is the normal case.
+2. a `cyberchef_url` you set in `~/.ctfc/config.toml` (e.g. your own server),
+3. the **public instance** at gchq.github.io - only when offline mode is off,
+   with a warning, and in the web UI after a confirmation. The data travels in
+   the URL fragment: the server does not receive it, but your browser history
+   and anything that logs URLs does. Fine for a CTF sample, never for real
+   evidence.
+
+Only the first 4096 bytes go in a link: a URL cannot carry a whole dump.
+
+### External tools (`ctfc/core/tools.py`, `ctfc/data/tools.toml`)
+
+ctfc reimplements the *ideas* it needs (XOR solving, signatures, hash
+identification) so that it works alone, and points at the real tool when one is
+better: xortool, Detect It Easy, hashcat, john, binwalk, openssl, RsaCtfTool,
+exiftool, zsteg, steghide/stegseek, tshark, foremost, CyberChef, dcode, factordb.
+
+How a suggestion is chosen:
+
+1. `gather()` runs the cheap analyses ctfc already has and turns them into
+   **signals**: every `detect` guess (`xor.repeating 0.70`, `magic.png 0.95`...),
+   plus "this is a hash" from the hash identifier. That last one adds the
+   candidates up: a 32-hex string is MD5 *or* NTLM (0.50 + 0.45), so the format is
+   a coin toss, but "use hashcat" is not.
+2. A tool fires when one of its `suggest_when` patterns matches a signal above
+   `suggest_threshold` (0.7). At most `max_suggestions` (3) are shown, most
+   confident first. Below the threshold, **nothing** is shown: a list of "you
+   could also try" is noise during a timed CTF.
+3. Placeholders are filled from what ctfc worked out (`{keylen}`, `{hashcat_mode}`,
+   `{john_format}`) or reported as still missing (`{wordlist}`, `{password}`).
+4. Online tools disappear in offline mode. The embedded CyberChef replaces the
+   public one when installed (`prefer_over`), and is hidden when it is not - a
+   link to a copy that was never fetched would be dead.
+
+A test checks every `suggest_when` pattern against the rule ids ctfc can really
+produce, because a typo (`magic.tiff` instead of `magic.tif`) makes a tool
+silently never appear - two such typos were found that way.
+
+**Running a tool** (`ctfc tools <input> --run <id>`, or **Run** in the web UI) is
+deliberately boring and safe:
+
+- only programs declared in `tools.toml`, launched with an **argument list**,
+  never a shell (hard rule 4). A file called `a; rm -rf ~` stays one argument;
+- a value that would form a whole argument and starts with `-` is refused,
+  because the tool would read it as an option (`--outfile=~/.bashrc` typed as a
+  wordlist name);
+- stdin is closed: a tool that asks a question (openssl with no `-pass` prompts
+  for a password) fails at once instead of waiting forever for a keyboard;
+- pasted data is written to a private temporary file for the tool, deleted
+  afterwards; the output is capped and there is a 120 s timeout.
+
+```
+ctfc tools tests/fixtures/xor_repeating.bin            # xortool -l 6 ..., CyberChef link
+ctfc tools text:482c811da5d5b4bc6d497ffa98491e38       # hashcat -m 0 ...
+ctfc tools tests/fixtures/openssl_salted_md5.bin --run openssl --password password123
+ctfc tools x --list                                    # the whole registry, what is installed
+```
+
+Adding a tool is one `[[tool]]` entry in `ctfc/data/tools.toml`; no code.

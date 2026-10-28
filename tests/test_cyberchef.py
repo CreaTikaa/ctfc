@@ -117,3 +117,16 @@ def test_chain_with_an_inexpressible_step_is_none():
         ),
     ]
     assert chain_cyberchef(steps) is None
+
+
+def test_vendored_version_is_the_verified_one():
+    """Upgrading CyberChef in fetch_vendor.sh means re-checking the argument lists."""
+    import re
+    from pathlib import Path
+
+    from ctfc.core.cyberchef import VERIFIED_AGAINST
+
+    script = (Path(__file__).parent.parent / "scripts" / "fetch_vendor.sh").read_text()
+    version = re.search(r'^VERSION="(v[\d.]+)"', script, re.MULTILINE).group(1)
+    assert VERIFIED_AGAINST == f"CyberChef {version}"
+    assert re.search(r'^ZIP_SHA256="[0-9a-f]{64}"', script, re.MULTILINE), "pin the zip hash"

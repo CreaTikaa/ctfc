@@ -1,6 +1,7 @@
 # Handoff notes (for the next agent)
 
-Last update: 2026-10-28, mid-M6 (see section 5: M6 is HALF DONE). Read `CLAUDE.md` first, then this file.
+Last update: 2026-10-28, **M6 done**; next is M7 (ask for plan approval first, see section 1).
+Read `CLAUDE.md` first, then this file.
 
 ## 1. Working agreement with the user
 
@@ -27,9 +28,9 @@ Last update: 2026-10-28, mid-M6 (see section 5: M6 is HALF DONE). Read `CLAUDE.m
 | M5 RSA + hashes | this one | rsa.py, rsa_attacks.py, hashes.py, data/hashcat_modes.toml, `ctfc rsa`, `ctfc hash`, web RSA + Hash tabs |
 | ideas 1 + 8 | `fb74064` | "Apply" buttons in Detect (`Guess.apply`), XOR key from a hash of a common word |
 | ideas 2 + 3 + 4 | this one | custom base64 alphabet in auto, `ctfc scan <folder>`, `ctfc pcap` (core/pcap.py) |
-| M6 pipeline + CyberChef + tools | this one | **HALF DONE**: core + CLI work, web tab / vendor script / tests missing (section 5) |
+| M6 pipeline + CyberChef + tools | `69ae63c`..this one | recipes, verified CyberChef deep links, embedded CyberChef (`make vendor`), tool bridge, web Pipeline tab + Suggested tools strip (section 5) |
 
-324 tests pass (`.venv/bin/python -m pytest -q`, ~9 s), `ruff check .` and `ruff format --check .`
+480 tests pass, 1 skipped (`.venv/bin/python -m pytest -q`, ~25 s), `ruff check .` and `ruff format --check .`
 clean.
 
 **Plan approval: the user waived it twice on 2026-10-27.** For M4: "tu peux directement commencer
@@ -184,9 +185,8 @@ Conventions **verified against real implementations** in M3 (tests enforce them)
 - TEA/XTEA match the published all-zero test vectors (`41ea3a0a94baa940`, `dee9d4d8f7131ed9`).
 
 Known limitations / open points:
-- CyberChef operation strings in `encodings.py` / `codegen.py` are **still not verified** against
-  a real CyberChef build (CLAUDE.md requires it in M6, with the deep-link format). The cipher
-  recipes are skipped (`None`) whenever an IV is read out of the data or a header is stripped,
+- CyberChef operation strings were verified against CyberChef v11.5.0 in M6 (section 5). The
+  cipher recipes are skipped (`None`) whenever an IV is read out of the data or a header is stripped,
   because a recipe cannot express that and would silently give a wrong result.
 - The solver tries one cipher layer. A ciphertext that is base64 **and** encrypted needs the Auto
   tab first, or `--blob`/`--key` plus a manual decode; chaining auto -> sym is M6 (pipeline).
@@ -198,8 +198,7 @@ Known limitations / open points:
 - `docs/cheatsheet.md` does not exist yet (CLAUDE.md puts it in M8 with the web tab).
 - RSA: no Hastad (same message under several keys with the same small e), no Franklin-Reiter, no
   partial-key (Coppersmith) attacks - they need lattice work that would mean a new dependency.
-  factordb is **not** wired yet: CLAUDE.md wants it as an opt-in online button, which belongs with
-  the M6 tool bridge (the `offline` config flag and `--offline` already exist).
+  factordb is a link in the M6 tool bridge (`ctfc tools <key.pem>`), hidden when offline.
 - `gmpy2` is not installed here, so the pure-Python path is the one that gets exercised.
 - Code Lens: a key computed at runtime cannot be recovered statically (the KDF call is reported);
   control flow is not simulated, so a character-by-character loop with arithmetic is not folded
@@ -207,57 +206,54 @@ Known limitations / open points:
 - `tests/fixtures/*` is excluded from ruff in `pyproject.toml`: the Code Lens samples are data,
   deliberately written in obfuscated dropper style, and must stay byte-for-byte as they are.
 
-## 5. M6 is half done: finish it
+## 5. M6 (done): recipes, CyberChef, external tools
 
-**Done and working** (committed, 394 tests still green, lint clean):
+Commits `69ae63c` (core + CLI), `5bfad6d` (tests + fixes), `e377b5e` (web), and the
+last one (vendor script + docs). Plain-language write-up: `docs/how-it-works.md`
+section 10.
 
-- `core/cyberchef.py`: the deep-link builder. The format was read from the real
-  CyberChef source (v11.5.0) and `encode_uri_fragment` was compared character by
-  character against the actual JavaScript run in node - it matches for all of ASCII
-  and for unicode. `#recipe=<pretty recipe>&input=<base64 of the data>`, both through
-  `encodeURIFragment` (note: `&`, `+`, `=` stay percent-encoded, `@` does not).
-- **A real bug this found**: `AES_Decrypt` has **9** arguments today (Key, IV, IV
-  Length, Mode, Input, Output, GCM Tag, AAD, IV from input). ctfc was emitting 6, so
-  the mode landed in the "IV Length" number field - a recipe that runs and lies.
-  Fixed in `codegen.cipher_cyberchef`. DES/3DES/Blowfish (5 args), RC4 (3),
-  From_Base64, From_Hex, Zlib_Inflate were all checked and were already right.
-- `core/pipeline.py`: recipes as JSON (`{"name":..., "steps":[{"op":..,"args":{..}}]}`),
-  `load`/`dump`/`run`, one `StepResult` per step with its own output and score, a
-  failing step stops the run and keeps the output of the last step that worked.
-- `data/tools.toml` (18 tools) + `core/tools.py`: `suggest()` fires only above
-  `suggest_threshold`, caps at `max_suggestions`, hides `offline_safe = false` tools
-  when offline, fills `{input}`/`{keylen}`/`{hashcat_mode}`/... and reports what is
-  still missing. `run_tool()` uses an argument list, never a shell (hard rule 4).
-- CLI: `ctfc recipe run|save|show` (`--cyberchef`) and `ctfc tools <input>`
-  (`--list`, `--run <id>`, `--wordlist`), plus `render.print_recipe`,
-  `print_tools`, `print_tool_list`, `print_tool_run` and their strings.
+- `core/pipeline.py`: JSON recipes. `complete_cipher()` fills the optional cipher
+  fields (`mode` = cbc, `iv_size` by cipher) so **the run and the exported Python
+  read the same fields the same way** (`iv_from`, `tag` = last 16 bytes of the
+  data, `header_skip`). `unpad: pkcs7` is strict like `unpad()`. Tests run the
+  exported script and compare.
+- `core/cyberchef.py`: deep links. **Verified in the real CyberChef v11.5.0**
+  (headless Chromium on the vendored copy, via `ctfc serve` and via `file://`):
+  base64 -> zlib -> XOR and AES-256-CBC both give the flag.
+  `test_vendored_version_is_the_verified_one` ties `VERIFIED_AGAINST` to
+  `VERSION` in `scripts/fetch_vendor.sh`: bump both together, and re-check.
+- `scripts/fetch_vendor.sh` / `make vendor`: pinned version + URL + SHA-256 of
+  the release zip, checked before unzip; keeps LICENSE, writes ATTRIBUTION.txt and
+  VERSION; installs into `ctfc/web/static/vendor/cyberchef/` (gitignored, 80 MB).
+  **Already run on this machine.** The zip has no `index.html` (only `.gz`/`.br`),
+  so the script copies `CyberChef_v11.5.0.html` to it.
+- `core/tools.py`: `Signal(rule, confidence, why)`; `gather(data, path)` builds the
+  signals (detect guesses + a "this is a hash" signal = sum of the hash
+  candidates' confidences, capped 0.95) and placeholder values; `suggest()`;
+  `cyberchef_target()` = embedded copy > configured URL > public (not offline);
+  `run_tool()` = argument list, `stdin=DEVNULL` (openssl used to hang 120 s
+  waiting for a password), refuses a whole-argument value starting with `-`.
+  `prefer_over` in tools.toml: the embedded CyberChef hides the public one; an
+  embedded tool that is not installed is never suggested.
+- `test_every_suggest_when_pattern_can_fire` checks every `suggest_when` against
+  the rule ids ctfc can produce (`FUTURE_RULES` allows `classical.*` until M7:
+  **M7 must emit `classical.*` rule ids**, or remove that allowance).
+- Web: Pipeline tab (JSON editor, add-step buttons, load/save, one card per step),
+  "Open in Pipeline" on Auto cards (idea 6), "Open in CyberChef" on every card
+  with a recipe (confirm dialog for the public instance), Suggested tools strip
+  after auto/detect/xor/sym/hash, Run button for local tools. Routes:
+  `/api/recipe`, `/api/cyberchef`, `/api/tools`, `/api/tools/run`.
+- The UI check script (headless Chromium over CDP) is in the session scratchpad
+  only; it is ~60 lines of node, rewrite it when needed (section 3).
 
-**Still to do, in this order:**
+Not done in M6, on purpose: idea 7 (stego tools) is covered by the registry
+entries (zsteg, steghide, stegseek, exiftool) but there is no stego *analysis* in
+ctfc. Undo/history of "Use as next input" was replaced by "Open in Pipeline",
+which gives the same thing (the whole chain, editable, replayable).
 
-1. **Tests** (nothing is tested yet - do this first):
-   `tests/test_cyberchef.py` (pin the verified vectors: the AES 9-arg string, the
-   `@`/`+`/`=` encoding, a full deep link), `tests/test_pipeline.py` (run the layered
-   fixture, a failing step keeps earlier output, bad JSON messages, save/load round
-   trip), `tests/test_tools.py` (threshold and cap, offline hides the online ones,
-   placeholders reported, `run_tool` on a tool that exists here e.g. `openssl`, and a
-   test that no `command_template` is ever a shell string).
-2. **Web Pipeline tab**: drop `data-milestone="M6"` from the Pipeline tab in
-   `index.html`, add `/api/recipe` (sync) in `web/app.py`, a step-by-step view in
-   `app.js` (one card per step with its intermediate output), and the **"Suggested
-   tools" strip** (CLAUDE.md section 6) fed by `/api/tools`, shown only when rules fire.
-   `OPTION_PANELS` and `TOOLS` in app.js need the new tab.
-3. **`scripts/fetch_vendor.sh`**: download the official CyberChef release zip into
-   `ctfc/web/static/vendor/cyberchef/`, keep the licence + an attribution file, and
-   serve it (config `cyberchef_url` already defaults to
-   `/vendor/cyberchef/index.html`). Must be a build-time script, never run at import.
-   Add `vendor/` to `.gitignore` - do not commit 50 MB.
-4. **Docs**: a `how-it-works.md` section on recipes and the tool bridge, and say that
-   the CyberChef format was verified against v11.5.0 (record the version).
-5. Then M7 (`ctfc keys`, key hunting + classical ciphers) and M8 (sessions, report
-   export, offline bundle) from CLAUDE.md section 10.
-
-Note: `ctfc recipe save` reads `candidates[0].params["chain"]` - that is the key
-`auto` actually uses (not `"steps"`); it is wired but untested.
+**Next: M7** (`ctfc keys` key hunting + classical ciphers, CLAUDE.md 4.6 and
+section 10). Post a French plan and wait for the OK: the waiver covered M4, M5,
+the improvements and M6 only.
 
 ## 6bis. The improvement ideas (all five done)
 
@@ -330,5 +326,10 @@ ctfc hash 482c811da5d5b4bc6d497ffa98491e38
 ctfc pcap tests/fixtures/capture.pcap
 ctfc pcap tests/fixtures/capture.pcap --extract /tmp/objs && ctfc scan /tmp/objs
 ctfc scan tests/fixtures --min-interest 0.9
-ctfc serve   # http://127.0.0.1:8137  (Detect now has "Apply in ..." buttons)
+ctfc recipe save /tmp/r.json tests/fixtures/layers_b64_zlib_xor.txt
+ctfc recipe run /tmp/r.json tests/fixtures/layers_b64_zlib_xor.txt --cyberchef
+ctfc tools text:482c811da5d5b4bc6d497ffa98491e38
+ctfc tools tests/fixtures/openssl_salted_md5.bin --run openssl --password password123
+make vendor  # once: embedded CyberChef (already done on this machine)
+ctfc serve   # http://127.0.0.1:8137  (Pipeline tab, Open in CyberChef, Suggested tools)
 ```

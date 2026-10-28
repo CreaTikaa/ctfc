@@ -3,7 +3,7 @@
 
 PY := .venv/bin/python
 
-.PHONY: help venv test lint fmt serve fixtures
+.PHONY: help venv test lint fmt serve fixtures vendor
 
 help:
 	@echo "make venv      create .venv and install ctfc + dev tools"
@@ -12,6 +12,7 @@ help:
 	@echo "make fmt       auto-format the code with ruff"
 	@echo "make fixtures  regenerate tests/fixtures/"
 	@echo "make serve     start the web UI on http://127.0.0.1:8137"
+	@echo "make vendor    download the embedded CyberChef (needs internet, once)"
 
 venv:
 	python3 -m venv .venv
@@ -34,3 +35,6 @@ fixtures:
 
 serve:
 	$(PY) -m ctfc serve
+
+vendor:
+	scripts/fetch_vendor.sh

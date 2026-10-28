@@ -462,17 +462,21 @@ def cmd_recipe(args: argparse.Namespace, config: Config, console: Console) -> in
         raise RecipeError("recipe run needs an input: ctfc recipe run r.json <input>")
     inp = parse_input(args.input, decode_bare=False)
     result = pipeline.run_file(inp.data, args.recipe, flagset_from(config))
+    url = ""
     if args.cyberchef and result.cyberchef:
         base, note = toolbox.cyberchef_target(config.cyberchef_url, config.offline, for_web=False)
         if note:
             result.notes.append("CyberChef: " + note)
         if base:
-            data = inp.data[: toolbox.CYBERCHEF_DATA_LIMIT]
-            result.notes.append("CyberChef: " + deep_link(result.cyberchef, data, base))
+            url = deep_link(result.cyberchef, inp.data[: toolbox.CYBERCHEF_DATA_LIMIT], base)
     if args.json:
-        print(json.dumps(result.to_dict(), indent=2))
+        print(json.dumps({**result.to_dict(), "cyberchef_url": url}, indent=2))
         return 0 if result.ok else 1
     render.print_recipe(console, result, show_code=args.show_code)
+    if url:
+        # On its own line and never wrapped, so it stays clickable / copyable.
+        console.print("CyberChef link:")
+        console.print(url, soft_wrap=True, markup=False, highlight=False)
     return 0 if result.ok else 1
 
 
