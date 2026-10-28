@@ -27,11 +27,12 @@ import tempfile
 from collections.abc import Callable
 from pathlib import Path
 
-from flask import Flask, jsonify, request, send_from_directory
+from flask import Flask, Response, jsonify, request, send_from_directory
 
 from ctfc import __version__
 from ctfc.config import Config
 from ctfc.core import keyhunt, pipeline
+from ctfc.core import session as sessions
 from ctfc.core import tools as toolbox
 from ctfc.core.auto import auto_decode
 from ctfc.core.budget import Budget
@@ -43,9 +44,10 @@ from ctfc.core.inputs import InputError, decode_base64, decode_hex, parse_input
 from ctfc.core.lens import analyse as analyse_script
 from ctfc.core.lens_against import mirror_against
 from ctfc.core.pipeline import RecipeError
+from ctfc.core.report import build_report
 from ctfc.core.rsa import RsaError, build_key, parse_key, solve_rsa
 from ctfc.core.symmetric import solve_symmetric
-from ctfc.core.types import Input
+from ctfc.core.types import Candidate, Input
 from ctfc.core.xor import guess_key_lengths, solve_xor, xor_inputs
 from ctfc.strings import EN, t
 from ctfc.web.jobs import JobManager
@@ -88,6 +90,52 @@ def _number(value: object) -> int | None:
         raise InputError(f"{text[:40]!r} is not a number (decimal, or 0x for hex)") from exc
 
 
+def candidate_from_dict(raw: dict) -> Candidate:
+    """Back from the JSON a tool returned to a Candidate (to record it in a session)."""
+    return Candidate(
+        label=str(raw.get("label", "")),
+        data=bytes.fromhex(raw.get("data_hex", "")),
+        score=float(raw.get("score", 0)),
+        reasons=list(raw.get("reasons", [])),
+        python=raw.get("python") or "",
+        cyberchef=raw.get("cyberchef"),
+    )
+
+
+# The CLI command a web run corresponds to: the write-up shows commands that can
+# be typed again. Options are added when they were filled in.
+WEB_OPTIONS = {
+    "xor": (("key", "--key"), ("keylen", "--keylen"), ("crib", "--crib")),
+    "sym": (
+        ("cipher", "--cipher"),
+        ("mode", "--mode"),
+        ("key", "--key"),
+        ("iv", "--iv"),
+        ("blob", "--blob"),
+        ("passphrase", "--pass"),
+    ),
+    "keys": (("cipher", "--cipher"), ("mode", "--mode")),
+}
+
+
+def web_command(tool: str, payload: dict) -> str:
+    import shlex
+
+    name = str(payload.get("name") or "")
+    if not name:
+        text = str(payload.get("input") or "")
+        name = "text:" + (text[:40] + "..." if len(text) > 40 else text)
+    words = ["ctfc", tool, name]
+    options = payload.get("options") or {}
+    for option, flag in WEB_OPTIONS.get(tool, ()):
+        value = str(options.get(option) or "").strip()
+        if value:
+            words += [flag, value[:60]]
+    if tool in ("keys", "lens") and options.get("against"):
+        words += ["--against", "<the encrypted file>"]
+    return " ".join(shlex.quote(word) for word in words) + "   # (web UI)"
+
+
 def recipe_from_option(value: object) -> tuple[str, list]:
     """The recipe sent by the browser: JSON text, or an already-parsed object/list."""
     if isinstance(value, str):
@@ -122,6 +170,43 @@ def create_app(config: Config | None = None) -> Flask:
     app.config["CTFC"] = config
 
     jobs = JobManager()
+    sessions_base = (
+        Path(config.sessions_dir).expanduser() if config.sessions_dir else sessions.DEFAULT_DIR
+    )
+
+    def record(payload: dict, tool: str, inp: Input | None, answer: dict) -> None:
+        """Add this run to the session the page chose (payload "session"), if any."""
+        name = str(payload.get("session") or "").strip()
+        if not name:
+            return
+        found = answer.get("candidates") or answer.get("results") or answer.get("against") or []
+        candidates = [candidate_from_dict(raw) for raw in found[:1]]
+        summary = list(answer.get("summary") or [])
+        if tool == "detect":
+            summary = [
+                f"{g['label']} ({g['confidence']:.2f})" for g in answer["report"]["guesses"][:6]
+            ]
+        summary += [str(note) for note in (answer.get("notes") or [])[:3]]
+        if tool == "recipe" and answer.get("steps"):
+            candidates = [
+                Candidate(
+                    label=f"recipe {answer.get('name', '')}",
+                    data=bytes.fromhex(answer.get("output_hex", "")),
+                    score=max((step["score"] for step in answer["steps"]), default=0),
+                    reasons=[step["label"] for step in answer["steps"]],
+                    python=answer.get("python") or "",
+                    cyberchef=answer.get("cyberchef"),
+                )
+            ]
+        sessions.Session.open(name, sessions_base).add_step(
+            tool=tool,
+            command=web_command(tool, payload),
+            data=inp.data if inp is not None else None,
+            input_name=str(payload.get("name") or ""),
+            candidates=candidates,
+            summary=summary,
+            flagset=flagset,
+        )
 
     def read_payload() -> dict:
         payload = request.get_json(silent=True)
@@ -140,8 +225,19 @@ def create_app(config: Config | None = None) -> Flask:
         return parse_input(value, allow_files=False, decode_bare=decode_bare).data
 
     def prepare(kind: str) -> tuple[Callable[[Budget], dict], Budget]:
-        """Read the request now; return the work to run (maybe in a thread) and its budget."""
+        """The work of a long tool, recorded in the page's session when it finishes."""
         payload = read_payload()
+        work, budget = prepare_work(kind, payload)
+
+        def recorded(budget: Budget) -> dict:
+            answer = work(budget)
+            record(payload, kind, None, answer)
+            return answer
+
+        return recorded, budget
+
+    def prepare_work(kind: str, payload: dict) -> tuple[Callable[[Budget], dict], Budget]:
+        """Read the request now; return the work to run (maybe in a thread) and its budget."""
         options = payload.get("options") or {}
         if kind == "auto":
             inp = input_from_payload(payload, decode_bare=False)
@@ -334,7 +430,9 @@ def create_app(config: Config | None = None) -> Flask:
     def api_detect():
         inp = read_input(decode_bare=False)
         report = detect(inp.data, flagset)
-        return jsonify({"input": input_summary(inp), "report": report.to_dict()})
+        answer = {"input": input_summary(inp), "report": report.to_dict()}
+        record(request.get_json(silent=True) or {}, "detect", inp, answer)
+        return jsonify(answer)
 
     @app.post("/api/auto")
     def api_auto():
@@ -388,6 +486,14 @@ def create_app(config: Config | None = None) -> Flask:
             mirrored = mirror_against(inp.data, report, encrypted, flagset, budget, config.top_n)
         answer = {"input": input_summary(inp), **report.to_dict()}
         answer["against"] = [candidate.to_dict() for candidate in mirrored]
+        if not mirrored and report.peeled and report.recovery:
+            best = report.peeled[0]
+            answer["candidates"] = [
+                Candidate(
+                    best.label, best.data, best.score, best.reasons, python=report.recovery.python
+                ).to_dict()
+            ]
+        record(payload, "lens", inp, answer)
         return jsonify(answer)
 
     def cyberchef_link(recipe: str | None, data: bytes) -> dict | None:
@@ -415,6 +521,7 @@ def create_app(config: Config | None = None) -> Flask:
         answer = {"input": input_summary(inp), **result.to_dict()}
         answer["recipe_json"] = pipeline.dump(name, steps)
         answer["cyberchef_link"] = cyberchef_link(result.cyberchef, inp.data)
+        record(payload, "recipe", inp, answer)
         return jsonify(answer)
 
     @app.post("/api/cyberchef")
@@ -469,6 +576,57 @@ def create_app(config: Config | None = None) -> Flask:
             result = toolbox.run_tool(tool, values)
         return jsonify(result.to_dict())
 
+    @app.get("/api/sessions")
+    def list_sessions():
+        current = sessions.current_session(sessions_base)
+        return jsonify(
+            {
+                "current": current,
+                "sessions": [
+                    {"name": item.name, "title": item.meta().display_title()}
+                    for item in sessions.list_sessions(sessions_base)
+                ],
+            }
+        )
+
+    @app.post("/api/sessions")
+    def new_session():
+        payload = read_payload()
+        session = sessions.Session.open(str(payload.get("name") or ""), sessions_base)
+        meta = session.update_meta(
+            **{
+                key: str(payload[key])
+                for key in ("title", "ctf", "category", "description")
+                if payload.get(key)
+            }
+        )
+        return jsonify({"name": session.name, "title": meta.display_title()})
+
+    @app.post("/api/sessions/<name>/note")
+    def session_note(name: str):
+        text = str(read_payload().get("text") or "").strip()
+        if not text:
+            raise InputError("the note is empty")
+        sessions.Session.open(name, sessions_base, create=False).add_note(text)
+        return jsonify({"ok": True})
+
+    @app.post("/api/sessions/<name>/flag")
+    def session_flag(name: str):
+        flag = str(read_payload().get("flag") or "").strip()
+        sessions.Session.open(name, sessions_base, create=False).update_meta(flag=flag)
+        return jsonify({"ok": True})
+
+    @app.get("/api/sessions/<name>/report")
+    def session_report(name: str):
+        session = sessions.Session.open(name, sessions_base, create=False)
+        lang = request.args.get("lang", "en")
+        text = build_report(session, lang=lang if lang in ("en", "fr") else "en")
+        return Response(
+            text,
+            mimetype="text/markdown",
+            headers={"Content-Disposition": f'attachment; filename="{session.name}.md"'},
+        )
+
     @app.post("/api/jobs/<kind>")
     def start_job(kind: str):
         work, budget = prepare(kind)
@@ -487,6 +645,10 @@ def create_app(config: Config | None = None) -> Flask:
 
     @app.errorhandler(RsaError)
     def bad_key(error: RsaError):
+        return jsonify({"error": str(error)}), 400
+
+    @app.errorhandler(sessions.SessionError)
+    def bad_session(error: sessions.SessionError):
         return jsonify({"error": str(error)}), 400
 
     @app.errorhandler(RecipeError)

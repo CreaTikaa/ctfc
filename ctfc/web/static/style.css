@@ -238,3 +238,12 @@ table.facts td.th {
   font: 12px var(--mono);
 }
 .tool .run-output { max-height: 14rem; overflow: auto; background: var(--bg); padding: 0.4rem; }
+
+/* Session bar in the header: which session the runs are recorded in. */
+#session-bar { display: flex; gap: 0.4rem; align-items: center; margin-left: auto; font-size: 0.85rem; }
+#session-bar label { color: var(--dim); display: flex; gap: 0.3rem; align-items: center; }
+#session-bar select, #session-bar input {
+  background: var(--panel); color: var(--text); border: 1px solid var(--border);
+  border-radius: 3px; padding: 0.1rem 0.3rem; font: 12px var(--mono);
+}
+#session-bar input { width: 16rem; }

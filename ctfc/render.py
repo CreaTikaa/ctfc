@@ -589,3 +589,32 @@ def print_key_hunt(console: Console, report, show_code: bool = False, limit: int
         print_candidates(console, report.results, show_code=show_code, title="decryptions")
     if report.budget_summary:
         console.print(f"[dim]{report.budget_summary}[/]")
+
+
+def print_session(console: Console, session) -> None:
+    """`ctfc session show`: what the session holds, in order."""
+    meta = session.meta()
+    head = [f"[bold]{safe(meta.display_title())}[/]  ({safe(session.name)})"]
+    for label, value in (("CTF", meta.ctf), ("category", meta.category), ("flag", meta.flag)):
+        if value:
+            head.append(f"{label}: {safe(value)}")
+    if meta.description:
+        head.append(safe(meta.description, 300))
+    head.append(f"[dim]{escape(str(session.folder))}[/]")
+    console.print(Panel("\n".join(head), expand=True))
+    table = Table(expand=True)
+    table.add_column("#", justify="right", width=3)
+    table.add_column("what", ratio=3)
+    table.add_column("result", ratio=4)
+    for number, entry in enumerate(session.entries(), start=1):
+        if entry.kind == "note":
+            table.add_row(str(number), "[cyan]note[/]", safe(entry.text, 200))
+            continue
+        result = entry.result
+        found = (
+            f"{result.get('score', 0):.2f} {result.get('label', '')}" if result.get("label") else ""
+        )
+        found = found or "; ".join(result.get("summary", [])[:2])
+        table.add_row(str(number), safe(entry.command, 120), safe(found, 160))
+    console.print(table)
+    console.print("[dim]ctfc report " + escape(session.name) + " --lang fr  -> the write-up[/]")

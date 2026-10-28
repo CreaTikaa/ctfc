@@ -10,6 +10,15 @@
   <!-- Every element with data-t="key" gets its text from /api/strings (ctfc/strings.py). -->
   <header>
     <h1>ctfc <span class="subtitle">CTF Crypto Lab</span></h1>
+    <!-- Session: every run is recorded in it, for the write-up (ctfc report) -->
+    <div id="session-bar">
+      <label><span data-t="web_session">session</span>
+        <select id="session-select"><option value="" data-t="web_session_none">(not recording)</option></select></label>
+      <button id="session-new" class="small" data-t="web_session_new">New</button>
+      <input id="session-note" type="text" data-t-placeholder="web_session_note_ph">
+      <button id="session-note-add" class="small" data-t="web_session_note">Add note</button>
+      <button id="session-report" class="small" data-t="web_session_report">Report (.md)</button>
+    </div>
     <span id="offline-badge" class="badge hidden" data-t="web_offline">offline</span>
     <span id="version" class="dim"></span>
   </header>

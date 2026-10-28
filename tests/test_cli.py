@@ -32,11 +32,23 @@ def test_command_help_has_example():
     assert "example:" in result.stdout.decode()
 
 
-def test_planned_command_says_which_milestone():
-    """Commands that are not built yet must say which milestone brings them."""
-    result = run_ctfc("report", "somesession")
-    assert result.returncode == 1
-    assert "M8" in result.stderr.decode()
+def test_every_command_is_implemented():
+    """All milestones are built: no command may still answer "planned for Mx"."""
+    from ctfc.cli import PLANNED, build_parser
+
+    assert PLANNED == {}
+    parser = build_parser()
+    commands = parser._subparsers._group_actions[0].choices  # noqa: SLF001 - argparse internals
+    for name in commands:
+        result = run_ctfc(name, "--help")
+        assert result.returncode == 0, name
+        assert "example" in result.stdout.decode().lower(), f"{name} --help has no example"
+
+
+def test_report_on_a_missing_session_says_how_to_create_it():
+    result = run_ctfc("report", "no-such-session")
+    assert result.returncode == 2
+    assert "ctfc session new no-such-session" in result.stderr.decode()
 
 
 def test_detect_json(tmp_path):

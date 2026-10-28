@@ -469,3 +469,52 @@ def test_api_lens_against_the_encrypted_file(client, fixture_bytes):
     }
     answer = client.post("/api/lens", json=payload).get_json()
     assert "CYBN{fixture_two_xor_keys}" in answer["against"][0]["data_text"]
+
+
+# --- M8: sessions -----------------------------------------------------------
+
+
+@pytest.fixture
+def session_client(tmp_path):
+    app = create_app(Config(max_upload_mb=1, sessions_dir=str(tmp_path)))
+    app.testing = True
+    return app.test_client(), tmp_path
+
+
+def test_web_session_records_runs_and_exports_the_report(session_client, fixture_bytes):
+    client, folder = session_client
+    assert (
+        client.post("/api/sessions", json={"name": "web-demo", "title": "Web demo"}).status_code
+        == 200
+    )
+    assert (
+        client.post("/api/sessions/web-demo/note", json={"text": "found a blob"}).status_code == 200
+    )
+    payload = {"input": "Q1lCTnt3ZWJfc2Vzc2lvbn0=", "format": "auto", "session": "web-demo"}
+    assert client.post("/api/auto", json=payload).status_code == 200
+    assert client.post("/api/detect", json=payload).status_code == 200
+    listing = client.get("/api/sessions").get_json()
+    assert [item["name"] for item in listing["sessions"]] == ["web-demo"]
+    report = client.get("/api/sessions/web-demo/report?lang=fr")
+    assert report.status_code == 200
+    assert "attachment" in report.headers["Content-Disposition"]
+    text = report.data.decode()
+    assert text.startswith("# Web demo")
+    assert "found a blob" in text
+    assert "ctfc auto text:Q1lCTnt3ZWJfc2Vzc2lvbn0=   # (web UI)" in text
+    assert "ctfc detect text:" in text
+    assert "CYBN{web_session}" in text
+
+
+def test_web_without_session_records_nothing(session_client):
+    client, folder = session_client
+    client.post("/api/auto", json={"input": "Q1lCTnt3ZWJ9", "format": "auto"})
+    assert list(folder.iterdir()) == []
+
+
+def test_web_session_names_are_checked(session_client):
+    client, _folder = session_client
+    response = client.post("/api/sessions", json={"name": "../../etc"})
+    assert response.status_code == 400
+    assert "bad session name" in response.get_json()["error"]
+    assert client.get("/api/sessions/nope/report").status_code == 400

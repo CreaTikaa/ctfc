@@ -14,6 +14,7 @@ const state = {
   tab: "auto",      // active tab
   file: null,       // {name, b64, size} when a file was dropped
   job: null,        // id of the background job currently running
+  session: "",      // the session runs are recorded in ("" = not recording)
 };
 
 // Tabs that are built, and how they run: "sync" waits for the answer,
@@ -243,6 +244,7 @@ async function run() {
     return;
   }
   payload.options = currentOptions();
+  if (state.session) payload.session = state.session;
   const tab = state.tab;
   $("run").disabled = true;
   setStatus(T("web_running"));
@@ -1053,6 +1055,59 @@ function toolRow(tool, payload) {
   return row;
 }
 
+// ---------------------------------------------------------------- sessions
+async function loadSessions(select) {
+  const answer = await (await fetch("/api/sessions")).json();
+  const box = $("session-select");
+  box.replaceChildren(el("option", "", T("web_session_none")));
+  box.firstChild.value = "";
+  for (const item of answer.sessions) {
+    const option = el("option", "", item.name + (item.title ? " - " + item.title : ""));
+    option.value = item.name;
+    box.append(option);
+  }
+  const wanted = select !== undefined ? select : answer.current || "";
+  box.value = wanted;
+  state.session = box.value;
+}
+
+async function newSession() {
+  const name = window.prompt(T("web_session_ask_name"));
+  if (!name) return;
+  const title = window.prompt(T("web_session_ask_title")) || "";
+  try {
+    const answer = await post("/api/sessions", { name: name.trim(), title });
+    await loadSessions(answer.name);
+    setStatus(T("web_session_created", { name: answer.name }));
+  } catch (error) {
+    setStatus(error.message, true);
+  }
+}
+
+async function addNote() {
+  const text = $("session-note").value.trim();
+  if (!state.session || !text) {
+    setStatus(T("web_session_pick_first"), true);
+    return;
+  }
+  try {
+    await post("/api/sessions/" + encodeURIComponent(state.session) + "/note", { text });
+    $("session-note").value = "";
+    setStatus(T("web_session_noted"));
+  } catch (error) {
+    setStatus(error.message, true);
+  }
+}
+
+function downloadReport() {
+  if (!state.session) {
+    setStatus(T("web_session_pick_first"), true);
+    return;
+  }
+  const lang = window.confirm(T("web_session_ask_french")) ? "fr" : "en";
+  window.location.href = "/api/sessions/" + encodeURIComponent(state.session) + "/report?lang=" + lang;
+}
+
 // ---------------------------------------------------------------- file input
 function loadFile(file) {
   const reader = new FileReader();
@@ -1136,6 +1191,15 @@ async function init() {
     $("pipeline-recipe").value = "";
     $("results").replaceChildren();
   });
+
+  loadSessions().catch(() => {});
+  $("session-select").addEventListener("change", (event) => (state.session = event.target.value));
+  $("session-new").addEventListener("click", newSession);
+  $("session-note-add").addEventListener("click", addNote);
+  $("session-note").addEventListener("keydown", (event) => {
+    if (event.key === "Enter") addNote();
+  });
+  $("session-report").addEventListener("click", downloadReport);
 
   $("run").addEventListener("click", run);
   $("cancel").addEventListener("click", cancelJob);

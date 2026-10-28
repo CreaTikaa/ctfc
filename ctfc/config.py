@@ -49,6 +49,7 @@ class Config:
     auto_max_depth: int = 6  # how many decoding layers `ctfc auto` peels at most
     auto_budget: int = 2000  # how many decode attempts `ctfc auto` may make
     top_n: int = 10  # how many candidates are shown
+    sessions_dir: str = ""  # where sessions live (default ~/.ctfc/sessions)
     warnings: list[str] = field(default_factory=list)  # filled by load_config
 
 
@@ -66,6 +67,7 @@ _KEY_TYPES: dict[str, type] = {
     "auto_max_depth": int,
     "auto_budget": int,
     "top_n": int,
+    "sessions_dir": str,
 }
 
 

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import shlex
 import sys
 import tempfile
 from pathlib import Path
@@ -16,6 +17,7 @@ from rich.console import Console
 from ctfc import __version__, render
 from ctfc.config import Config, ConfigError, load_config
 from ctfc.core import classical, keyhunt, pipeline
+from ctfc.core import session as sessions
 from ctfc.core import tools as toolbox
 from ctfc.core.auto import auto_decode
 from ctfc.core.budget import Budget
@@ -29,6 +31,7 @@ from ctfc.core.lens_against import mirror_against
 from ctfc.core.pcap import PcapError
 from ctfc.core.pcap import solve as solve_pcap
 from ctfc.core.pipeline import RecipeError
+from ctfc.core.report import build_report
 from ctfc.core.rsa import RsaError, build_key, keys_match, parse_key, solve_rsa
 from ctfc.core.scan import scan as scan_folder
 from ctfc.core.symmetric import CryptoError, SolveReport, solve_symmetric
@@ -37,9 +40,7 @@ from ctfc.core.xor import guess_key_lengths, solve_xor, xor_inputs
 from ctfc.strings import t
 
 # Commands that exist in the interface but are built in a later milestone.
-PLANNED = {
-    "report": "M8",
-}
+PLANNED: dict[str, str] = {}
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -51,6 +52,7 @@ def build_parser() -> argparse.ArgumentParser:
     common.add_argument("--offline", action="store_true", help=t("opt_offline"))
     common.add_argument("--config", type=Path, default=None, help=t("opt_config"))
     common.add_argument("--top", type=int, default=None, help=t("opt_top"))
+    common.add_argument("--session", help=t("opt_session"))
 
     parser = argparse.ArgumentParser(
         prog="ctfc", description=t("app_description"), epilog=t("app_epilog")
@@ -156,8 +158,24 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--wordlist", help=t("opt_tools_wordlist"))
     p.add_argument("--password", help=t("opt_tools_password"))
 
+    p = add("session")
+    p.add_argument(
+        "action",
+        choices=["new", "use", "list", "show", "note", "flag", "stop"],
+        help=t("arg_session_action"),
+    )
+    p.add_argument("name", nargs="?", help=t("arg_session"))
+    p.add_argument("text", nargs="*", help=t("arg_session_text"))
+    p.add_argument("--title", help=t("opt_session_title"))
+    p.add_argument("--ctf", help=t("opt_session_ctf"))
+    p.add_argument("--category", help=t("opt_session_category"))
+    p.add_argument("--description", help=t("opt_session_description"))
+
     p = add("report")
-    p.add_argument("session", nargs="?", help=t("arg_session"))
+    p.add_argument("name", nargs="?", help=t("arg_session"))
+    p.add_argument("--lang", choices=["en", "fr"], default="en", help=t("opt_report_lang"))
+    p.add_argument("--out", help=t("opt_report_out"))
+    p.add_argument("--all", action="store_true", help=t("opt_report_all"))
 
     p = add("serve")
     p.add_argument("--port", type=int, default=None, help=t("opt_port"))
@@ -174,10 +192,156 @@ def input_to_dict(inp: Input) -> dict:
     return {"source": inp.source, "length": len(inp.data), "notes": inp.notes}
 
 
+def lens_candidates(report) -> list:
+    """Code Lens result as a Candidate (the best peeled blob + the recovery script)."""
+    from ctfc.core.types import Candidate
+
+    if not report.peeled or report.recovery is None:
+        return []
+    best = report.peeled[0]
+    return [
+        Candidate(
+            label=best.label,
+            data=best.data,
+            score=best.score,
+            reasons=best.reasons,
+            python=report.recovery.python,
+        )
+    ]
+
+
+def recipe_candidate(result):
+    """A recipe run as a Candidate (its final output, its script and recipe)."""
+    from ctfc.core.scoring import score
+    from ctfc.core.types import Candidate
+
+    value, reasons = score(result.output)
+    return Candidate(
+        label=f"recipe {result.name}",
+        data=result.output,
+        score=value,
+        reasons=reasons,
+        python=result.python,
+        cyberchef=result.cyberchef,
+    )
+
+
+def sessions_dir(config: Config) -> Path:
+    return Path(config.sessions_dir).expanduser() if config.sessions_dir else sessions.DEFAULT_DIR
+
+
+def remember(
+    args: argparse.Namespace,
+    config: Config,
+    data: bytes | None = None,
+    input_name: str = "",
+    candidates: list | None = None,
+    summary: list[str] | None = None,
+) -> None:
+    """Record this command in the session (--session, or the one `ctfc session use` set).
+
+    Without a session this does nothing: recording is opt-in.
+    """
+    base = sessions_dir(config)
+    name = getattr(args, "session", None) or sessions.current_session(base)
+    if not name:
+        return
+    # The command as typed, minus what only matters on screen.
+    shown, skip = [], False
+    for word in sys.argv[1:]:
+        if skip:
+            skip = False
+            continue
+        if word in ("--session", "--config"):
+            skip = True  # and its value
+            continue
+        if word in ("--json", "--show-code") or word.startswith(("--session=", "--config=")):
+            continue
+        shown.append(word)
+    session = sessions.Session.open(name, base)
+    session.add_step(
+        tool=args.command,
+        command="ctfc " + " ".join(shlex.quote(word) for word in shown),
+        data=data,
+        input_name=input_name,
+        candidates=candidates,
+        summary=summary,
+        flagset=flagset_from(config),
+    )
+    print(t("session_recorded", name=name), file=sys.stderr)
+
+
+def cmd_session(args: argparse.Namespace, config: Config, console: Console) -> int:
+    """Create, choose, list and annotate the sessions that `ctfc report` writes up."""
+    base = sessions_dir(config)
+    if args.action == "list":
+        current = sessions.current_session(base)
+        for item in sessions.list_sessions(base):
+            meta = item.meta()
+            marker = "*" if item.name == current else " "
+            steps = sum(1 for entry in item.entries() if entry.kind == "step")
+            console.print(f"{marker} {item.name:24} {steps:3} steps  {render.safe(meta.title)}")
+        return 0
+    if args.action == "stop":
+        sessions.use_session(None, base)
+        print(t("session_stopped"), file=sys.stderr)
+        return 0
+    name = args.name or sessions.current_session(base)
+    if args.action in ("note", "flag") and args.name:
+        # `ctfc session note "some text"`: the first word is not a session name,
+        # it is the start of the note, for the current session.
+        if not sessions.NAME_RE.fullmatch(args.name) or not (base / args.name).is_dir():
+            args.text = [args.name, *args.text]
+            name = sessions.current_session(base)
+    if not name:
+        raise sessions.SessionError(t("session_needs_name"))
+    if args.action in ("new", "use"):
+        session = sessions.Session.open(name, base)
+        session.update_meta(
+            title=args.title, ctf=args.ctf, category=args.category, description=args.description
+        )
+        if args.action == "use" or not sessions.current_session(base):
+            sessions.use_session(name, base)
+        print(t("session_ready", name=name, folder=session.folder), file=sys.stderr)
+        return 0
+    session = sessions.Session.open(name, base, create=False)
+    if args.action == "note":
+        text = " ".join(args.text).strip()
+        if not text:
+            raise sessions.SessionError("ctfc session note <name> <text of the note>")
+        session.add_note(text)
+        return 0
+    if args.action == "flag":
+        if not args.text:
+            raise sessions.SessionError("ctfc session flag <name> <flag>")
+        session.update_meta(flag=" ".join(args.text).strip())
+        return 0
+    render.print_session(console, session)  # show
+    return 0
+
+
+def cmd_report(args: argparse.Namespace, config: Config, console: Console) -> int:
+    """The Markdown write-up of a session."""
+    base = sessions_dir(config)
+    name = args.name or sessions.current_session(base)
+    if not name:
+        raise sessions.SessionError(t("session_needs_name"))
+    session = sessions.Session.open(name, base, create=False)
+    text = build_report(session, lang=args.lang, include_all=args.all)
+    if args.out:
+        Path(args.out).write_text(text, encoding="utf-8")
+        print(t("report_written", path=args.out), file=sys.stderr)
+    else:
+        sys.stdout.write(text)
+    return 0
+
+
 def cmd_detect(args: argparse.Namespace, config: Config, console: Console) -> int:
     """Fingerprint the input and print ranked guesses."""
     inp = parse_input(args.input, decode_bare=False)
     report = detect(inp.data, flagset_from(config))
+    guesses = [f"{g.label} ({g.confidence:.2f})" for g in report.guesses[:6]]
+    remember(args, config, inp.data, args.input, summary=guesses)
     if args.json:
         print(json.dumps({"input": input_to_dict(inp), "report": report.to_dict()}, indent=2))
         return 0
@@ -197,6 +361,7 @@ def cmd_auto(args: argparse.Namespace, config: Config, console: Console) -> int:
         budget=budget,
         top_n=config.top_n,
     )
+    remember(args, config, inp.data, args.input, candidates)
     if args.json:
         payload = {
             "input": input_to_dict(inp),
@@ -240,6 +405,7 @@ def cmd_xor(args: argparse.Namespace, config: Config, console: Console) -> int:
             try_hashed=True if args.hashed_keys else None,
         )
 
+    remember(args, config, inp.data, args.input, candidates)
     if args.json:
         payload = {
             "input": input_to_dict(inp),
@@ -269,6 +435,10 @@ def cmd_keys(args: argparse.Namespace, config: Config, console: Console) -> int:
         budget=budget,
         top_n=config.top_n,
     )
+    found = (
+        [f"key at offset 0x{report.winner.offset:x}: {report.winner.how}"] if report.winner else []
+    )
+    remember(args, config, None, args.dump, report.results, found + report.notes[:3])
     if args.json:
         print(json.dumps({"input": input_to_dict(dump), **report.to_dict()}, indent=2))
     else:
@@ -293,6 +463,7 @@ def cmd_classical(args: argparse.Namespace, config: Config, console: Console) ->
         top_n=config.top_n,
     )
     notes = classical.stats_notes(classical.analyse(inp.data))
+    remember(args, config, inp.data, args.input, candidates)
     if args.json:
         payload = {
             "input": input_to_dict(inp),
@@ -319,9 +490,15 @@ def _material(spec: str | None) -> bytes | None:
 
 
 def print_sym_report(
-    args: argparse.Namespace, inp: Input, report: SolveReport, console: Console, title: str
+    args: argparse.Namespace,
+    config: Config,
+    inp: Input,
+    report: SolveReport,
+    console: Console,
+    title: str,
 ) -> int:
     """Shared output for `sym` and `blob`."""
+    remember(args, config, inp.data, getattr(args, "input", ""), report.candidates)
     if args.json:
         print(json.dumps({"input": input_to_dict(inp), **report.to_dict()}, indent=2))
         return 0 if report.candidates else 1
@@ -350,7 +527,7 @@ def cmd_sym(args: argparse.Namespace, config: Config, console: Console) -> int:
         budget=budget,
         top_n=config.top_n,
     )
-    return print_sym_report(args, inp, report, console, "symmetric")
+    return print_sym_report(args, config, inp, report, console, "symmetric")
 
 
 def cmd_blob(args: argparse.Namespace, config: Config, console: Console) -> int:
@@ -365,7 +542,7 @@ def cmd_blob(args: argparse.Namespace, config: Config, console: Console) -> int:
         budget=budget,
         top_n=config.top_n,
     )
-    return print_sym_report(args, ciphertext, report, console, "blob splits")
+    return print_sym_report(args, config, ciphertext, report, console, "blob splits")
 
 
 def cmd_lens(args: argparse.Namespace, config: Config, console: Console) -> int:
@@ -378,6 +555,8 @@ def cmd_lens(args: argparse.Namespace, config: Config, console: Console) -> int:
         # With the file the script produced, its literals can simply be tried as keys.
         encrypted = parse_input(args.against, decode_bare=False).data
         mirrored = mirror_against(inp.data, report, encrypted, flagset, top_n=config.top_n)
+    what = [line for line in report.summary if not line.startswith("peeled")]
+    remember(args, config, inp.data, args.script, mirrored or lens_candidates(report), what)
     if args.json:
         payload = {"input": input_to_dict(inp), **report.to_dict()}
         payload["against"] = [candidate.to_dict() for candidate in mirrored]
@@ -448,6 +627,7 @@ def cmd_rsa(args: argparse.Namespace, config: Config, console: Console) -> int:
         budget=budget,
         top_n=config.top_n,
     )
+    remember(args, config, ciphertext, args.decrypt or "", report.candidates, report.notes[:4])
     if args.json:
         print(json.dumps(report.to_dict(), indent=2))
         return 0 if report.candidates else 1
@@ -458,6 +638,15 @@ def cmd_rsa(args: argparse.Namespace, config: Config, console: Console) -> int:
 def cmd_hash(args: argparse.Namespace, config: Config, console: Console) -> int:
     """Identify a hash and print the hashcat / john command for it."""
     report = identify_hash(args.hash, try_passwords=not args.no_passwords)
+    found = []
+    for match in report.matches[:4]:
+        line = match.format.name
+        if match.format.hashcat is not None:
+            line += f" (hashcat -m {match.format.hashcat})"
+        if match.cracked:
+            line += f": cracked, the password is {match.cracked!r}"
+        found.append(line)
+    remember(args, config, None, "", summary=report.notes[:2] + found)
     if args.json:
         print(json.dumps(report.to_dict(), indent=2))
         return 0 if report.matches else 1
@@ -478,6 +667,8 @@ def cmd_pcap(args: argparse.Namespace, config: Config, console: Console) -> int:
             target = folder / finding.extracted.name
             target.write_bytes(finding.extracted.data)
             saved.append(str(target))
+    best = [finding.best for finding in findings if finding.best is not None]
+    remember(args, config, None, args.input, best, [f.extracted.name for f in findings[:8]])
     if args.json:
         payload = {
             **report.to_dict(),
@@ -540,6 +731,7 @@ def cmd_recipe(args: argparse.Namespace, config: Config, console: Console) -> in
         raise RecipeError("recipe run needs an input: ctfc recipe run r.json <input>")
     inp = parse_input(args.input, decode_bare=False)
     result = pipeline.run_file(inp.data, args.recipe, flagset_from(config))
+    remember(args, config, inp.data, args.input, [recipe_candidate(result)], result.notes)
     url = ""
     if args.cyberchef and result.cyberchef:
         base, note = toolbox.cyberchef_target(config.cyberchef_url, config.offline, for_web=False)
@@ -600,6 +792,10 @@ def cmd_tools(args: argparse.Namespace, config: Config, console: Console) -> int
                 result = toolbox.run_tool(tool, values)
         else:
             result = toolbox.run_tool(tool, values)
+        output = (result.stdout or result.stderr or result.error).splitlines()[:10]
+        remember(
+            args, config, inp.data, args.input, summary=["$ " + " ".join(result.command), *output]
+        )
         if args.json:
             print(json.dumps(result.to_dict(), indent=2))
             return 0 if result.returncode == 0 else 1
@@ -659,6 +855,8 @@ def main(argv: list[str] | None = None) -> int:
         "lens": cmd_lens,
         "classical": cmd_classical,
         "keys": cmd_keys,
+        "session": cmd_session,
+        "report": cmd_report,
         "rsa": cmd_rsa,
         "hash": cmd_hash,
         "scan": cmd_scan,
@@ -669,6 +867,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command in commands:
         try:
             return commands[args.command](args, config, console)
+        # SessionError and ClassicalError are ValueErrors too.
         except (InputError, CryptoError, RsaError, PcapError, RecipeError, ValueError) as exc:
             print(f"{t('error_prefix')}: {exc}", file=sys.stderr)
             return 2
