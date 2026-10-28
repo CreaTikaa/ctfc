@@ -53,7 +53,7 @@
         <button class="tab" data-tab="rsa" data-t="web_tab_rsa">RSA</button>
         <button class="tab" data-tab="lens" data-t="web_tab_lens">Code Lens</button>
         <button class="tab" data-tab="hash" data-t="web_tab_hash">Hash</button>
-        <button class="tab" data-tab="keys" data-milestone="M7" data-t="web_tab_keys">Keys</button>
+        <button class="tab" data-tab="keys" data-t="web_tab_keys">Keys</button>
         <button class="tab" data-tab="cheatsheet" data-milestone="M8" data-t="web_tab_cheatsheet">Cheatsheet</button>
       </nav>
       <!-- Options of the Pipeline tab: the recipe, as editable JSON -->
@@ -144,6 +144,38 @@
           <input id="rsa-seconds" type="number" min="1" max="120" value="20"></label>
         <label class="checkbox"><input id="rsa-attack" type="checkbox">
           <span data-t="web_rsa_attack">look for a weakness (small primes, Fermat, Wiener, Pollard)</span></label>
+      </div>
+      <!-- Options of the Keys tab: the dump is the input, the ciphertext goes here -->
+      <div id="options-keys" class="options hidden">
+        <label class="wide"><span data-t="web_keys_against">ciphertext to try the keys on (hex:, b64:, text:) - empty = only list the keys</span>
+          <textarea id="keys-against" spellcheck="false" data-t-placeholder="web_keys_against_ph"></textarea></label>
+        <div class="wide step-buttons">
+          <button id="keys-load" class="small" data-t="web_keys_load">Load ciphertext file</button>
+          <input type="file" id="keys-file" hidden>
+          <span id="keys-file-name" class="dim"></span>
+        </div>
+        <label><span data-t="web_sym_cipher">cipher</span>
+          <select id="keys-cipher">
+            <option value="" data-t="web_sym_auto">auto (try them all)</option>
+            <option value="aes">AES</option>
+            <option value="3des">3DES</option>
+            <option value="des">DES</option>
+            <option value="blowfish">Blowfish</option>
+            <option value="chacha20">ChaCha20</option>
+            <option value="rc4">RC4</option>
+          </select></label>
+        <label><span data-t="web_sym_mode">mode</span>
+          <select id="keys-mode">
+            <option value="" data-t="web_sym_auto">auto (try them all)</option>
+            <option value="cbc">CBC</option>
+            <option value="ecb">ECB</option>
+            <option value="ctr">CTR</option>
+            <option value="gcm">GCM</option>
+            <option value="cfb">CFB</option>
+            <option value="ofb">OFB</option>
+          </select></label>
+        <label><span data-t="web_sym_seconds">time budget (s)</span>
+          <input id="keys-seconds" type="number" min="1" max="300" value="60"></label>
       </div>
       <!-- Options of the Hash tab -->
       <div id="options-hash" class="options hidden">

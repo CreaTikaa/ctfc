@@ -11,6 +11,7 @@ Checks (one small function each, in the order they run):
 - entropy and block-length rules      - repeated blocks (ECB)
 - repeating pattern (XOR key length)  - crypto constants (AES S-box, TEA delta...)
 - custom base64 alphabets             - classical ciphers (letter statistics, see classical.py)
+- AES key schedules (an expanded AES key in a memory dump, see keyhunt.py)
 
 When the input is hex/base64 text, the binary checks also run on the decoded bytes.
 """
@@ -23,7 +24,7 @@ from collections import Counter
 from dataclasses import asdict, dataclass, field
 from functools import lru_cache
 
-from ctfc.core import classical, encodings
+from ctfc.core import classical, encodings, keyhunt
 from ctfc.core.datafiles import load_toml
 from ctfc.core.flags import FlagSet, default_flagset, find_flags
 from ctfc.core.magic import (
@@ -117,6 +118,7 @@ def detect(data: bytes, flagset: FlagSet | None = None) -> DetectReport:
     guesses += _check_constants(data)
     guesses += _check_custom_alphabet(data)
     guesses += _check_classical(data, flagset)
+    guesses += _check_key_schedules(data)
     # Zero-width characters are invisible but not "binary": ignore them here.
     visible = data.decode("utf-8", errors="ignore")
     visible = "".join(c for c in visible if c not in encodings.ZERO_WIDTH).encode()
@@ -355,6 +357,30 @@ def _check_charset(data: bytes) -> tuple[str, list[Guess], tuple[str, bytes] | N
             confidence *= 0.6  # an earlier, more specific charset already matched
         guesses.append(Guess(f"encoding.{name}", label, confidence, reasons, "ctfc auto <input>"))
     return charset, guesses, decoded
+
+
+SCHEDULE_DETECT_LIMIT = 256 * 1024 * 1024  # detect scans this much for AES key schedules
+
+
+def _check_key_schedules(data: bytes) -> list[Guess]:
+    """An AES key followed by its own expansion: the key itself sits in this dump."""
+    if len(data) < 176:
+        return []
+    found = keyhunt.find_aes_schedules(data, limit=SCHEDULE_DETECT_LIMIT)
+    guesses = []
+    for candidate in found[:5]:
+        bits = len(candidate.key) * 8
+        guesses.append(
+            Guess(
+                rule="keys.aes_schedule",
+                label=f"AES-{bits} key in memory at offset 0x{candidate.offset:x}",
+                confidence=0.95,
+                reasons=[candidate.how, f"key = {candidate.key.hex()}"],
+                next_step="ctfc keys <input> --against <ciphertext>",
+                apply={"tab": "keys", "options": {}},
+            )
+        )
+    return guesses
 
 
 CLASSICAL_APPLY = {"tab": "auto", "options": {}}

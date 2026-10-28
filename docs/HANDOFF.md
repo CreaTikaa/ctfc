@@ -1,6 +1,6 @@
 # Handoff notes (for the next agent)
 
-Last update: 2026-10-28, **M6 done**; next is M7 (ask for plan approval first, see section 1).
+Last update: 2026-10-28, **M7 done**; next is M8 (ask for plan approval first, see section 1).
 Read `CLAUDE.md` first, then this file.
 
 ## 1. Working agreement with the user
@@ -28,9 +28,10 @@ Read `CLAUDE.md` first, then this file.
 | M5 RSA + hashes | this one | rsa.py, rsa_attacks.py, hashes.py, data/hashcat_modes.toml, `ctfc rsa`, `ctfc hash`, web RSA + Hash tabs |
 | ideas 1 + 8 | `fb74064` | "Apply" buttons in Detect (`Guess.apply`), XOR key from a hash of a common word |
 | ideas 2 + 3 + 4 | this one | custom base64 alphabet in auto, `ctfc scan <folder>`, `ctfc pcap` (core/pcap.py) |
-| M6 pipeline + CyberChef + tools | `69ae63c`..this one | recipes, verified CyberChef deep links, embedded CyberChef (`make vendor`), tool bridge, web Pipeline tab + Suggested tools strip (section 5) |
+| M6 pipeline + CyberChef + tools | `69ae63c`..`78bf9b7` | recipes, verified CyberChef deep links, embedded CyberChef (`make vendor`), tool bridge, web Pipeline tab + Suggested tools strip (section 5) |
+| M7 classical + key hunting | `180633d`..this one | classical.py, keyhunt.py, `ctfc classical`, `ctfc keys`, web Keys tab (section 5bis) |
 
-480 tests pass, 1 skipped (`.venv/bin/python -m pytest -q`, ~25 s), `ruff check .` and `ruff format --check .`
+574 tests pass, 1 skipped (`.venv/bin/python -m pytest -q`, ~40 s), `ruff check .` and `ruff format --check .`
 clean.
 
 **Plan approval: the user waived it twice on 2026-10-27.** For M4: "tu peux directement commencer
@@ -251,9 +252,51 @@ entries (zsteg, steghide, stegseek, exiftool) but there is no stego *analysis* i
 ctfc. Undo/history of "Use as next input" was replaced by "Open in Pipeline",
 which gives the same thing (the whole chain, editable, replayable).
 
-**Next: M7** (`ctfc keys` key hunting + classical ciphers, CLAUDE.md 4.6 and
-section 10). Post a French plan and wait for the OK: the waiver covered M4, M5,
-the improvements and M6 only.
+(M7 was then planned in French, approved by the user: "Je valide. Tu peux continuer".)
+
+## 5bis. M7 (done): classical ciphers and key hunting
+
+Plain-language write-up: `docs/how-it-works.md` sections 11 and 12.
+
+Classical (`core/classical.py`, `ctfc classical`):
+- Ciphers follow **CyberChef v11.5.0** (read in its source and every fixture's
+  recipe opened in the real CyberChef): only ASCII letters change, case kept,
+  Vigenère key advances on letters only, rail fence uses CyberChef's offset rule.
+  `ROT13(true,true,false,26-shift)`, `Affine_Cipher_Decode(a,b)`,
+  `Atbash_Cipher()`, `Vigenère_Decode('key')`, `Rail_Fence_Cipher_Decode(r,o)`.
+- Vigenère key length (`vigenere_key_lengths`): column IoC -> keep the best 5 and
+  their divisors -> solve each by frequency and measure chi2 -> if the best key
+  repeats itself (`key_period`, 60% agreement) its period wins; a divisor with
+  chi2 within 1.5x wins too. Ranking needs 12 letters per column
+  (`MIN_COLUMN_LETTERS`), the solver looks further (8, `SOLVER_COLUMN_LETTERS`).
+  Measured on random keys: 108/111 solved, all 25 Caesar shifts. Misses = keys
+  longer than ~1/10 of the letters (information limit).
+- Over-fitting guards (each pinned by a test): `refine_vigenere` (letter by
+  letter with the full scorer), `reduce_key`, and dropping any Vigenère key that
+  repeats a shorter period ("tttthzttt" is Caesar 19). Ranking ties within 0.01
+  go to the simpler cipher (`_simplicity`).
+- Flag crib (`find_cribs`): a word of a known prefix's length before "{" gives
+  the shifts. A prefix in clear is never a crib (`CYBN{` is not a shifted `flag{`).
+- Rail fence `trim`: a trailing newline added after encryption is kept out of
+  the zigzag (CyberChef: `Remove_whitespace(false,true,true,false,false,false)`
+  first). Found because the fixture file ends with "\n" - real files do too.
+- `auto` calls the classical solver on text that does not read (own 3 s budget,
+  shares the cancel event); `is_text_like` keeps base64/hex out.
+- detect rules: `classical.flag_shift`, `.monoalphabetic`, `.vigenere`,
+  `.transposition` -> dcode in the tool bridge. Apply button -> Auto tab.
+
+Key hunting (`core/keyhunt.py`, `ctfc keys`, web Keys tab, job kind `keys`):
+- AES key schedule scan: vectorised (`_xor3` = XOR of three shifted copies via
+  big ints, then `bytes.find(b"\x01\x00\x00")`), 16 MB chunks overlapping by one
+  schedule; ~0.5 s for 40 MB. Expansion pinned to the FIPS-197 vectors (128,
+  192, 256). detect reports `keys.aes_schedule` (Apply -> Keys tab).
+- Other finders: labelled values (key/iv/password...), hex/base64 of key
+  lengths (pure hex is never re-read as base64), ASCII strings incl. the end of
+  a C string, random windows (AES only, last). Order = `STRENGTH`.
+- Each candidate gets `PER_KEY_SECONDS` of `solve_symmetric`; the hunt stops at
+  the first score >= 0.9. The result's reasons and Python start with
+  "key found at offset 0x...".
+- `PLANNED` in cli.py now holds `report` (M8).
 
 ## 6bis. The improvement ideas (all five done)
 
@@ -330,6 +373,10 @@ ctfc recipe save /tmp/r.json tests/fixtures/layers_b64_zlib_xor.txt
 ctfc recipe run /tmp/r.json tests/fixtures/layers_b64_zlib_xor.txt --cyberchef
 ctfc tools text:482c811da5d5b4bc6d497ffa98491e38
 ctfc tools tests/fixtures/openssl_salted_md5.bin --run openssl --password password123
+ctfc classical tests/fixtures/classical_vigenere.txt
+ctfc classical text:'PLOA{fvzcyr_fuvsg}'
+ctfc keys tests/fixtures/memdump_aes.bin --against tests/fixtures/memdump_aes_ct.bin
+ctfc keys tests/fixtures/strings_dump.txt
 make vendor  # once: embedded CyberChef (already done on this machine)
 ctfc serve   # http://127.0.0.1:8137  (Pipeline tab, Open in CyberChef, Suggested tools)
 ```

@@ -34,9 +34,9 @@ def test_command_help_has_example():
 
 def test_planned_command_says_which_milestone():
     """Commands that are not built yet must say which milestone brings them."""
-    result = run_ctfc("keys", "somedump.bin")
+    result = run_ctfc("report", "somesession")
     assert result.returncode == 1
-    assert "M7" in result.stderr.decode()
+    assert "M8" in result.stderr.decode()
 
 
 def test_detect_json(tmp_path):
@@ -355,3 +355,50 @@ def test_tools_offline_never_shows_online_tools():
 def test_tools_run_refuses_online_tool_when_offline():
     ran = run_ctfc("tools", "tests/fixtures/rsa_public.pem", "--run", "factordb", "--offline")
     assert ran.returncode == 2
+
+
+def test_classical_command_finds_the_flag():
+    result = run_ctfc("classical", "tests/fixtures/classical_caesar.txt", "--show-code")
+    assert result.returncode == 0, result.stderr.decode()
+    out = result.stdout.decode()
+    assert "CYBN{fixture_caesar_large_shift}" in out
+    assert "map_letters" in out
+
+
+def test_classical_command_with_a_key():
+    import json
+
+    result = run_ctfc(
+        "classical",
+        "tests/fixtures/classical_affine.txt",
+        "--cipher",
+        "affine",
+        "--key",
+        "7,10",
+        "--json",
+    )
+    assert result.returncode == 0, result.stderr.decode()
+    best = json.loads(result.stdout)["candidates"][0]
+    assert "CYBN{fixture_affine_cipher}" in best["data_text"]
+
+
+def test_classical_key_without_cipher_is_a_clear_error():
+    result = run_ctfc("classical", "text:abcdefgh", "--key", "3")
+    assert result.returncode == 2
+    assert "--key needs --cipher" in result.stderr.decode()
+
+
+def test_keys_command_finds_the_key_and_its_offset():
+    import json
+
+    result = run_ctfc(
+        "keys",
+        "tests/fixtures/memdump_aes.bin",
+        "--against",
+        "tests/fixtures/memdump_aes_ct.bin",
+        "--json",
+    )
+    assert result.returncode == 0, result.stderr.decode()
+    report = json.loads(result.stdout)
+    assert report["winner"]["offset_hex"] == "0x5a30"
+    assert "CYBN{fixture_key_schedule}" in report["results"][0]["data_text"]

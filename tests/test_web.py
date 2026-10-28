@@ -407,3 +407,49 @@ def test_api_tools_run_checks_the_wordlist(client):
     response = client.post("/api/tools/run", json=payload)
     assert response.status_code == 400
     assert "wordlist not found" in response.get_json()["error"]
+
+
+# --- M7: key hunting, classical steps ---------------------------------------
+
+
+def test_keys_tab_is_enabled(client):
+    page = client.get("/").data.decode()
+    assert 'data-tab="keys" data-milestone' not in page
+    assert 'id="options-keys"' in page
+
+
+def test_api_keys_finds_the_schedule(client, fixture_bytes):
+    import base64
+
+    payload = b64_payload(fixture_bytes, "memdump_aes.bin")
+    ciphertext = base64.b64encode(fixture_bytes("memdump_aes_ct.bin")).decode()
+    payload["options"] = {"against": "b64:" + ciphertext, "seconds": 30}
+    answer = client.post("/api/keys", json=payload).get_json()
+    assert answer["winner"]["offset_hex"] == "0x5a30"
+    assert "CYBN{fixture_key_schedule}" in answer["results"][0]["data_text"]
+
+
+def test_api_keys_job_lists_without_ciphertext(client, fixture_bytes):
+    import time
+
+    payload = b64_payload(fixture_bytes, "strings_dump.txt")
+    job = client.post("/api/jobs/keys", json=payload).get_json()["job"]
+    for _ in range(100):
+        status = client.get(f"/api/jobs/{job}").get_json()
+        if status["state"] == "done":
+            break
+        time.sleep(0.05)
+    assert status["state"] == "done"
+    assert status["result"]["tested"] == 0
+    assert status["result"]["candidates"][0]["kind"] == "labelled"
+
+
+def test_api_recipe_with_a_classical_step(client):
+    payload = {
+        "input": "PLOA{fvzcyr_fuvsg}",
+        "format": "text",
+        "options": {"recipe": '[{"op": "caesar", "args": {"shift": 13}}]'},
+    }
+    answer = client.post("/api/recipe", json=payload).get_json()
+    assert answer["output_text"] == "CYBN{simple_shift}"
+    assert answer["cyberchef"] == "ROT13(true,true,false,13)"

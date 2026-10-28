@@ -31,7 +31,7 @@ from flask import Flask, jsonify, request, send_from_directory
 
 from ctfc import __version__
 from ctfc.config import Config
-from ctfc.core import pipeline
+from ctfc.core import keyhunt, pipeline
 from ctfc.core import tools as toolbox
 from ctfc.core.auto import auto_decode
 from ctfc.core.budget import Budget
@@ -283,6 +283,29 @@ def create_app(config: Config | None = None) -> Flask:
 
             return work_rsa, budget
 
+        if kind == "keys":
+            # The input panel holds the dump; the ciphertext is an option.
+            dump = input_from_payload(payload, decode_bare=False)
+            ciphertext = option_bytes(options, "against")
+            cipher = str(options.get("cipher") or "").strip() or None
+            mode = str(options.get("mode") or "").strip() or None
+            seconds = min(float(options.get("seconds") or 60), 300)
+            budget = Budget(max_attempts=1_000_000, max_seconds=seconds)
+
+            def work_keys(budget: Budget) -> dict:
+                report = keyhunt.hunt(
+                    dump.data,
+                    ciphertext,
+                    flagset,
+                    cipher=cipher,
+                    mode=mode,
+                    budget=budget,
+                    top_n=config.top_n,
+                )
+                return {"input": input_summary(dump), **report.to_dict()}
+
+            return work_keys, budget
+
         raise InputError(f"unknown tool '{kind}'")
 
     @app.get("/")
@@ -330,6 +353,11 @@ def create_app(config: Config | None = None) -> Flask:
     @app.post("/api/rsa")
     def api_rsa():
         work, budget = prepare("rsa")
+        return jsonify(work(budget))
+
+    @app.post("/api/keys")
+    def api_keys():
+        work, budget = prepare("keys")
         return jsonify(work(budget))
 
     @app.post("/api/hash")

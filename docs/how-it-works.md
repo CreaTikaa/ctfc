@@ -716,3 +716,108 @@ ctfc tools x --list                                    # the whole registry, wha
 ```
 
 Adding a tool is one `[[tool]]` entry in `ctfc/data/tools.toml`; no code.
+
+## 11. Classical ciphers (`ctfc/core/classical.py`)
+
+Caesar, affine, Atbash, Vigenère and the rail fence only move *letters*, so the
+letters themselves say which family you are facing. Two measurements:
+
+- **Letter frequencies** (chi-squared against English and French, as in
+  section 2). Low = the text has natural letters.
+- The **index of coincidence** (IoC): the chance that two letters picked at
+  random in the text are the same. English is about 0.067, French 0.078, and
+  random letters 0.038 (= 1/26).
+
+| letters look... | IoC | family | examples |
+|---|---|---|---|
+| natural, but no words | high | **transposition**: right letters, wrong order | rail fence, columnar |
+| wrong | high | **monoalphabetic**: letters renamed one for one | Caesar/ROT-n, affine, Atbash, keyword alphabet |
+| wrong | low (~0.04) | **polyalphabetic**: several alphabets mixed | Vigenère |
+
+`ctfc detect` reports exactly this (`classical.transposition`,
+`classical.monoalphabetic`, `classical.vigenere` with a key length), and dcode.fr
+is suggested.
+
+**Solving** is brute force plus the scorer of section 2:
+
+- Caesar: the 25 shifts. Affine `y = a*x + b`: 12 values of `a` (those with an
+  inverse modulo 26) times 26 values of `b`. Atbash: one try. Rail fence: 2 to 12
+  rails with every offset.
+- **Vigenère** is the interesting one. Each column "every L-th letter" was
+  shifted by the same key letter, so:
+  1. find L: at the right L each column is a single Caesar, its IoC jumps back
+     up to ~0.067. A *multiple* of L works too (with fewer letters per column),
+     so each candidate length is solved and the result measured; when the best
+     key repeats itself ("keykeykey") its period wins;
+  2. solve each column as a Caesar, by frequency (English and French tried);
+  3. **refine**: with a short text a column holds only ten letters or so, and
+     frequency analysis often gets one key letter wrong. Every key position is
+     retried with the 26 letters, keeping what makes the most *words*.
+- **The flag as a crib.** If a word of the length of a known prefix sits in
+  front of a `{` (`PLOA{` next to the configured `CYBN{`), the letter-by-letter
+  differences are the Caesar shift, or the key letters of a Vigenère at that
+  position. A lone ciphered flag is solved this way, statistics or not.
+
+Limits worth knowing:
+- a Vigenère key needs about ten letters of text per key letter: a 13-letter key
+  on a 120-letter message comes out partly wrong (a few letters off - fix them by
+  hand with `ctfc classical <input> --cipher vigenere --key ...`);
+- a keyword substitution (any shuffled alphabet) is detected but not solved:
+  dcode.fr or quipqiup do that by hill-climbing on n-gram statistics;
+- a newline added *after* encryption would end up inside a transposition: it
+  is left out of the rail fence, and the generated script and CyberChef recipe
+  say so.
+
+All five ciphers follow CyberChef v11.5.0 (read in its source: case is kept,
+only ASCII letters change, the Vigenère key advances on letters only), and every
+recipe was checked by opening it in the real CyberChef.
+
+```
+ctfc classical tests/fixtures/classical_vigenere.txt          # forensique, in French
+ctfc classical text:'PLOA{fvzcyr_fuvsg}'                       # a lone flag: the crib
+ctfc classical msg.txt --cipher affine --key 7,10 --show-code  # a known key
+```
+
+## 12. Key hunting (`ctfc/core/keyhunt.py`)
+
+The forensics classic: a memory dump (or a binary, or a `strings` output)
+contains the key, and some file was encrypted with it. `ctfc keys <dump>
+--against <ciphertext>` looks for candidate keys in five independent ways,
+strongest first, then hands each one to the symmetric solver of section 6 with a
+small slice of the time budget. The first convincing decryption wins, and the
+report says **at which offset** the key was found.
+
+1. **AES key schedules** - the strong one. Before encrypting anything, AES
+   expands its 16/24/32-byte key into 176/208/240 bytes of round keys, and
+   programs keep that expansion in memory. Every byte of it is computed from
+   the key, so "a key followed by its own expansion" practically never happens
+   by chance (this is the idea of `aeskeyfind`). The scan is fast: the first
+   derived word only needs four S-box lookups, and for a whole dump that test
+   is one XOR of three shifted copies of the data (Python does it on big
+   integers at C speed, ~15 s per GB). Only the rare matches get the full
+   expansion compared; 90% equal bytes is enough, so a slightly damaged dump
+   still matches. `ctfc detect` reports a schedule on its own.
+2. **Labelled values**: `aes_key = 4f2a...`, `password: hunter2`, `IV=...`.
+   The value is read as hex, base64 and text; a labelled IV is tried with the
+   labelled keys.
+3. **Hex and base64 strings of a key length** (16/24/32 bytes, or 48 = a
+   key||iv blob tried with every split). A hash (sha256 = 64 hex digits) looks
+   the same: it is tried and fails, which costs a fraction of a second.
+4. **ASCII strings of exactly 16, 24 or 32 characters**, including the end of a
+   longer run that stops on a NUL byte (a C string), ranked higher when a crypto
+   constant (the AES S-box...) sits in the 4 KB before it.
+5. **Random-looking windows** of 16/32 bytes - last, and with AES only, because
+   compressed data looks random too.
+
+Without `--against`, the candidates are only listed, with their offsets.
+
+```
+ctfc keys tests/fixtures/memdump_aes.bin --against tests/fixtures/memdump_aes_ct.bin
+ctfc keys tests/fixtures/strings_dump.txt --against tests/fixtures/strings_dump_ct.bin
+ctfc keys tests/fixtures/binary_with_key.bin --against tests/fixtures/binary_with_key_ct.bin --show-code
+ctfc detect tests/fixtures/memdump_aes.bin       # "AES-256 key in memory at offset 0x5a30"
+```
+
+Out of scope, on purpose: RSA private keys in memory (search for `30 82` DER
+headers with `binwalk`), keys protected by DPAPI or a TPM, and the BitLocker /
+VeraCrypt master keys (Volatility plugins do that).

@@ -15,7 +15,7 @@ from rich.console import Console
 
 from ctfc import __version__, render
 from ctfc.config import Config, ConfigError, load_config
-from ctfc.core import classical, pipeline
+from ctfc.core import classical, keyhunt, pipeline
 from ctfc.core import tools as toolbox
 from ctfc.core.auto import auto_decode
 from ctfc.core.budget import Budget
@@ -37,7 +37,7 @@ from ctfc.strings import t
 
 # Commands that exist in the interface but are built in a later milestone.
 PLANNED = {
-    "keys": "M7",
+    "report": "M8",
 }
 
 
@@ -123,8 +123,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("script", help=t("arg_script"))
 
     p = add("keys")
-    p.add_argument("dump", help="memory dump / binary / strings output")
-    p.add_argument("--against", help="ciphertext to test the candidate keys against")
+    p.add_argument("dump", help=t("arg_dump"))
+    p.add_argument("--against", help=t("opt_keys_against"))
+    p.add_argument("--cipher", help=t("opt_sym_cipher"))
+    p.add_argument("--mode", help=t("opt_sym_mode"))
+    p.add_argument("--seconds", type=float, default=60.0, help=t("opt_seconds"))
 
     p = add("recipe")
     p.add_argument("action", choices=["run", "save", "show"], help=t("arg_recipe_action"))
@@ -150,6 +153,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--run", help=t("opt_tools_run"))
     p.add_argument("--wordlist", help=t("opt_tools_wordlist"))
     p.add_argument("--password", help=t("opt_tools_password"))
+
+    p = add("report")
+    p.add_argument("session", nargs="?", help=t("arg_session"))
 
     p = add("serve")
     p.add_argument("--port", type=int, default=None, help=t("opt_port"))
@@ -245,6 +251,29 @@ def cmd_xor(args: argparse.Namespace, config: Config, console: Console) -> int:
         render.print_key_lengths(console, lengths)
     render.print_candidates(console, candidates, show_code=args.show_code, title="xor")
     return 0 if candidates else 1
+
+
+def cmd_keys(args: argparse.Namespace, config: Config, console: Console) -> int:
+    """Key hunting: candidate keys in a dump, tested against a ciphertext."""
+    dump = parse_input(args.dump, decode_bare=False)
+    ciphertext = parse_input(args.against).data if args.against else None
+    budget = Budget(max_attempts=1_000_000, max_seconds=args.seconds)
+    report = keyhunt.hunt(
+        dump.data,
+        ciphertext,
+        flagset_from(config),
+        cipher=args.cipher,
+        mode=args.mode,
+        budget=budget,
+        top_n=config.top_n,
+    )
+    if args.json:
+        print(json.dumps({"input": input_to_dict(dump), **report.to_dict()}, indent=2))
+    else:
+        render.print_key_hunt(console, report, show_code=args.show_code)
+    if ciphertext is None:
+        return 0 if report.candidates else 1
+    return 0 if report.winner else 1
 
 
 def cmd_classical(args: argparse.Namespace, config: Config, console: Console) -> int:
@@ -614,6 +643,7 @@ def main(argv: list[str] | None = None) -> int:
         "blob": cmd_blob,
         "lens": cmd_lens,
         "classical": cmd_classical,
+        "keys": cmd_keys,
         "rsa": cmd_rsa,
         "hash": cmd_hash,
         "scan": cmd_scan,

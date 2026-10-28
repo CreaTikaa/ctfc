@@ -115,7 +115,15 @@ EN: dict[str, str] = {
         "the script to analyse: a file path, '-' for stdin, or text:... (NEVER executed)"
     ),
     "cmd_keys": "hunt candidate keys in a dump and test them against a ciphertext",
-    "cmd_keys_ex": "example: ctfc keys memdump.raw --against ct.bin",
+    "cmd_keys_ex": (
+        "example: ctfc keys memdump.raw --against ct.bin  |  ctfc keys strings.txt  |  "
+        "ctfc keys malware.exe --against payload.enc --cipher aes --seconds 120"
+    ),
+    "arg_dump": "memory dump, binary or `strings` output to search for keys",
+    "opt_keys_against": "ciphertext to try every candidate key on (without it: list them)",
+    "cmd_report": "export a session as a Markdown write-up",
+    "cmd_report_ex": "example: ctfc report mychallenge",
+    "arg_session": "session name (~/.ctfc/sessions/<name>/)",
     "cmd_recipe": "run, save or show a recipe (an ordered list of operations)",
     "cmd_recipe_ex": (
         "examples: ctfc recipe run layers.json payload.bin  |  "
@@ -285,6 +293,18 @@ EN: dict[str, str] = {
     "web_pipeline_bad_json": "The recipe is not valid JSON:",
     "web_pipeline_ask_key": "XOR key, in hex (e.g. 4b337921)",
     "web_open_pipeline": "Open in Pipeline",
+    "web_pipeline_ask_shift": "Caesar shift (1-25): how far the letters were moved forward",
+    "web_pipeline_ask_key_vigenere": "Vigenère key (letters only)",
+    # Keys tab (M7)
+    "web_keys_help": "Drop the memory dump / binary / strings output on the left. ctfc finds "
+    "candidate keys (AES key schedules, labelled values, hex/base64, ASCII strings) and tries "
+    "them on the ciphertext.",
+    "web_keys_against": "ciphertext to try the keys on (hex:, b64:, text:) - empty = only list "
+    "the candidate keys",
+    "web_keys_against_ph": "b64:... or hex:... (or use the button below for a file)",
+    "web_keys_load": "Load ciphertext file",
+    "web_keys_winner": "The key that works was found at offset",
+    "web_keys_candidates": "Candidate keys, strongest first",
     # CyberChef links
     "web_open_cyberchef": "Open in CyberChef",
     "web_no_cyberchef": "No CyberChef link for this result.",

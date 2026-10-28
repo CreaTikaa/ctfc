@@ -27,6 +27,8 @@ ctfc xor <input>         # XOR: single byte, repeating key, known plaintext, two
 ctfc sym <input>         # AES/DES/ChaCha20/... with whatever key material you have
 ctfc lens <script>       # static analysis of a dropper + generated inverse script
 ctfc rsa / ctfc hash     # RSA keys and weak-key attacks; hash format + hashcat mode
+ctfc classical <input>   # Caesar, affine, Atbash, Vigenère, rail fence
+ctfc keys <dump> --against <ct>   # find the key in a memory dump / binary, test it
 ctfc recipe run r.json <input>   # your own chain of steps, each output shown
 ctfc tools <input>       # which external tool fits (xortool, hashcat, CyberChef...)
 ctfc serve               # web UI on http://127.0.0.1:8137

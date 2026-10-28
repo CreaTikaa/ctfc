@@ -27,19 +27,21 @@ const TOOLS = {
   rsa: "job",
   hash: "sync",
   pipeline: "sync",
+  keys: "job",
 };
 
 // API route of a tab, when it is not /api/<tab>.
 const API_PATH = { pipeline: "/api/recipe" };
 
 // Tabs that have their own options panel (#options-<tab>).
-const OPTION_PANELS = ["xor", "sym", "rsa", "hash", "pipeline"];
+const OPTION_PANELS = ["xor", "sym", "rsa", "hash", "pipeline", "keys"];
 
 // Tabs after which the "Suggested tools" strip is computed (data tabs, not scripts).
 const SUGGEST_TABS = ["auto", "detect", "xor", "sym", "hash"];
 
 // "Add a step" buttons of the Pipeline tab. `args` is a template the user edits;
-// `ask` prompts for one argument (the XOR key) before adding the step.
+// `ask` prompts for one argument (the XOR key) before adding the step, with the
+// question `prompt` (default: the string "web_pipeline_ask_<ask>").
 const PIPELINE_STEPS = [
   { op: "base64" },
   { op: "hex" },
@@ -57,6 +59,11 @@ const PIPELINE_STEPS = [
   { op: "rot13" },
   { op: "rot47" },
   { op: "xor", ask: "key" },
+  { op: "caesar", ask: "shift" },
+  { op: "vigenere", ask: "key", prompt: "web_pipeline_ask_key_vigenere" },
+  { op: "atbash" },
+  { op: "affine", args: { a: 5, b: 8 } },
+  { op: "railfence", args: { rails: 3, offset: 0 } },
   {
     op: "cipher",
     args: { cipher: "aes", mode: "cbc", key: "<hex key>", iv: "<hex iv>", unpad: "pkcs7" },
@@ -158,6 +165,14 @@ function currentOptions() {
   }
   if (state.tab === "pipeline") {
     return { recipe: $("pipeline-recipe").value };
+  }
+  if (state.tab === "keys") {
+    return {
+      against: $("keys-against").value,
+      cipher: $("keys-cipher").value,
+      mode: $("keys-mode").value,
+      seconds: $("keys-seconds").value,
+    };
   }
   if (state.tab === "sym") {
     return {
@@ -291,6 +306,11 @@ function showAnswer(tab, answer) {
   if (tab === "rsa") {
     renderRsa(answer);
     setStatus(answer.budget || "");
+    return;
+  }
+  if (tab === "keys") {
+    renderKeys(answer);
+    setStatus(answer.cancelled ? T("web_cancelled") + " " + answer.budget : answer.budget);
     return;
   }
   if (tab === "pipeline") {
@@ -773,9 +793,11 @@ function addPipelineStep(template) {
   }
   const step = { op: template.op };
   if (template.ask) {
-    const value = window.prompt(T("web_pipeline_ask_" + template.ask));
+    const value = window.prompt(T(template.prompt || "web_pipeline_ask_" + template.ask));
     if (value === null) return;
-    step.args = { [template.ask]: value.trim() };
+    const text = value.trim();
+    // Numbers stay numbers in the JSON (a Caesar shift), keys stay text.
+    step.args = { [template.ask]: /^-?\d+$/.test(text) && template.op !== "xor" ? Number(text) : text };
   } else if (template.args) {
     step.args = { ...template.args };
   }
@@ -879,6 +901,56 @@ function renderPipeline(answer) {
   card.append(actions);
   if (answer.python) card.append(el("pre", "code", answer.python));
   results.append(card);
+}
+
+// ---------------------------------------------------------------- keys
+// Key hunting: where each candidate key was found, then what it decrypted.
+function renderKeys(report) {
+  const results = $("results");
+  if (report.notes.length) renderNotes(report.notes);
+  if (report.winner) {
+    const card = el("div", "card good");
+    const head = el("div", "card-head");
+    head.append(el("span", "label", T("web_keys_winner") + " 0x" + report.winner.offset.toString(16)));
+    card.append(head);
+    card.append(el("div", "step-comment", report.winner.how));
+    card.append(el("pre", "code", report.winner.key_hex));
+    const actions = el("div", "actions");
+    actions.append(copyButton(T("web_copy") + " hex", () => report.winner.key_hex));
+    card.append(actions);
+    results.append(card);
+  }
+  for (const candidate of report.results) results.append(candidateCard(candidate));
+  if (report.candidates.length) {
+    results.append(el("h3", "", T("web_keys_candidates") + " (" + report.candidate_count + ")"));
+    results.append(
+      simpleTable(
+        ["offset", "kind", "len", "key", "how"],
+        report.candidates.map((c) => [
+          c.offset_hex,
+          c.kind.replace(/_/g, " ") + (c.role !== "key" ? " (" + c.role + ")" : ""),
+          String(c.length),
+          isPrintableAscii(c.key_text) ? c.key_text : c.key_hex,
+          c.how,
+        ]),
+      ),
+    );
+  }
+}
+
+function isPrintableAscii(text) {
+  return Boolean(text) && /^[\x20-\x7e]+$/.test(text);
+}
+
+// The ciphertext is often a file: read it and put it in the box as b64:...
+function loadKeysCiphertext(file) {
+  const reader = new FileReader();
+  reader.onload = () => {
+    $("keys-against").value = "b64:" + bytesToBase64(new Uint8Array(reader.result));
+    $("keys-file-name").textContent = file.name;
+    $("keys-file").value = "";
+  };
+  reader.readAsArrayBuffer(file);
 }
 
 // ---------------------------------------------------------------- suggested tools
@@ -1039,6 +1111,10 @@ async function init() {
     button.addEventListener("click", () => addPipelineStep(template));
     $("pipeline-add").append(button);
   }
+  $("keys-load").addEventListener("click", () => $("keys-file").click());
+  $("keys-file").addEventListener("change", (event) => {
+    if (event.target.files[0]) loadKeysCiphertext(event.target.files[0]);
+  });
   $("pipeline-load").addEventListener("click", () => $("pipeline-file").click());
   $("pipeline-file").addEventListener("change", (event) => {
     if (event.target.files[0]) loadPipelineFile(event.target.files[0]);

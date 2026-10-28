@@ -550,3 +550,42 @@ def print_tool_run(console: Console, tool, result) -> None:
         console.print(Panel(safe_block(result.stdout, 8000), title="stdout", expand=True))
     if result.stderr:
         console.print(Panel(safe_block(result.stderr, 2000), title="stderr", expand=True))
+
+
+def _key_view(key: bytes, limit: int = 40) -> str:
+    """A key as text when it is plain printable ASCII, otherwise as hex."""
+    if key and all(32 <= b < 127 for b in key):
+        return safe(key.decode("ascii"), limit)
+    text = key.hex()
+    return escape(text if len(text) <= limit else text[: limit - 3] + "...")
+
+
+def print_key_hunt(console: Console, report, show_code: bool = False, limit: int = 15) -> None:
+    """`ctfc keys`: the candidate keys found in the dump, then what decrypted."""
+    print_notes(console, report.notes)
+    if report.candidates:
+        table = Table(title="candidate keys (strongest first)", expand=True)
+        table.add_column("offset", width=10)
+        table.add_column("kind", width=20)
+        table.add_column("len", justify="right", width=4)
+        table.add_column("key", ratio=2)
+        table.add_column("how", ratio=3)
+        for candidate in report.candidates[:limit]:
+            marker = " [bold green]<- works[/]" if candidate is report.winner else ""
+            table.add_row(
+                f"0x{candidate.offset:x}",
+                candidate.kind.replace("_", " ")
+                + (f" ({candidate.role})" if candidate.role != "key" else ""),
+                str(len(candidate.key)),
+                _key_view(candidate.key),
+                safe(candidate.how) + marker,
+            )
+        console.print(table)
+        if len(report.candidates) > limit:
+            console.print(
+                f"[dim]... and {len(report.candidates) - limit} more (--json lists them all)[/]"
+            )
+    if report.results:
+        print_candidates(console, report.results, show_code=show_code, title="decryptions")
+    if report.budget_summary:
+        console.print(f"[dim]{report.budget_summary}[/]")
