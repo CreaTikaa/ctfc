@@ -112,6 +112,7 @@ def detect(data: bytes, flagset: FlagSet | None = None) -> DetectReport:
     guesses: list[Guess] = []
     guesses += _check_flags(data, flagset)
     guesses += _check_magic(data)
+    guesses += _check_repairable(data)
     guesses += _check_prefixes(data)
     guesses += charset_guesses
     guesses += _check_zero_width(data)
@@ -221,6 +222,44 @@ def _check_flags(data: bytes, flagset: FlagSet | None, prefix: str = "") -> list
                 label=f"flag {how}: {hit.text[:60]}",
                 confidence=hit.strength,
                 reasons=[f"{prefix}matches {hit.pattern!r}"],
+            )
+        )
+    return guesses
+
+
+def _check_repairable(data: bytes) -> list[Guess]:
+    """A magic one byte off a known one, or a header pasted over another one."""
+    from ctfc.core.repair import near_miss, pasted_header
+
+    guesses = []
+    miss = near_miss(data)
+    if miss is not None:
+        sig, offset, actual = miss
+        guesses.append(
+            Guess(
+                rule="magic.corrupted",
+                label=f"a {sig.name} with ONE corrupted magic byte (offset {offset})",
+                confidence=0.9,
+                reasons=[
+                    f"byte {offset} is 0x{actual:02x}, a {sig.name} has "
+                    f"0x{sig.magic[offset]:02x} there; every other byte of the signature matches"
+                ],
+                next_step="ctfc repair <input> --out repaired/",
+            )
+        )
+    pasted = pasted_header(data)
+    if pasted is not None:
+        worn, fits = pasted
+        guesses.append(
+            Guess(
+                rule="magic.pasted",
+                label=f"starts with part of a {worn.name} signature, not all of it: "
+                "a pasted header",
+                confidence=0.8,
+                reasons=[
+                    f"formats whose magic would fit underneath: {', '.join(s.ext for s in fits)}"
+                ],
+                next_step="ctfc repair <input> --out repaired/",
             )
         )
     return guesses

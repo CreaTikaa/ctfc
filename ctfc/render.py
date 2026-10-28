@@ -618,3 +618,49 @@ def print_session(console: Console, session) -> None:
         table.add_row(str(number), safe(entry.command, 120), safe(found, 160))
     console.print(table)
     console.print("[dim]ctfc report " + escape(session.name) + " --lang fr  -> the write-up[/]")
+
+
+def print_repair(console: Console, report, source: str, written: list) -> None:
+    """`ctfc repair`: what was wrong, the fixes (with the commands), what came out."""
+    print_notes(console, report.notes)
+    path = source if source and not source.startswith(("hex:", "b64:", "text:")) else "<file>"
+    if report.fixes:
+        table = Table(title="fixes", expand=True)
+        table.add_column("offset", width=8)
+        table.add_column("was", width=14)
+        table.add_column("becomes", width=14)
+        table.add_column("why", ratio=3)
+        for fix in report.fixes:
+            table.add_row(f"0x{fix.offset:x}", fix.old.hex(), fix.new.hex(), safe(fix.why))
+        console.print(table)
+    if report.carved:
+        table = Table(title="hidden inside", expand=True)
+        table.add_column("offset", width=8)
+        table.add_column("what", ratio=2)
+        table.add_column("size", justify="right", width=8)
+        table.add_column("why", ratio=3)
+        for item in report.carved:
+            table.add_row(
+                f"0x{item.offset:x}", safe(item.name), str(len(item.data)), safe(item.why)
+            )
+        console.print(table)
+    if report.fixes or report.carved:
+        console.print("[bold]By hand[/] (on a copy):")
+        console.print(f"cp {path} fixed", markup=False, highlight=False, soft_wrap=True)
+        for fix in report.fixes:
+            console.print(fix.command("fixed"), markup=False, highlight=False, soft_wrap=True)
+        for index, item in enumerate(report.carved, start=1):
+            name = item.filename(index)
+            console.print(
+                f"dd if=fixed of={name} bs=1 skip={item.offset}",
+                markup=False,
+                highlight=False,
+                soft_wrap=True,
+            )
+    if written:
+        console.print("[bold]Written[/]:")
+        for target, nxt in written:
+            line = f"  {target}" + (f"   ->  {nxt}" if nxt else "")
+            console.print(line, markup=False, highlight=False, soft_wrap=True)
+    elif report.carved or report.fixes:
+        console.print("[dim]Add --out <folder> to write the repaired file and the pieces.[/]")

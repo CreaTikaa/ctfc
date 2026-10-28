@@ -27,11 +27,27 @@ written unless the CLI is asked to.
 
 from __future__ import annotations
 
+import zlib
 from dataclasses import dataclass, field
 
 from ctfc.core.magic import Signature, find_trailing_data, load_signatures, match_signature
 
 MIN_MAGIC = 4  # shorter magics give too many coincidences
+# What to do with a carved file, by extension (printed, never run).
+NEXT_COMMAND = {
+    "7z": "7z x {file}",
+    "zip": "unzip {file}   (password-protected? zip2john {file} > zip.hash)",
+    "rar": "unrar x {file}",
+    "gz": "gunzip -k {file}",
+    "xz": "unxz -k {file}",
+    "bz2": "bunzip2 -k {file}",
+    "tar": "tar xvf {file}",
+    "png": "ctfc detect {file}   (then zsteg / exiftool)",
+    "jpg": "ctfc detect {file}   (then steghide / exiftool)",
+    "pdf": "pdfdetach -saveall {file}; pdftotext {file} -",
+    "elf": "ctfc detect {file}; diec {file}",
+    "exe": "ctfc detect {file}; diec {file}",
+}
 MIN_CARVE = 16  # ignore carved pieces smaller than this
 MAX_FITS = 8  # a pasted header is a deduction only when few formats fit underneath
 
@@ -72,6 +88,11 @@ class Carved:
     def filename(self, index: int) -> str:
         return f"carved_{index:02d}_0x{self.offset:x}.{self.ext}"
 
+    def next_command(self, path: str) -> str:
+        """What to run on this piece once written to `path`."""
+        template = NEXT_COMMAND.get(self.ext, "ctfc detect {file}")
+        return template.format(file=path)
+
     def to_dict(self) -> dict:
         return {
             "offset": self.offset,
@@ -103,6 +124,101 @@ class RepairReport:
             "notes": list(self.notes),
             "repaired_size": len(self.repaired),
         }
+
+
+# ---------------------------------------------------------------------------
+# Is this really a <format>? Cheap structural checks, beyond the magic bytes
+# ---------------------------------------------------------------------------
+#
+# A magic is 4 to 8 bytes, so when several formats could sit under a pasted
+# header, the magic alone cannot choose. The bytes that FOLLOW it can: a 7z
+# stores the CRC32 of its own start header, a PNG must have IHDR as its first
+# chunk, a ZIP a sane compression method. One check that passes where the others
+# fail turns a list of guesses into an answer.
+#
+# Each validator reads only the first bytes and returns True / False. Only STRONG
+# checks belong here: a stored CRC, or several constraints that random bytes meet
+# less than once in a million. A check that passes by chance one time in ten (a
+# non-zero GIF canvas size) would "confirm" garbage, so formats without a strong
+# check have no validator and are never confirmed (None).
+
+
+def _check_7z(data: bytes) -> bool:
+    """7z: magic (6), version (2), then the CRC32 of the 20-byte start header."""
+    if len(data) < 32:
+        return False
+    return zlib.crc32(data[12:32]) == int.from_bytes(data[8:12], "little")
+
+
+def _check_xz(data: bytes) -> bool:
+    """xz: magic (6), stream flags (2: 0x00 + check type), CRC32 of those 2 bytes."""
+    if len(data) < 12:
+        return False
+    flags = data[6:8]
+    return (
+        flags[0] == 0
+        and flags[1] in (0, 1, 4, 10)
+        and (zlib.crc32(flags) == int.from_bytes(data[8:12], "little"))
+    )
+
+
+def _check_png(data: bytes) -> bool:
+    """PNG: the first chunk is IHDR (13 bytes), and its CRC32 is right."""
+    if len(data) < 33 or data[8:16] != b"\x00\x00\x00\rIHDR":
+        return False
+    return zlib.crc32(data[12:29]) == int.from_bytes(data[29:33], "big")
+
+
+def _check_zip(data: bytes) -> bool:
+    """ZIP local header: a version, a known method, a printable file name of that length."""
+    if len(data) < 30:
+        return False
+    version = int.from_bytes(data[4:6], "little")
+    method = int.from_bytes(data[8:10], "little")
+    name_length = int.from_bytes(data[26:28], "little")
+    name = data[30 : 30 + name_length]
+    return (
+        version <= 63
+        and method in (0, 1, 6, 8, 9, 12, 14, 93, 95, 98)
+        and 0 < name_length < 1024
+        and len(name) == name_length
+        and all(32 <= byte < 127 for byte in name)
+    )
+
+
+def _check_elf(data: bytes) -> bool:
+    """ELF: class, byte order, ident version, and e_version = 1 in that byte order."""
+    if len(data) < 24 or data[4] not in (1, 2) or data[5] not in (1, 2) or data[6] != 1:
+        return False
+    order = "little" if data[5] == 1 else "big"
+    return int.from_bytes(data[20:24], order) == 1
+
+
+def _check_luks(data: bytes) -> bool:
+    """LUKS1: version 1 and a printable, NUL-padded cipher name (e.g. "aes")."""
+    if len(data) < 40 or int.from_bytes(data[6:8], "big") != 1:
+        return False
+    name = data[8:40].rstrip(b"\x00")
+    return 2 <= len(name) <= 31 and all(32 < byte < 127 for byte in name)
+
+
+VALIDATORS = {
+    "7z": _check_7z,
+    "xz": _check_xz,
+    "png": _check_png,
+    "zip": _check_zip,
+    "elf": _check_elf,
+    "luks": _check_luks,
+}
+
+
+def validate(data: bytes, sig: Signature) -> bool | None:
+    """Does `data` look like a real `sig` file beyond its magic?
+
+    True / False when a check exists for that format, None when none does.
+    """
+    checker = VALIDATORS.get(sig.ext)
+    return checker(data) if checker is not None else None
 
 
 def _candidates() -> list[Signature]:
@@ -266,25 +382,37 @@ def _study_trailing(extra: bytes, base: int, report: RepairReport) -> None:
         f"signature but not the rest of it: those {length} bytes were pasted over "
         "the real header"
     )
-    for sig in fits:
+    # Several formats have a magic of that length; the bytes that follow decide.
+    confirmed = [sig for sig in fits if validate(sig.magic + extra[length:], sig)]
+    chosen = confirmed or fits
+    for sig in chosen:
         candidate = sig.magic + extra[length:]
-        report.carved.append(
-            Carved(
-                base,
-                sig.name,
-                sig.ext,
-                candidate,
+        if confirmed:
+            why = (
                 f"the pasted {length}-byte header replaced by the {sig.name} magic "
-                f"({sig.magic.hex()}), the only {length}-byte signature that fits",
+                f"({sig.magic.hex()}): what follows it is a valid {sig.name} header, "
+                "which is not true of the other formats of that magic length"
             )
-        )
+        else:
+            why = (
+                f"the pasted {length}-byte header replaced by the {sig.name} magic "
+                f"({sig.magic.hex()}), one of the {len(fits)} formats whose magic is "
+                f"{length} bytes long (nothing confirms it: check them all)"
+            )
+        report.carved.append(Carved(base, sig.name, sig.ext, candidate, why))
         report.fixes.append(
             Fix(
                 offset=base,
                 old=extra[:length],
                 new=sig.magic,
-                why=f"restores the {sig.name} magic under the pasted header",
+                why=f"restores the {sig.name} magic under the pasted header"
+                + (", confirmed by the header that follows" if confirmed else ""),
             )
+        )
+    if confirmed:
+        report.notes.append(
+            f"under the pasted header: {', '.join(sig.name for sig in confirmed)} "
+            "(confirmed by a structure check, not just by the magic length)"
         )
     if not fits:
         report.carved.append(

@@ -134,6 +134,12 @@ EN: dict[str, str] = {
     "opt_report_lang": "language of the write-up: en or fr",
     "opt_report_out": "write the Markdown to this file instead of printing it",
     "opt_report_all": "also include the steps that led nowhere",
+    "cmd_repair": "fix a broken magic byte, carve what hides after the end, undo a pasted header",
+    "cmd_repair_ex": (
+        "example: ctfc repair pixel.fun  |  ctfc repair pixel.fun --out repaired/  |  "
+        "ctfc repair suspicious.png --json"
+    ),
+    "opt_repair_out": "write the repaired file and every carved piece into this folder",
     "cmd_cheatsheet": "the one-page decision tree: what to run for what you have",
     "cmd_cheatsheet_ex": "example: ctfc cheatsheet  |  ctfc cheatsheet --raw > cheatsheet.md",
     "opt_cheatsheet_raw": "print the Markdown source instead of rendering it",

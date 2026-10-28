@@ -177,6 +177,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--out", help=t("opt_report_out"))
     p.add_argument("--all", action="store_true", help=t("opt_report_all"))
 
+    p = add("repair")
+    p.add_argument("input", help=t("arg_input"))
+    p.add_argument("--out", help=t("opt_repair_out"))
+
     p = add("cheatsheet")
     p.add_argument("--raw", action="store_true", help=t("opt_cheatsheet_raw"))
 
@@ -321,6 +325,37 @@ def cmd_session(args: argparse.Namespace, config: Config, console: Console) -> i
         return 0
     render.print_session(console, session)  # show
     return 0
+
+
+def cmd_repair(args: argparse.Namespace, config: Config, console: Console) -> int:
+    """Fix a broken magic, carve what follows the end marker, undo a pasted header."""
+    from ctfc.core.repair import repair
+
+    inp = parse_input(args.input, decode_bare=False)
+    report = repair(inp.data)
+    written: list[tuple[str, str]] = []  # (path, what to run next)
+    if args.out:
+        folder = Path(args.out)
+        folder.mkdir(parents=True, exist_ok=True)
+        stem = Path(args.input).name if Path(args.input).is_file() else "input"
+        if report.fixes and report.repaired != inp.data:
+            target = folder / f"{stem}.repaired"
+            target.write_bytes(report.repaired)
+            written.append((str(target), ""))
+        for index, item in enumerate(report.carved, start=1):
+            target = folder / item.filename(index)
+            target.write_bytes(item.data)
+            written.append((str(target), item.next_command(str(target))))
+    summary = report.notes + [f"wrote {path}" for path, _ in written]
+    remember(args, config, inp.data, args.input, summary=summary)
+    if args.json:
+        payload = {"input": input_to_dict(inp), **report.to_dict()}
+        payload["written"] = [{"path": path, "next": nxt} for path, nxt in written]
+        print(json.dumps(payload, indent=2))
+        return 0 if report.changed else 1
+    render.print_input_notes(console, inp)
+    render.print_repair(console, report, args.input, written)
+    return 0 if report.changed else 1
 
 
 def cmd_cheatsheet(args: argparse.Namespace, config: Config, console: Console) -> int:
@@ -875,6 +910,7 @@ def main(argv: list[str] | None = None) -> int:
         "session": cmd_session,
         "report": cmd_report,
         "cheatsheet": cmd_cheatsheet,
+        "repair": cmd_repair,
         "rsa": cmd_rsa,
         "hash": cmd_hash,
         "scan": cmd_scan,
