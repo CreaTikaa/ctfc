@@ -24,7 +24,7 @@ from collections import Counter
 from dataclasses import asdict, dataclass, field
 from functools import lru_cache
 
-from ctfc.core import classical, encodings, keyhunt
+from ctfc.core import classical, encodings, keyhunt, secrets
 from ctfc.core.datafiles import load_toml
 from ctfc.core.flags import FlagSet, default_flagset, find_flags
 from ctfc.core.magic import (
@@ -121,6 +121,7 @@ def detect(data: bytes, flagset: FlagSet | None = None) -> DetectReport:
     guesses += _check_custom_alphabet(data)
     guesses += _check_classical(data, flagset)
     guesses += _check_key_schedules(data)
+    guesses += _check_secrets(data)
     # Zero-width characters are invisible but not "binary": ignore them here.
     visible = data.decode("utf-8", errors="ignore")
     visible = "".join(c for c in visible if c not in encodings.ZERO_WIDTH).encode()
@@ -132,6 +133,7 @@ def detect(data: bytes, flagset: FlagSet | None = None) -> DetectReport:
         guesses += _binary_checks(data, prefix="")
     if decoded is not None:
         name, decoded_bytes = decoded
+        guesses += _check_secrets(decoded_bytes, prefix=f"after {name} decoding: ")
         guesses += _check_flags(decoded_bytes, flagset, prefix=f"after {name} decoding: ")
         guesses += _check_magic(decoded_bytes, prefix=f"after {name} decoding: ")
         guesses += _binary_checks(decoded_bytes, prefix=f"after {name} decoding: ")
@@ -223,6 +225,42 @@ def _check_flags(data: bytes, flagset: FlagSet | None, prefix: str = "") -> list
                 label=f"flag {how}: {hit.text[:60]}",
                 confidence=hit.strength,
                 reasons=[f"{prefix}matches {hit.pattern!r}"],
+            )
+        )
+    return guesses
+
+
+def _check_secrets(data: bytes, prefix: str = "") -> list[Guess]:
+    """Credentials written in clear in a config / script (secrets.find_secrets)."""
+    found = secrets.find_secrets(data)
+    if not found:
+        return []
+    guesses = []
+    for secret in found[:5]:
+        reasons = [f"line {secret.line}: {secret.name} = {secret.value}"]
+        next_step = ""
+        if secret.rot13:
+            reasons.append(
+                f"the text mentions a rotation, so ROT13 of it is '{secret.rot13}' "
+                "(try this one first)"
+            )
+            next_step = f"ctfc classical text:'{secret.value}'  (the rotation hint)"
+        guesses.append(
+            Guess(
+                rule="creds.found",
+                label=f"{prefix}credential in clear: {secret.name}",
+                confidence=0.75,
+                reasons=reasons,
+                next_step=next_step,
+            )
+        )
+    if len(found) > 5:
+        guesses.append(
+            Guess(
+                rule="creds.found",
+                label=f"{prefix}{len(found) - 5} more credential(s) in the text",
+                confidence=0.5,
+                reasons=[f"{secret.name} (line {secret.line})" for secret in found[5:12]],
             )
         )
     return guesses

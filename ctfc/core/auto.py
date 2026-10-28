@@ -217,9 +217,21 @@ def auto_decode(
     if not results and root_score >= 0.9:
         # Nothing beats the input because the input itself already holds the answer.
         root = _Node(-root_score, 0, data, [], root_score, root_reasons)
-        return [_to_candidate(data, root)]
+        return [_with_secrets(_to_candidate(data, root))]
     results.sort(key=lambda item: (-item.score, len(item.chain)))
-    return [_to_candidate(data, item) for item in results[:top_n]]
+    return [_with_secrets(_to_candidate(data, item)) for item in results[:top_n]]
+
+
+def _with_secrets(candidate: Candidate) -> Candidate:
+    """Flag credentials written in clear in a decoded config (secrets.find_secrets)."""
+    from ctfc.core.secrets import find_secrets
+
+    for secret in find_secrets(candidate.data)[:4]:
+        note = f"credential in clear (line {secret.line}): {secret.name} = {secret.value}"
+        if secret.rot13:
+            note += f" -> ROT13 '{secret.rot13}' (a rotation is mentioned nearby)"
+        candidate.reasons.append(note)
+    return candidate
 
 
 def _to_candidate(original: bytes, node: _Node) -> Candidate:
