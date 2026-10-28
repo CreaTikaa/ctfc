@@ -12,8 +12,6 @@ from ctfc.core.hashes import load_formats
 from ctfc.core.magic import load_prefix_rules, load_signatures
 from ctfc.core.tools import Signal, fill, gather, load_tools, run_tool, suggest, tool_by_id
 
-# Rule families that no module produces yet, and the milestone that brings them.
-FUTURE_RULES = {"classical.*": "M7"}
 SHELL_CHARACTERS = ("|", ";", "&&", "$(", "`", ">", "<")
 
 
@@ -34,6 +32,10 @@ def known_rule_ids() -> set[str]:
         "length.key16",
         "length.key24",
         "length.key32",
+        "classical.flag_shift",
+        "classical.transposition",
+        "classical.monoalphabetic",
+        "classical.vigenere",
     }
     ids |= {f"magic.{sig.ext}" for sig in load_signatures()}
     ids |= {rule.id for rule in load_prefix_rules()}
@@ -93,8 +95,6 @@ def test_every_suggest_when_pattern_can_fire():
     known = known_rule_ids()
     for tool in load_tools():
         for pattern in tool.suggest_when:
-            if pattern in FUTURE_RULES:
-                continue
             assert any(fnmatch.fnmatch(rule, pattern) for rule in known), (
                 f"{tool.id}: {pattern!r} matches no rule id detect can produce"
             )

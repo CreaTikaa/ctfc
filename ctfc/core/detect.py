@@ -10,7 +10,7 @@ Checks (one small function each, in the order they run):
 - zero-width characters               - UTF-16LE text
 - entropy and block-length rules      - repeated blocks (ECB)
 - repeating pattern (XOR key length)  - crypto constants (AES S-box, TEA delta...)
-- custom base64 alphabets
+- custom base64 alphabets             - classical ciphers (letter statistics, see classical.py)
 
 When the input is hex/base64 text, the binary checks also run on the decoded bytes.
 """
@@ -23,16 +23,16 @@ from collections import Counter
 from dataclasses import asdict, dataclass, field
 from functools import lru_cache
 
-from ctfc.core import encodings
+from ctfc.core import classical, encodings
 from ctfc.core.datafiles import load_toml
-from ctfc.core.flags import FlagSet, find_flags
+from ctfc.core.flags import FlagSet, default_flagset, find_flags
 from ctfc.core.magic import (
     find_embedded,
     find_trailing_data,
     load_prefix_rules,
     match_signature,
 )
-from ctfc.core.scoring import printable_ratio, shannon_entropy
+from ctfc.core.scoring import printable_ratio, shannon_entropy, text_stats
 from ctfc.core.xor import coincidence_rates, period_ratios
 
 WINDOW = 256  # bytes per entropy window
@@ -116,6 +116,7 @@ def detect(data: bytes, flagset: FlagSet | None = None) -> DetectReport:
     guesses += _check_zero_width(data)
     guesses += _check_constants(data)
     guesses += _check_custom_alphabet(data)
+    guesses += _check_classical(data, flagset)
     # Zero-width characters are invisible but not "binary": ignore them here.
     visible = data.decode("utf-8", errors="ignore")
     visible = "".join(c for c in visible if c not in encodings.ZERO_WIDTH).encode()
@@ -354,6 +355,100 @@ def _check_charset(data: bytes) -> tuple[str, list[Guess], tuple[str, bytes] | N
             confidence *= 0.6  # an earlier, more specific charset already matched
         guesses.append(Guess(f"encoding.{name}", label, confidence, reasons, "ctfc auto <input>"))
     return charset, guesses, decoded
+
+
+CLASSICAL_APPLY = {"tab": "auto", "options": {}}
+CLASSICAL_NEXT = "ctfc classical <input>  (or ctfc auto <input>)"
+
+
+def _check_classical(data: bytes, flagset: FlagSet | None) -> list[Guess]:
+    """Text that does not read: which family of classical cipher do the letters suggest?
+
+    The measurements are explained in classical.py: letter frequencies (chi2) and
+    the index of coincidence (IoC), plus a flag-shaped word ("PLOA{") that has the
+    length of a known prefix ("CYBN{").
+    """
+    if not classical.is_text_like(data):
+        return []
+    guesses = []
+    configured = {
+        prefix.rstrip("{") for _regex, prefix in (flagset or default_flagset()).b64_prefixes
+    }
+    seen_words: set[str] = set()
+    for crib in classical.find_cribs(data, flagset):
+        if crib.word in seen_words:
+            continue
+        seen_words.add(crib.word)
+        strong = crib.prefix in configured
+        caesar = len(set(crib.shifts)) == 1
+        how = f"Caesar shift {crib.shifts[0]}" if caesar else "Vigenère (or another shift)"
+        guesses.append(
+            Guess(
+                rule="classical.flag_shift",
+                label=f"'{crib.word}{{' could be '{crib.prefix}{{' shifted: {how}",
+                confidence=0.8 if strong and caesar else 0.75 if strong else 0.5,
+                reasons=[
+                    f"a flag-shaped word with the length of the known prefix '{crib.prefix}'",
+                    "shifts letter by letter: " + ", ".join(str(k) for k in crib.shifts),
+                ],
+                next_step=CLASSICAL_NEXT,
+                apply=CLASSICAL_APPLY,
+            )
+        )
+
+    stats = classical.analyse(data)
+    if stats.letters < 20 or text_stats(data).word_rate >= 0.3:
+        return guesses  # too few letters to measure, or it already reads as words
+    facts = f"{stats.letters} letters, IoC {stats.ioc:.3f} (English ~0.067, random 0.038)"
+    if stats.family == "natural":
+        guesses.append(
+            Guess(
+                rule="classical.transposition",
+                label="natural letter frequencies but no words: a transposition (rail fence, "
+                "columnar)?",
+                confidence=0.65 if stats.letters >= 80 else 0.55,
+                reasons=[
+                    facts,
+                    f"letter frequencies close to {stats.language} "
+                    f"(chi2 {stats.chi2:.0f}): the right letters, in the wrong order",
+                ],
+                next_step=CLASSICAL_NEXT,
+                apply=CLASSICAL_APPLY,
+            )
+        )
+    elif stats.family == "monoalphabetic":
+        guesses.append(
+            Guess(
+                rule="classical.monoalphabetic",
+                label="one substituted alphabet: Caesar / ROT-n / affine / Atbash / keyword",
+                confidence=0.75,
+                reasons=[
+                    facts,
+                    f"high IoC but frequencies far from EN/FR (chi2 {stats.chi2:.0f}): "
+                    "letters were renamed, not mixed",
+                ],
+                next_step=CLASSICAL_NEXT + "; a keyword substitution: dcode / quipqiup",
+                apply=CLASSICAL_APPLY,
+            )
+        )
+    elif stats.family == "polyalphabetic" and stats.key_lengths:
+        best = stats.key_lengths[0]
+        if best.ioc >= classical.GOOD_COLUMN_IOC and best.length > 1:
+            guesses.append(
+                Guess(
+                    rule="classical.vigenere",
+                    label=f"several alphabets: Vigenère, key length {best.length}?",
+                    confidence=0.75,
+                    reasons=[
+                        facts,
+                        f"every {best.length}th letter has IoC {best.ioc:.3f}: "
+                        "each column is one Caesar alphabet",
+                    ],
+                    next_step="ctfc classical <input> --cipher vigenere",
+                    apply=CLASSICAL_APPLY,
+                )
+            )
+    return guesses
 
 
 def _check_zero_width(data: bytes) -> list[Guess]:

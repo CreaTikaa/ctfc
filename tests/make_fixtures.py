@@ -508,6 +508,199 @@ def write_pcap_fixture() -> None:
     write("capture.pcap", header + b"".join(records))
 
 
+# ---------------------------------------------------------------------------
+# M7: classical ciphers and key hunting (all written here, independently of ctfc)
+# ---------------------------------------------------------------------------
+
+FRENCH = (
+    "Rendez-vous ce soir au vieux port, derriere l'entrepot numero sept. Apportez les "
+    "documents et ne parlez de cette affaire a personne, pas meme au telephone. Le "
+    "mot de passe du serveur est note au dos du carnet rouge. Quand vous lirez ceci, "
+    "le drapeau sera CYBN{fixture_vigenere_fr} et la mission pourra commencer. "
+)
+
+
+def shift_letters(text: str, f) -> str:
+    """Encrypt letter by letter: f(index 0..25) -> new index; case kept, the rest unchanged."""
+    out = []
+    for char in text:
+        if "a" <= char <= "z":
+            out.append(chr(ord("a") + f(ord(char) - ord("a")) % 26))
+        elif "A" <= char <= "Z":
+            out.append(chr(ord("A") + f(ord(char) - ord("A")) % 26))
+        else:
+            out.append(char)
+    return "".join(out)
+
+
+def vigenere_encrypt(text: str, key: str) -> str:
+    """Vigenère forwards; the key advances on letters only."""
+    out, used = [], 0
+    for char in text:
+        if char.isascii() and char.isalpha():
+            base = ord("A") if char.isupper() else ord("a")
+            shift = ord(key[used % len(key)].lower()) - ord("a")
+            out.append(chr(base + (ord(char) - base + shift) % 26))
+            used += 1
+        else:
+            out.append(char)
+    return "".join(out)
+
+
+def rail_fence_encrypt(text: str, rails: int) -> str:
+    """Write the text in a zigzag over `rails` lines, read it line by line."""
+    lines = [[] for _ in range(rails)]
+    rail, step = 0, 1
+    for char in text:
+        lines[rail].append(char)
+        if rail == 0:
+            step = 1
+        elif rail == rails - 1:
+            step = -1
+        rail += step
+    return "".join("".join(line) for line in lines)
+
+
+def write_classical_fixtures() -> None:
+    message = (
+        "Good work agent. The drop is moved to the north gate at midnight, come alone and "
+        "bring the usual equipment. Burn this note after reading it. "
+    )
+    write(
+        "classical_caesar.txt",
+        shift_letters(message + "The flag is CYBN{fixture_caesar_large_shift}.", lambda x: x + 19)
+        + "\n",
+    )
+    write(
+        "classical_affine.txt",
+        shift_letters(message + "The flag is CYBN{fixture_affine_cipher}.", lambda x: 7 * x + 10)
+        + "\n",
+    )
+    write(
+        "classical_atbash.txt",
+        shift_letters(message + "The flag is CYBN{fixture_atbash}.", lambda x: 25 - x) + "\n",
+    )
+    write("classical_vigenere.txt", vigenere_encrypt(FRENCH, "forensique") + "\n")
+    write(
+        "classical_railfence.txt",
+        rail_fence_encrypt(message + "The flag is CYBN{fixture_rail_fence}.", 4) + "\n",
+    )
+    # A flag alone, Vigenère with a 3-letter key: only the CYBN{ crib can solve it.
+    write("classical_vigenere_flag.txt", vigenere_encrypt("CYBN{fixture_short_key}", "elf") + "\n")
+
+
+def aes_sbox() -> list[int]:
+    """The AES S-box from its definition: inverse in GF(2^8), then an affine map.
+
+    The inverse is found by brute force here (ctfc computes it differently), so
+    the fixture does not depend on ctfc's code being right.
+    """
+
+    def multiply(a: int, b: int) -> int:
+        result = 0
+        while b:
+            if b & 1:
+                result ^= a
+            a = (a << 1) ^ (0x11B if a & 0x80 else 0)
+            b >>= 1
+        return result
+
+    box = []
+    for value in range(256):
+        inverse_value = next((c for c in range(1, 256) if multiply(value, c) == 1), 0)
+        x = inverse_value
+        out = 0x63
+        for shift in range(5):  # b ^ rotl1 ^ rotl2 ^ rotl3 ^ rotl4
+            out ^= ((x << shift) | (x >> (8 - shift))) & 0xFF
+        box.append(out)
+    return box
+
+
+def aes_key_schedule(key: bytes) -> bytes:
+    """FIPS-197 key expansion: 176 / 208 / 240 bytes for a 16 / 24 / 32-byte key."""
+    sbox = aes_sbox()
+    nk = len(key) // 4
+    rounds = nk + 6
+    words = [list(key[4 * i : 4 * i + 4]) for i in range(nk)]
+    rcon = 1
+    for i in range(nk, 4 * (rounds + 1)):
+        temp = list(words[i - 1])
+        if i % nk == 0:
+            temp = temp[1:] + temp[:1]
+            temp = [sbox[b] for b in temp]
+            temp[0] ^= rcon
+            rcon = ((rcon << 1) ^ (0x11B if rcon & 0x80 else 0)) & 0xFF
+        elif nk > 6 and i % nk == 4:
+            temp = [sbox[b] for b in temp]
+        words.append([a ^ b for a, b in zip(words[i - nk], temp, strict=True)])
+    return bytes(b for word in words for b in word)
+
+
+def fake_memory(size: int) -> bytearray:
+    """Something that looks like a process dump: zeros, pointers, strings, random runs."""
+    memory = bytearray()
+    strings = [
+        b"GET /index.html HTTP/1.1\r\n",
+        b"libcrypto.so.3\x00",
+        b"/tmp/.cache/x\x00",
+        b"Mozilla/5.0 (X11; Linux x86_64)\x00",
+        b"session_id=4f2a\x00",
+    ]
+    while len(memory) < size:
+        kind = RNG.randrange(4)
+        if kind == 0:
+            memory += bytes(RNG.randrange(16, 200))
+        elif kind == 1:
+            for _ in range(RNG.randrange(2, 12)):
+                memory += struct.pack("<Q", 0x00007F0000000000 + RNG.randrange(1 << 32))
+        elif kind == 2:
+            memory += RNG.choice(strings)
+        else:
+            memory += RNG.randbytes(RNG.randrange(8, 64))
+    return memory[:size]
+
+
+def write_keyhunt_fixtures() -> None:
+    secret = b"Exfiltration report: 4 hosts compromised. The flag is CYBN{fixture_key_schedule}.\n"
+
+    # 1. A memory dump holding an expanded AES-256 key (what aeskeyfind looks for)
+    key = RNG.randbytes(32)
+    memory = fake_memory(65536)
+    offset = 0x5A30
+    memory[offset : offset + 240] = aes_key_schedule(key)
+    write("memdump_aes.bin", bytes(memory))
+    iv = RNG.randbytes(16)
+    write("memdump_aes_ct.bin", iv + AES.new(key, AES.MODE_CBC, iv).encrypt(pad(secret, 16)))
+
+    # 2. `strings` output: a hex key labelled in a config line, among hash decoys
+    key = RNG.randbytes(32)
+    lines = [
+        "GCC: (Debian 12.2.0-14) 12.2.0",
+        f"build_id={RNG.randbytes(32).hex()}",
+        "connecting to c2 server...",
+        f"sha256={hashlib.sha256(b'decoy').hexdigest()}",
+        f"aes_key = {key.hex()}",
+        f"token: {base64.b64encode(RNG.randbytes(32)).decode()}",
+        "error: could not open /etc/shadow",
+    ]
+    write("strings_dump.txt", "\n".join(lines) + "\n")
+    secret2 = b"Second stage URL: http://evil.example/stage2 - flag CYBN{fixture_strings_key}\n"
+    write("strings_dump_ct.bin", AES.new(key, AES.MODE_ECB).encrypt(pad(secret2, 16)))
+
+    # 3. A binary with an ASCII key right after the AES S-box (custom crypto code)
+    ascii_key = b"Sup3rS3cr3tK3y!!"
+    blob = bytearray(RNG.randbytes(4096))
+    blob[0x400 : 0x400 + 16] = bytes(aes_sbox()[:16])
+    blob[0x700 : 0x700 + 17] = ascii_key + b"\x00"
+    write("binary_with_key.bin", bytes(blob))
+    iv = RNG.randbytes(16)
+    secret3 = b"config: beacon every 60s, flag CYBN{fixture_ascii_key}\n"
+    write(
+        "binary_with_key_ct.bin",
+        iv + AES.new(ascii_key, AES.MODE_CBC, iv).encrypt(pad(secret3, 16)),
+    )
+
+
 def main() -> None:
     FIXTURES.mkdir(exist_ok=True)
     print(f"writing fixtures to {FIXTURES}")
@@ -672,6 +865,11 @@ def main() -> None:
 
     # --- pcap (improvement idea 4) ---
     write_pcap_fixture()
+
+    # --- M7: classical ciphers, key hunting (after everything else: the seed
+    # order of the earlier fixtures must not change) ---
+    write_classical_fixtures()
+    write_keyhunt_fixtures()
 
 
 if __name__ == "__main__":

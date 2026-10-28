@@ -18,7 +18,8 @@ A recipe is plain JSON, so it can be saved, edited by hand and shared:
     }
 
 The operation names are the same ones `auto` and Code Lens use (the decoders of
-`encodings.py`, plus `xor`, `cipher` and `base64_custom`), so a chain found
+`encodings.py`, plus `xor`, `cipher`, `base64_custom` and the classical ciphers
+`caesar`, `affine`, `atbash`, `vigenere`, `railfence`), so a chain found
 automatically can be saved as a recipe, edited, and replayed - and exported as a
 Python script or a CyberChef recipe, because they all go through `codegen`.
 """
@@ -29,13 +30,28 @@ import json
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from ctfc.core.codegen import Step, chain_cyberchef, chain_label, chain_snippet, step_code
+from ctfc.core.codegen import (
+    CLASSICAL_OPERATIONS,
+    Step,
+    chain_cyberchef,
+    chain_label,
+    chain_snippet,
+    step_code,
+)
 from ctfc.core.encodings import DECODERS_BY_NAME, DecodeError
 from ctfc.core.flags import FlagSet
 from ctfc.core.scoring import has_valid_pkcs7, score
 
 # Operations that take arguments; everything else is a decoder name.
-PARAMETRISED = {"xor", "cipher", "base64_custom"}
+PARAMETRISED = {"xor", "cipher", "base64_custom", *CLASSICAL_OPERATIONS}
+# The arguments each classical operation needs (atbash needs none).
+CLASSICAL_ARGS = {
+    "caesar": ("shift",),
+    "affine": ("a", "b"),
+    "atbash": (),
+    "vigenere": ("key",),
+    "railfence": ("rails",),
+}
 
 
 class RecipeError(ValueError):
@@ -129,6 +145,10 @@ def parse_steps(raw: list) -> list[Step]:
                 check_cipher(args)
             except RecipeError as exc:
                 raise RecipeError(f"step {position}: {exc}") from exc
+        missing = [arg for arg in CLASSICAL_ARGS.get(name, ()) if arg not in args]
+        if missing:
+            example = ", ".join(f'"{arg}": ...' for arg in CLASSICAL_ARGS[name])
+            raise RecipeError(f"step {position}: {name} needs {{{example}}}")
         if name == "base64_custom" and "alphabet" not in args:
             raise RecipeError(f'step {position}: base64_custom needs {{"alphabet": "..."}}')
         steps.append(Step(name, dict(args)))
@@ -189,6 +209,10 @@ def apply_step(data: bytes, step: Step) -> bytes:
             return decode_custom_base64(data, step.params["alphabet"])
         if step.name == "cipher":
             return _apply_cipher(data, step.params)
+        if step.name in CLASSICAL_OPERATIONS:
+            from ctfc.core.classical import apply
+
+            return apply(data, step.name, step.params)
         return DECODERS_BY_NAME[step.name].decode(data)
     except (DecodeError, ValueError, KeyError, UnicodeError, OverflowError) as exc:
         raise RecipeError(str(exc)) from exc

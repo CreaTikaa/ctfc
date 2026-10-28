@@ -15,6 +15,8 @@ from dataclasses import dataclass, field
 from ctfc.core.encodings import DECODERS_BY_NAME
 
 INLINE_LIMIT = 512  # inputs bigger than this are read from a file in the snippet
+# Steps written by core/classical.py (milestone M7).
+CLASSICAL_OPERATIONS = ("caesar", "affine", "atbash", "vigenere", "railfence")
 
 
 @dataclass(frozen=True)
@@ -367,6 +369,10 @@ def step_code(step: Step) -> StepCode:
         return cipher_step_code(step.params)
     if step.name == "base64_custom":
         return custom_base64_step_code(step.params)
+    if step.name in CLASSICAL_OPERATIONS:
+        from ctfc.core import classical  # imported here: classical imports codegen
+
+        return classical.step_code(step)
     decoder = DECODERS_BY_NAME[step.name]
     return StepCode(
         label=decoder.name,

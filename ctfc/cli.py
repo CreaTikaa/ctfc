@@ -15,7 +15,7 @@ from rich.console import Console
 
 from ctfc import __version__, render
 from ctfc.config import Config, ConfigError, load_config
-from ctfc.core import pipeline
+from ctfc.core import classical, pipeline
 from ctfc.core import tools as toolbox
 from ctfc.core.auto import auto_decode
 from ctfc.core.budget import Budget
@@ -113,6 +113,11 @@ def build_parser() -> argparse.ArgumentParser:
     p = add("hash")
     p.add_argument("hash", help=t("arg_hash"))
     p.add_argument("--no-passwords", action="store_true", help=t("opt_hash_no_passwords"))
+
+    p = add("classical")
+    p.add_argument("input", help=t("arg_input"))
+    p.add_argument("--cipher", choices=list(classical.OPERATIONS), help=t("opt_classical_cipher"))
+    p.add_argument("--key", help=t("opt_classical_key"))
 
     p = add("lens")
     p.add_argument("script", help=t("arg_script"))
@@ -239,6 +244,35 @@ def cmd_xor(args: argparse.Namespace, config: Config, console: Console) -> int:
     if lengths:
         render.print_key_lengths(console, lengths)
     render.print_candidates(console, candidates, show_code=args.show_code, title="xor")
+    return 0 if candidates else 1
+
+
+def cmd_classical(args: argparse.Namespace, config: Config, console: Console) -> int:
+    """Caesar, affine, Atbash, Vigenère, rail fence: brute force + scoring, or a given key."""
+    # The ciphertext is text: never auto-decode it as hex/base64.
+    inp = parse_input(args.input, decode_bare=False)
+    if args.key and not args.cipher:
+        raise classical.ClassicalError("--key needs --cipher (caesar, affine, vigenere, railfence)")
+    params = classical.parse_key(args.cipher, args.key) if args.key else None
+    candidates = classical.solve_classical(
+        inp.data,
+        flagset_from(config),
+        cipher=args.cipher,
+        params=params,
+        top_n=config.top_n,
+    )
+    notes = classical.stats_notes(classical.analyse(inp.data))
+    if args.json:
+        payload = {
+            "input": input_to_dict(inp),
+            "notes": notes,
+            "candidates": [candidate.to_dict() for candidate in candidates],
+        }
+        print(json.dumps(payload, indent=2))
+        return 0 if candidates else 1
+    render.print_input_notes(console, inp)
+    render.print_notes(console, notes)
+    render.print_candidates(console, candidates, show_code=args.show_code, title="classical")
     return 0 if candidates else 1
 
 
@@ -579,6 +613,7 @@ def main(argv: list[str] | None = None) -> int:
         "sym": cmd_sym,
         "blob": cmd_blob,
         "lens": cmd_lens,
+        "classical": cmd_classical,
         "rsa": cmd_rsa,
         "hash": cmd_hash,
         "scan": cmd_scan,

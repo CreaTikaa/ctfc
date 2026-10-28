@@ -1,0 +1,7 @@
+GCC: (Debian 12.2.0-14) 12.2.0
+build_id=49fea84fc7db3b2ce98842061475fc9e90e6b78947d306d3eea9dbb9dd160e5c
+connecting to c2 server...
+sha256=bdeb9ba22af8fa73e59fe7c4d3c48ae1165617dd76c720773cdf6cbc33a91dd7
+aes_key = f5dc5a39ee5fbaa20b17aa397083e9bb4f404cda44469c59510373647813a38c
+token: a/tCP7KiVxpqnJ8zCN11rDgbJB7J0Q0CV0h8mjAzUYw=
+error: could not open /etc/shadow

@@ -35,6 +35,17 @@ EN: dict[str, str] = {
     "cmd_detect_ex": "example: ctfc detect b64:U2FsdGVkX1+...  |  ctfc detect dump.bin",
     "cmd_auto": "'magic' mode: try decoding chains until the output looks meaningful",
     "cmd_auto_ex": "example: ctfc auto 'eJzLSM3JyVcozy/KSQEAGgQEXQ=='",
+    "cmd_classical": "classical ciphers: Caesar/ROT-n, affine, Atbash, Vigenère, rail fence",
+    "cmd_classical_ex": (
+        "example: ctfc classical text:'PLOA{fvzcyr_fuvsg}'  |  ctfc classical msg.txt "
+        "--cipher vigenere  |  ctfc classical msg.txt --cipher affine --key 5,8  |  "
+        "ctfc classical msg.txt --cipher railfence --key 3"
+    ),
+    "opt_classical_cipher": "only try this cipher (default: all of them)",
+    "opt_classical_key": (
+        "decrypt with this key (needs --cipher): caesar 3, affine 5,8, vigenere lemon, "
+        "railfence 3 or 3,1 (rails,offset)"
+    ),
     "cmd_xor": "XOR solver: single byte, repeating key, known plaintext, crib dragging",
     "cmd_xor_ex": (
         "example: ctfc xor secret.bin  |  ctfc xor secret.bin --keylen 8 --crib 'CYBN{'  |  "

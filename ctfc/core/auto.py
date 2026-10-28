@@ -12,7 +12,9 @@ This is a *best-first search*:
 
 Besides the encodings, two XOR *solvers* are tried on binary data that is not a
 known file or compressed stream: single-byte XOR and repeating-key XOR (only when
-the key length test is convincing, to avoid noise).
+the key length test is convincing, to avoid noise). Text that does not read is
+also given to the classical solver (Caesar, affine, Atbash, Vigenère, rail
+fence), which only reports a decryption that reads clearly better.
 """
 
 from __future__ import annotations
@@ -21,9 +23,15 @@ import hashlib
 import heapq
 from dataclasses import dataclass, field
 
-from ctfc.core import xor
+from ctfc.core import classical, xor
 from ctfc.core.budget import Budget
-from ctfc.core.codegen import Step, chain_cyberchef, chain_label, chain_snippet
+from ctfc.core.codegen import (
+    CLASSICAL_OPERATIONS,
+    Step,
+    chain_cyberchef,
+    chain_label,
+    chain_snippet,
+)
 from ctfc.core.encodings import (
     DECODERS,
     DecodeError,
@@ -42,6 +50,9 @@ XOR_MIN_SCORE = 0.6  # an XOR guess must look clearly readable to be kept
 # Each of these may appear at most once in a chain, otherwise the search wastes its
 # budget on things like rot47 -> rot13 -> rot47, or xor -> xor (two XORs = one XOR).
 ONCE_PER_CHAIN = {"rot13", "rot47", "reverse", "xor", "base64_custom"}
+CLASSICAL_MIN_SCORE = 0.6  # a classical decryption must read clearly to be kept
+CLASSICAL_SECONDS = 3.0  # time given to the classical solver per text node
+READS_FINE = 0.8  # text scoring this well is left alone (unless it holds a flag crib)
 
 
 @dataclass(order=True)
@@ -136,6 +147,28 @@ def _xor_outputs(
     return outputs
 
 
+def _classical_outputs(
+    data: bytes, data_score: float, chain: list[Step], flagset: FlagSet | None, budget: Budget
+) -> list[tuple[bytes, Step]]:
+    """Best classical decryption of text that does not read (or of a ciphered flag).
+
+    The classical solver gets its own small budget (it tries ~500 keys) so it
+    cannot eat the attempts of the decoding search; it shares the cancel button.
+    """
+    letter_ops = set(CLASSICAL_OPERATIONS) | {"rot13", "rot47"}
+    if any(step.name in letter_ops for step in chain) or not classical.is_text_like(data):
+        return []
+    if data_score >= READS_FINE and not classical.find_cribs(data, flagset):
+        return []
+    if not budget.spend():
+        return []
+    own = Budget(max_attempts=2000, max_seconds=CLASSICAL_SECONDS, cancel_event=budget.cancel_event)
+    found = classical.solve_classical(data, flagset, budget=own, top_n=1)
+    if not found or found[0].score < CLASSICAL_MIN_SCORE or found[0].score <= data_score:
+        return []
+    return [(found[0].data, Step(**found[0].params["chain"][0]))]
+
+
 def auto_decode(
     data: bytes,
     flagset: FlagSet | None = None,
@@ -167,6 +200,7 @@ def auto_decode(
             continue
         outputs = _decoder_outputs(node.data, node.chain, budget, alphabet)
         outputs += _xor_outputs(node.data, node.score, node.chain, flagset, budget)
+        outputs += _classical_outputs(node.data, node.score, node.chain, flagset, budget)
         for output, step in outputs:
             digest = hashlib.sha256(output).digest()
             if not output or digest in seen:
