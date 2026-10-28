@@ -587,6 +587,16 @@ def print_key_hunt(console: Console, report, show_code: bool = False, limit: int
             )
     if report.results:
         print_candidates(console, report.results, show_code=show_code, title="decryptions")
+    if report.luks:
+        luks = report.luks
+        console.print(
+            f"[bold green]LUKS master key confirmed[/] ({luks['key_bits']} bits, "
+            f"{safe(luks['cipher'])}): {safe(luks['built_from'])}"
+        )
+        console.print(luks["master_key_hex"], markup=False, highlight=False, soft_wrap=True)
+        console.print("[bold]To open the volume[/] (root needed to map it):")
+        for line in luks["commands"]:
+            console.print(line, markup=False, highlight=False, soft_wrap=True)
     if report.budget_summary:
         console.print(f"[dim]{report.budget_summary}[/]")
 

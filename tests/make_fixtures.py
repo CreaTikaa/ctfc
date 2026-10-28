@@ -962,6 +962,19 @@ def write_audit_fixtures() -> None:
     document = b"Private document. The flag is CYBN{fixture_zero_iv}.\n"
     write("audit_android_doc.enc", AES.new(key, AES.MODE_CBC, bytes(16)).encrypt(pad(document, 16)))
 
+    # 7. LUKS + RAM dump (the aeskeyfind case). real_luks1_header.bin and
+    #    real_luks2_header.bin are STATIC fixtures: the first 4096 / 16384 bytes
+    #    (metadata only, no keyslot material) of volumes made once with
+    #      cryptsetup luksFormat --type luks1|luks2 --cipher aes-xts-plain64
+    #        --key-size 512 --hash sha256 --volume-key-file mk.bin
+    #    and real_luks_master_key.hex is that mk.bin. The dump below holds the two
+    #    AES-256 halves as key schedules, in the OPPOSITE order of the master key.
+    master = bytes.fromhex((FIXTURES / "real_luks_master_key.hex").read_text().strip())
+    memory = bytearray(RNG.randbytes(65536))
+    memory[0x2400 : 0x2400 + 240] = aes_key_schedule(master[32:])
+    memory[0x7C00 : 0x7C00 + 240] = aes_key_schedule(master[:32])
+    write("audit_luks_mem.raw", bytes(memory))
+
     # 5. secretsdump.py output: two real accounts, a disabled one with the empty hash.
     write(
         "audit_secretsdump.txt",

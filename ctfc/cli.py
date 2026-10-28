@@ -490,6 +490,9 @@ def cmd_keys(args: argparse.Namespace, config: Config, console: Console) -> int:
     found = (
         [f"key at offset 0x{report.winner.offset:x}: {report.winner.how}"] if report.winner else []
     )
+    if report.luks:
+        found.append(f"LUKS master key confirmed by the header: {report.luks['built_from']}")
+        found += report.luks["commands"][:2]
     remember(args, config, None, args.dump, report.results, found + report.notes[:3])
     if args.json:
         print(json.dumps({"input": input_to_dict(dump), **report.to_dict()}, indent=2))
@@ -497,7 +500,8 @@ def cmd_keys(args: argparse.Namespace, config: Config, console: Console) -> int:
         render.print_key_hunt(console, report, show_code=args.show_code)
     if ciphertext is None:
         return 0 if report.candidates else 1
-    return 0 if report.winner else 1
+    # Success: a key that decrypts the ciphertext, or a LUKS master key the header confirms.
+    return 0 if (report.winner or report.luks) else 1
 
 
 def cmd_classical(args: argparse.Namespace, config: Config, console: Console) -> int:

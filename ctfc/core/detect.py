@@ -60,7 +60,8 @@ SIG_HINTS = {
     "pcapng": "open in Wireshark; tshark -r <file> -qz conv,tcp",
     "elf": "strings -n 8 <file>; diec <file>; look for crypto constants below",
     "exe": "diec <file>; strings -el <file> (UTF-16 strings)",
-    "luks": "out of scope for ctfc: luks2john / hashcat -m 14600",
+    "luks": "with a RAM dump of the machine: ctfc keys <dump> --against <this> (the header "
+    "confirms the master key); without one: luks2john + hashcat -m 14600",
     "bitlocker": "out of scope for ctfc: bitlocker2john / hashcat -m 22100",
     "ser": "Java serialized object: inspect with SerializationDumper, never deserialize",
 }

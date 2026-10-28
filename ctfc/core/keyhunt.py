@@ -105,6 +105,8 @@ class KeyReport:
     winner: KeyCandidate | None = None
     notes: list[str] = field(default_factory=list)
     budget_summary: str = ""
+    # When --against is a LUKS volume: the confirmed master key and how to use it.
+    luks: dict | None = None
 
     def to_dict(self, limit: int = 50) -> dict:
         return {
@@ -113,6 +115,7 @@ class KeyReport:
             "tested": self.tested,
             "results": [result.to_dict() for result in self.results],
             "winner": self.winner.to_dict() if self.winner else None,
+            "luks": self.luks,
             "notes": list(self.notes),
             "budget": self.budget_summary,
         }
@@ -463,6 +466,13 @@ def hunt(
         report.budget_summary = "nothing tested"
         return report
 
+    from ctfc.core import luks
+
+    header = luks.find_header(ciphertext)
+    if header is not None:
+        _hunt_luks(report, header, budget)
+        return report
+
     ivs = [c.key for c in report.candidates if c.role == "iv"][:3]
     best: list[Candidate] = []
     for candidate in report.candidates:
@@ -511,6 +521,57 @@ def hunt(
         )
     report.budget_summary = f"{report.tested} candidate keys tested in {budget.elapsed():.1f} s"
     return report
+
+
+def _hunt_luks(report: KeyReport, header, budget: Budget) -> None:
+    """--against is a LUKS volume: confirm a master key with the header's own digest.
+
+    The symmetric solver cannot open LUKS (the data is encrypted sector by
+    sector with a key that keyslots protect), but the header holds a PBKDF2
+    digest of the master key: every candidate - alone, or two keys glued, in
+    both orders - is checked against it, offline.
+    """
+    from ctfc.core import luks
+
+    report.notes.append(header.describe())
+    usable = [
+        candidate
+        for candidate in report.candidates
+        if candidate.role == "key" and len(candidate.key) in (16, 24, 32, 64)
+    ]
+    # A mounted LUKS volume keeps its master key in memory as AES key schedules
+    # (that is what aeskeyfind looks for): when some were found, they are the
+    # candidates; the weaker kinds (random-looking windows) only come as a fallback.
+    strong = [c for c in usable if c.kind in ("aes_schedule", "labelled", "hex", "base64")]
+    keys = [(c.key, f"{c.how} @0x{c.offset:x}") for c in (strong or usable)]
+    tries = luks.candidates(keys, header.key_bytes)
+    report.notes.append(
+        f"{len(tries)} master-key candidates of {header.key_bytes} bytes built from "
+        f"{len(keys)} keys (alone, or two glued in both orders), each checked "
+        "against the header's PBKDF2 digest"
+    )
+    for key, how in tries:
+        if not budget.spend():
+            report.notes.append(f"stopped: {budget.summary()}")
+            break
+        report.tested += 1
+        if luks.is_master_key(header, key):
+            report.luks = {
+                **header.to_dict(),
+                "master_key_hex": key.hex(),
+                "built_from": how,
+                "commands": luks.open_commands(key),
+            }
+            report.notes.append(f"master key CONFIRMED by the LUKS header: {how}")
+            break
+    else:
+        report.notes.append(
+            "no candidate matches the header's digest: the key is not among the AES "
+            "keys found in this dump (another dump? a different partition?)"
+        )
+    report.budget_summary = (
+        f"{report.tested} master-key candidates checked in {budget.elapsed():.1f} s"
+    )
 
 
 def _attribute(result: Candidate, candidate: KeyCandidate) -> Candidate:
