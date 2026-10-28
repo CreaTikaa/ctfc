@@ -1,4 +1,4 @@
-# ctfc — CTF Crypto Lab
+# ctfc ~ ctf crypto helper
 
 Crypto helper for forensics CTFs: go from "I found a payload / key / IV / blob" to
 "plaintext / flag". Identifies encodings and ciphers, tries sensible combinations,
