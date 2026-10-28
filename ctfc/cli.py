@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import tempfile
 from pathlib import Path
 
 from rich.console import Console
@@ -143,6 +144,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--list", action="store_true", help=t("opt_tools_list"))
     p.add_argument("--run", help=t("opt_tools_run"))
     p.add_argument("--wordlist", help=t("opt_tools_wordlist"))
+    p.add_argument("--password", help=t("opt_tools_password"))
 
     p = add("serve")
     p.add_argument("--port", type=int, default=None, help=t("opt_port"))
@@ -486,28 +488,17 @@ def cmd_tools(args: argparse.Namespace, config: Config, console: Console) -> int
         return 0
 
     inp = parse_input(args.input)
-    report = detect(inp.data, flagset_from(config))
-    values: dict = {"input": args.input}
+    # The tools read files: a pasted hex:/text: input has no path to give them.
+    path = args.input if Path(args.input).is_file() else None
+    signals, values = toolbox.gather(inp.data, path, flagset_from(config))
     if args.wordlist:
         values["wordlist"] = args.wordlist
-    # Fill what we can work out ourselves: a key length, a hash mode, a recipe.
-    lengths = guess_key_lengths(inp.data)
-    if lengths:
-        values["keylen"] = lengths[0].length
-    matches = identify_hash(inp.data.decode("utf-8", errors="replace").strip(), False).matches
-    if matches:
-        if matches[0].format.hashcat is not None:
-            values["hashcat_mode"] = matches[0].format.hashcat
-        if matches[0].format.john:
-            values["john_format"] = matches[0].format.john
-    candidates = auto_decode(inp.data, flagset=flagset_from(config), top_n=1)
-    if candidates and candidates[0].cyberchef:
-        values["cyberchef_recipe"] = candidates[0].cyberchef
-    values["cyberchef_data"] = inp.data[:4096]
-    values["cyberchef_url"] = config.cyberchef_url
+    if args.password:
+        values["password"] = args.password
+    values["cyberchef_url"] = toolbox.cyberchef_base(config.cyberchef_url, for_web=False)
 
     suggestions = toolbox.suggest(
-        [(guess.rule, guess.confidence) for guess in report.guesses],
+        signals,
         values=values,
         offline=config.offline,
         threshold=config.suggest_threshold,
@@ -519,7 +510,13 @@ def cmd_tools(args: argparse.Namespace, config: Config, console: Console) -> int
         if not tool.offline_safe and config.offline:
             print(t("tool_offline_refused", name=tool.name), file=sys.stderr)
             return 2
-        result = toolbox.run_tool(tool, values)
+        if path is None:
+            # Write the pasted data to a temporary file for the tool, then clean up.
+            with tempfile.TemporaryDirectory(prefix="ctfc-") as folder:
+                values["input"] = str(toolbox.write_input(inp.data, Path(folder)))
+                result = toolbox.run_tool(tool, values)
+        else:
+            result = toolbox.run_tool(tool, values)
         if args.json:
             print(json.dumps(result.to_dict(), indent=2))
             return 0 if result.returncode == 0 else 1

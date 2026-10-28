@@ -30,6 +30,10 @@ from pathlib import Path
 from ctfc.core.datafiles import load_toml
 
 RUN_TIMEOUT = 120  # a tool that hangs must not hang ctfc
+# Where scripts/fetch_vendor.sh puts the embedded CyberChef.
+VENDOR_CYBERCHEF = Path(__file__).resolve().parent.parent / "web/static/vendor/cyberchef/index.html"
+# Bytes of the input put in a CyberChef link (a URL cannot carry a whole dump).
+CYBERCHEF_DATA_LIMIT = 4096
 THIRD_PARTY_WARNING = "this sends your data to a third party"
 OUTPUT_LIMIT = 200_000  # characters of output kept
 
@@ -47,6 +51,9 @@ class Tool:
     url_template: str = ""
     install: str = ""
     notes: str = ""
+    # When this tool is available, these ids are not suggested next to it
+    # (the embedded CyberChef makes the public one pointless, and safer).
+    prefer_over: tuple[str, ...] = ()
 
     def matches(self, rule: str) -> bool:
         """Does this tool apply to a rule id? Patterns may use `*` (`hash.*`)."""
@@ -54,10 +61,30 @@ class Tool:
 
     @property
     def available(self) -> bool:
-        """For a local tool: is the program on the PATH?"""
+        """Local tool: is the program on the PATH? Embedded: was it fetched?"""
+        if self.kind == "embedded":
+            return embedded_cyberchef_installed()
         if self.kind != "local" or not self.command_template:
             return True
         return shutil.which(self.command_template[0]) is not None
+
+
+@dataclass(frozen=True)
+class Signal:
+    """Something we noticed about the input, that may make a tool relevant.
+
+    `rule` is a detect / hash rule id ("xor.repeating", "hash.md5"),
+    `confidence` is 0..1, `why` is shown to the user (default: the rule id).
+    """
+
+    rule: str
+    confidence: float
+    why: str = ""
+
+
+def embedded_cyberchef_installed() -> bool:
+    """Has scripts/fetch_vendor.sh been run on this machine?"""
+    return VENDOR_CYBERCHEF.is_file()
 
 
 @dataclass
@@ -106,6 +133,7 @@ def load_tools() -> tuple[Tool, ...]:
                 url_template=row.get("url_template", ""),
                 install=row.get("install", ""),
                 notes=row.get("notes", ""),
+                prefer_over=tuple(row.get("prefer_over", [])),
             )
         )
     return tuple(tools)
@@ -132,6 +160,7 @@ PLACEHOLDER_HINTS = {
     "{hashcat_mode}": "the hashcat mode number",
     "{john_format}": "the john format name",
     "{modulus}": "the RSA modulus",
+    "{password}": "the passphrase (ctfc sym --passwords may find it first)",
 }
 
 
@@ -178,31 +207,38 @@ def build_url(tool: Tool, values: dict) -> tuple[str, list[str]]:
 
 
 def suggest(
-    rules: list[tuple[str, float]],
+    signals: list[Signal],
     values: dict | None = None,
     offline: bool = False,
     threshold: float = 0.7,
     limit: int = 3,
 ) -> list[Suggestion]:
-    """Which tools are worth suggesting for these (rule id, confidence) pairs.
+    """Which tools are worth suggesting for these signals.
 
-    Only rules above `threshold` are considered, the best first, and each tool is
-    suggested once. `values` fills the placeholders that are known (the input
-    path, a key length, a hashcat mode...).
+    Only signals above `threshold` are considered, the most confident first, and
+    each tool is suggested once. `values` fills the placeholders that are known
+    (the input path, a key length, a hashcat mode...).
     """
     values = values or {}
     ranked = sorted(
-        [(rule, confidence) for rule, confidence in rules if confidence >= threshold],
-        key=lambda item: -item[1],
+        [signal for signal in signals if signal.confidence >= threshold],
+        key=lambda signal: -signal.confidence,
     )
+    tools = load_tools()
+    # Tools pushed aside by a better alternative that is available here.
+    replaced = {
+        other for tool in tools if tool.prefer_over and tool.available for other in tool.prefer_over
+    }
     suggestions: list[Suggestion] = []
     seen: set[str] = set()
-    for rule, confidence in ranked:
-        for tool in load_tools():
-            if tool.id in seen or not tool.matches(rule):
+    for signal in ranked:
+        for tool in tools:
+            if tool.id in seen or tool.id in replaced or not tool.matches(signal.rule):
                 continue
             if offline and not tool.offline_safe:
                 continue
+            if tool.kind == "embedded" and not tool.available:
+                continue  # a link to a copy that was never fetched would be dead
             seen.add(tool.id)
             command, missing = ([], [])
             url = ""
@@ -211,10 +247,11 @@ def suggest(
             if tool.url_template:
                 url, url_missing = build_url(tool, values)
                 missing += url_missing
+            why = signal.why or signal.rule
             suggestions.append(
                 Suggestion(
                     tool=tool,
-                    reason=f"{rule} fired with confidence {confidence:.2f}",
+                    reason=f"{why} (confidence {signal.confidence:.2f})",
                     command=command,
                     url=url,
                     available=tool.available,
@@ -227,16 +264,65 @@ def suggest(
     return suggestions
 
 
-def suggest_for_report(
-    report,
-    values: dict | None = None,
-    offline: bool = False,
-    threshold: float = 0.7,
-    limit: int = 3,
-) -> list[Suggestion]:
-    """Suggestions for a `detect` report: its guesses are already (rule, confidence)."""
-    rules = [(guess.rule, guess.confidence) for guess in report.guesses]
-    return suggest(rules, values, offline, threshold, limit)
+# ---------------------------------------------------------------------------
+# Working out the signals and values for an input
+# ---------------------------------------------------------------------------
+
+
+def gather(data: bytes, input_path: str | None, flagset=None) -> tuple[list[Signal], dict]:
+    """Run the cheap analyses ctfc already has and collect what the tools need.
+
+    Returns (signals, values): the detect guesses (plus "this is a hash" from
+    the hash identifier), and the placeholder values we could work out - the
+    input path, a key length, a hashcat mode, a CyberChef recipe.
+    `input_path` is None when the data is not a file on disk (pasted text):
+    {input} then stays a placeholder, since the tools only read files.
+    """
+    from ctfc.core.auto import auto_decode
+    from ctfc.core.detect import detect
+    from ctfc.core.hashes import identify
+    from ctfc.core.xor import guess_key_lengths
+
+    report = detect(data, flagset)
+    signals = [Signal(guess.rule, guess.confidence, guess.label) for guess in report.guesses]
+    values: dict = {"input": input_path} if input_path else {}
+
+    lengths = guess_key_lengths(data)
+    if lengths:
+        values["keylen"] = lengths[0].length
+
+    # A 32-hex-digit string is surely *a* hash, even when MD5 vs NTLM is a
+    # coin toss: hashcat is the right tool either way, so the signal adds the
+    # candidates' confidences up and the mode is the most likely one.
+    text = data.decode("utf-8", errors="replace").strip()
+    matches = identify(text, try_passwords=False).matches if len(text) < 4096 else []
+    if matches:
+        best = matches[0].format
+        if best.hashcat is not None:
+            values["hashcat_mode"] = best.hashcat
+        if best.john:
+            values["john_format"] = best.john
+        total = min(0.95, sum(match.confidence for match in matches))
+        names = ", ".join(f"{m.format.name} {m.confidence:.2f}" for m in matches[:3])
+        signals.append(Signal(f"hash.{best.id}", total, f"looks like a hash ({names})"))
+
+    candidates = auto_decode(data, flagset=flagset, top_n=1)
+    if candidates and candidates[0].cyberchef:
+        values["cyberchef_recipe"] = candidates[0].cyberchef
+    values["cyberchef_data"] = data[:CYBERCHEF_DATA_LIMIT]
+    return signals, values
+
+
+def cyberchef_base(config_url: str, for_web: bool) -> str:
+    """The address of the embedded CyberChef, as the caller can open it.
+
+    The default `cyberchef_url` is relative ("/vendor/cyberchef/index.html"): fine
+    in the web UI, which serves it, but meaningless in a terminal - there the
+    vendored file is opened directly (CyberChef works from file://).
+    """
+    if for_web or not config_url.startswith("/"):
+        return config_url
+    return VENDOR_CYBERCHEF.as_uri()
 
 
 # ---------------------------------------------------------------------------
@@ -289,6 +375,9 @@ def run_tool(tool: Tool, values: dict, timeout: int = RUN_TIMEOUT) -> RunResult:
         completed = subprocess.run(  # noqa: S603 - argument list from our own registry
             [program, *command[1:]],
             capture_output=True,
+            # A tool that asks a question (openssl without -pass prompts for a
+            # password) must fail at once, not wait for a keyboard nobody uses.
+            stdin=subprocess.DEVNULL,
             timeout=timeout,
             check=False,
         )

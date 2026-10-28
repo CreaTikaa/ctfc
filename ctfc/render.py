@@ -488,19 +488,19 @@ def print_tools(console: Console, suggestions, public_url: str = "", offline: bo
         )
         return
     for item in suggestions:
-        state = "[green]installed[/]" if item.available else "[yellow]not installed[/]"
-        if item.tool.kind != "local":
-            state = "[cyan]online[/]" if not item.tool.offline_safe else "[green]local copy[/]"
-        lines = [f"[bold]{safe(item.tool.name)}[/] ({item.tool.kind}, {state})", ""]
+        if item.tool.kind == "local":
+            state = "[green]installed[/]" if item.available else "[yellow]not installed[/]"
+        elif item.tool.kind == "embedded":
+            state = "[green]served from this machine[/]"
+        else:
+            state = "[cyan]online[/]"
+        lines = [f"[bold]{safe(item.tool.name)}[/] ({state})", ""]
         lines.append(f"  why: {safe(item.reason)}")
         if item.tool.notes:
             lines.append(f"  {safe(item.tool.notes)}")
         if item.command:
             lines.append("")
             lines.append("  " + escape(" ".join(item.command)))
-        if item.url:
-            lines.append("")
-            lines.append("  " + escape(item.url[:300]))
         if item.placeholders:
             lines.append(f"  [dim]fill in: {escape(', '.join(item.placeholders))}[/]")
         if not item.available and item.tool.install:
@@ -508,6 +508,10 @@ def print_tools(console: Console, suggestions, public_url: str = "", offline: bo
         if item.warning:
             lines.append(f"  [yellow]warning: {safe(item.warning)}[/]")
         console.print(Panel("\n".join(lines), expand=True))
+        if item.url:
+            # Outside the panel and never wrapped: a URL cut over two lines is
+            # neither clickable nor copyable.
+            console.print(item.url, soft_wrap=True, markup=False, highlight=False)
     if offline:
         console.print("[dim]offline mode: tools that would send data anywhere are hidden.[/]")
 

@@ -17,6 +17,8 @@
 #   suggest_when      rule ids from detect / lens; the tool is suggested when one
 #                     of them fired with enough confidence
 #   offline_safe      true when using it sends nothing anywhere
+#   prefer_over       (optional) ids not suggested when this tool is available:
+#                     the embedded CyberChef replaces the public instance
 #   install           how to get it, shown when it is missing
 #   notes             why it is the right tool here
 #
@@ -29,8 +31,9 @@ id = "cyberchef_local"
 name = "CyberChef (embedded copy)"
 kind = "embedded"
 url_template = "{cyberchef_url}#recipe={recipe}&input={input}"
-suggest_when = ["base64.*", "hex.*", "charset.*", "xor.*", "aes.*", "magic.*", "jwt"]
+suggest_when = ["base64.*", "escapes.*", "charcodes", "ascii85", "uuencode", "xor.*", "aes.*", "jwt"]
 offline_safe = true
+prefer_over = ["cyberchef_public"]
 install = "scripts/fetch_vendor.sh (downloads the official release into web/static/vendor/)"
 notes = "the same tool as the public instance, served from this machine: nothing leaves it"
 
@@ -39,7 +42,7 @@ id = "cyberchef_public"
 name = "CyberChef (public instance)"
 kind = "online"
 url_template = "https://gchq.github.io/CyberChef/#recipe={recipe}&input={input}"
-suggest_when = ["base64.*", "hex.*", "xor.*", "aes.*", "jwt"]
+suggest_when = ["base64.*", "escapes.*", "charcodes", "ascii85", "uuencode", "xor.*", "aes.*", "jwt"]
 offline_safe = false
 install = ""
 notes = "the data travels in the URL fragment: fine for a CTF sample, never for real evidence"
@@ -49,7 +52,7 @@ id = "dcode"
 name = "dcode.fr"
 kind = "online"
 url_template = "https://www.dcode.fr/en"
-suggest_when = ["classical.*", "base64.custom_alphabet", "charset.base32"]
+suggest_when = ["classical.*", "base64.custom_alphabet", "morse", "brainfuck"]
 offline_safe = false
 install = ""
 notes = "good for classical ciphers and odd alphabets; the page is opened, the data is not sent for you"
@@ -118,7 +121,7 @@ notes = "handles formats hashcat does not, and the *2john extractors come with i
 id = "openssl"
 name = "openssl"
 kind = "local"
-command_template = ["openssl", "enc", "-d", "-aes-256-cbc", "-md", "md5", "-in", "{input}"]
+command_template = ["openssl", "enc", "-d", "-aes-256-cbc", "-md", "md5", "-pass", "pass:{password}", "-in", "{input}"]
 suggest_when = ["magic.enc", "openssl.salted_b64"]
 offline_safe = true
 install = "apt install openssl"
@@ -149,7 +152,7 @@ id = "exiftool"
 name = "exiftool"
 kind = "local"
 command_template = ["exiftool", "{input}"]
-suggest_when = ["magic.jpg", "magic.png", "magic.gif", "magic.pdf", "magic.tiff"]
+suggest_when = ["magic.jpg", "magic.png", "magic.gif", "magic.pdf", "magic.tif"]
 offline_safe = true
 install = "apt install libimage-exiftool-perl"
 notes = "metadata: comments and GPS tags are a classic hiding place"
@@ -169,7 +172,7 @@ id = "steghide"
 name = "steghide"
 kind = "local"
 command_template = ["steghide", "info", "{input}"]
-suggest_when = ["magic.jpg", "magic.bmp", "magic.wav"]
+suggest_when = ["magic.jpg", "magic.bmp", "magic.riff"]
 offline_safe = true
 install = "apt install steghide"
 notes = "password-protected steganography; stegseek cracks the password fast"
@@ -179,7 +182,7 @@ id = "stegseek"
 name = "stegseek"
 kind = "local"
 command_template = ["stegseek", "{input}", "{wordlist}"]
-suggest_when = ["magic.jpg", "magic.bmp", "magic.wav"]
+suggest_when = ["magic.jpg", "magic.bmp", "magic.riff"]
 offline_safe = true
 install = "https://github.com/RickdeJager/stegseek/releases"
 notes = "brute-forces a steghide passphrase through a wordlist, very fast"

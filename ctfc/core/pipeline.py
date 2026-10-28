@@ -32,7 +32,7 @@ from pathlib import Path
 from ctfc.core.codegen import Step, chain_cyberchef, chain_label, chain_snippet, step_code
 from ctfc.core.encodings import DECODERS_BY_NAME, DecodeError
 from ctfc.core.flags import FlagSet
-from ctfc.core.scoring import score
+from ctfc.core.scoring import has_valid_pkcs7, score
 
 # Operations that take arguments; everything else is a decoder name.
 PARAMETRISED = {"xor", "cipher", "base64_custom"}
@@ -120,10 +120,15 @@ def parse_steps(raw: list) -> list[Step]:
             raise RecipeError(f"step {position}: unknown operation {name!r}. Known: {known}")
         if name == "xor" and "key" not in args:
             raise RecipeError(f'step {position}: xor needs args {{"key": "<hex>"}}')
-        if name == "cipher" and not {"cipher", "key"} <= set(args):
-            raise RecipeError(
-                f'step {position}: cipher needs at least {{"cipher": "aes", "key": "<hex>"}}'
-            )
+        if name == "cipher":
+            if not {"cipher", "key"} <= set(args):
+                raise RecipeError(
+                    f'step {position}: cipher needs at least {{"cipher": "aes", "key": "<hex>"}}'
+                )
+            try:
+                check_cipher(args)
+            except RecipeError as exc:
+                raise RecipeError(f"step {position}: {exc}") from exc
         if name == "base64_custom" and "alphabet" not in args:
             raise RecipeError(f'step {position}: base64_custom needs {{"alphabet": "..."}}')
         steps.append(Step(name, dict(args)))
@@ -189,9 +194,9 @@ def apply_step(data: bytes, step: Step) -> bytes:
         raise RecipeError(str(exc)) from exc
 
 
-def _apply_cipher(data: bytes, params: dict) -> bytes:
-    """A cipher step, reusing the M3 primitives."""
-    from ctfc.core.symmetric import CIPHERS, CryptoError, decrypt_raw, strip_padding
+def check_cipher(params: dict) -> None:
+    """Refuse an unknown cipher or mode, with the list of the known ones."""
+    from ctfc.core.symmetric import CIPHERS
 
     name = str(params["cipher"]).lower()
     if name not in CIPHERS:
@@ -200,8 +205,61 @@ def _apply_cipher(data: bytes, params: dict) -> bytes:
     mode = str(params.get("mode", "cbc")).lower()
     if mode not in spec.modes:
         raise RecipeError(f"{spec.label} has no mode {mode!r}; known: {', '.join(spec.modes)}")
+
+
+def complete_cipher(params: dict) -> dict:
+    """Fill the optional fields of a cipher step, so codegen and the run agree.
+
+    A hand-written recipe may leave out `mode` (CBC is assumed) and `iv_size`
+    (the usual size for that cipher: 12 for a GCM or ChaCha20 nonce, 8 for
+    Salsa20, the block size otherwise).
+    """
+    from ctfc.core.symmetric import CIPHERS
+
+    check_cipher(params)
+    full = dict(params)
+    full["cipher"] = str(params["cipher"]).lower()
+    full["mode"] = str(params.get("mode", "cbc")).lower()
+    if full.get("iv_from") == "prefix" and not full.get("iv_size"):
+        spec = CIPHERS[full["cipher"]]
+        if full["mode"] == "gcm" or full["cipher"] == "chacha20":
+            full["iv_size"] = 12
+        elif full["cipher"] == "salsa20":
+            full["iv_size"] = 8
+        else:
+            full["iv_size"] = spec.block_size
+    return full
+
+
+def _apply_cipher(data: bytes, params: dict) -> bytes:
+    """A cipher step, reusing the M3 primitives.
+
+    The optional fields mean exactly what they mean in the generated Python
+    (`codegen.cipher_step_code`), so a recipe and its exported script agree:
+    `header_skip` drops N bytes first, `iv_from: "prefix"` reads the IV from the
+    start of the data (`iv_size` bytes), and `tag` says the data *ends* with that
+    16-byte GCM tag (the usual nonce||ct||tag layout).
+    """
+    from ctfc.core.symmetric import CIPHERS, CryptoError, decrypt_raw
+
+    params = complete_cipher(params)
+    spec = CIPHERS[params["cipher"]]
+    mode = params["mode"]
     key = bytes.fromhex(params["key"])
     iv = bytes.fromhex(params["iv"]) if params.get("iv") else None
+    if params.get("header_skip"):
+        data = data[int(params["header_skip"]) :]
+    if params.get("iv_from") == "prefix":
+        size = int(params["iv_size"])
+        iv, data = data[:size], data[size:]
+    tag = None
+    if params.get("tag"):
+        tag, data = data[-16:], data[:-16]
+        if tag.hex() != str(params["tag"]).lower():
+            raise RecipeError(
+                f"the data does not end with the tag {params['tag']} (it ends with "
+                f"{tag.hex()}): a recipe expects the tag at the end of the data"
+            )
     try:
         raw = decrypt_raw(
             spec,
@@ -212,13 +270,20 @@ def _apply_cipher(data: bytes, params: dict) -> bytes:
             endian=str(params.get("endian", "big")),
             counter=int(params.get("counter", 0)),
             ctr_style=str(params.get("ctr_style", "block")),
-            tag=bytes.fromhex(params["tag"]) if params.get("tag") else None,
+            tag=tag,
         )
     except CryptoError as exc:
         raise RecipeError(str(exc)) from exc
+    # Same behaviour as the exported script: `unpad()` refuses a bad padding.
     if params.get("unpad") == "pkcs7":
-        plain, _how = strip_padding(raw, spec.block_size)
-        return plain
+        if not has_valid_pkcs7(raw, spec.block_size):
+            raise RecipeError(
+                "invalid PKCS7 padding after decryption: the key, IV or mode is wrong "
+                '(or the data is not padded: drop "unpad")'
+            )
+        return raw[: -raw[-1]]
+    if params.get("unpad") == "zero":
+        return raw.rstrip(b"\x00")
     return raw
 
 
@@ -237,17 +302,27 @@ def run(
     current = data
     applied: list[Step] = []
     for index, step in enumerate(steps, start=1):
-        code = step_code(step)
-        entry = StepResult(index=index, step=step, label=code.label, comment=code.comment)
+        try:
+            if step.name == "cipher":
+                step = Step("cipher", complete_cipher(step.params))
+            code = step_code(step)
+            label, comment = code.label, code.comment
+        except (KeyError, ValueError):  # malformed: apply_step explains it below
+            label, comment = step.name, ""
+        entry = StepResult(index=index, step=step, label=label, comment=comment)
         try:
             current = apply_step(current, step)
         except RecipeError as exc:
             entry.error = str(exc)
             entry.data = b""
             result.steps.append(entry)
+            if index == 1:
+                where = "the input itself"
+            else:
+                where = f"the output of step {index - 1} (above)"
             result.notes.append(
-                f"step {index} ({code.label}) failed: {exc}. The output of step "
-                f"{index - 1} is above: check it is what that step expected."
+                f"step {index} ({label}) failed: {exc}. Check that {where} "
+                "is what this step expects."
             )
             break
         entry.data = current

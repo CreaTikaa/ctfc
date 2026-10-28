@@ -298,3 +298,60 @@ def test_pcap_command_rejects_a_non_capture():
     result = run_ctfc("pcap", "tests/fixtures/rsa_public.pem")
     assert result.returncode == 2
     assert b"not a pcap" in result.stderr
+
+
+def test_recipe_save_then_run(tmp_path):
+    """`recipe save` keeps what auto found; `recipe run` replays it step by step."""
+    import json
+
+    recipe = tmp_path / "layers.json"
+    saved = run_ctfc("recipe", "save", str(recipe), "tests/fixtures/layers_b64_zlib_xor.txt")
+    assert saved.returncode == 0, saved.stderr.decode()
+    assert [step["op"] for step in json.loads(recipe.read_text())["steps"]] == [
+        "base64",
+        "zlib",
+        "xor",
+    ]
+    ran = run_ctfc("recipe", "run", str(recipe), "tests/fixtures/layers_b64_zlib_xor.txt", "--json")
+    assert ran.returncode == 0, ran.stderr.decode()
+    result = json.loads(ran.stdout)
+    assert len(result["steps"]) == 3
+    assert "CYBN{" in result["output_text"]
+
+
+def test_recipe_run_with_a_failing_step_exits_1(tmp_path):
+    recipe = tmp_path / "bad.json"
+    recipe.write_text('["base64", "zlib", "zlib"]')
+    ran = run_ctfc("recipe", "run", str(recipe), "tests/fixtures/layers_b64_zlib_xor.txt")
+    assert ran.returncode == 1
+    assert "step 3 (zlib) failed" in ran.stdout.decode()
+
+
+def test_recipe_bad_json_is_a_clear_error(tmp_path):
+    recipe = tmp_path / "broken.json"
+    recipe.write_text("{nope")
+    ran = run_ctfc("recipe", "show", str(recipe))
+    assert ran.returncode != 0
+    assert "not valid JSON" in ran.stderr.decode()
+
+
+def test_tools_suggests_hashcat_for_a_bare_md5():
+    import json
+
+    ran = run_ctfc("tools", "text:482c811da5d5b4bc6d497ffa98491e38", "--json")
+    assert ran.returncode == 0, ran.stderr.decode()
+    ids = [item["id"] for item in json.loads(ran.stdout)["suggestions"]]
+    assert ids[0] == "hashcat"
+
+
+def test_tools_offline_never_shows_online_tools():
+    import json
+
+    ran = run_ctfc("tools", "tests/fixtures/rsa_public.pem", "--json", "--offline")
+    for item in json.loads(ran.stdout)["suggestions"]:
+        assert item["offline_safe"], item["id"]
+
+
+def test_tools_run_refuses_online_tool_when_offline():
+    ran = run_ctfc("tools", "tests/fixtures/rsa_public.pem", "--run", "factordb", "--offline")
+    assert ran.returncode == 2
