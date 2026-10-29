@@ -489,16 +489,16 @@ fixture carrying a fake `CYBN{...}` flag.
 | `ctfc zip` | ZipCrypto vs WinZip AES (different attacks!), CRC32 recovery of 1-3 byte files, header mismatches | (lot C) |
 | `ctfc hive` | regf parser, the keys that matter, and the boot key from `Control\Lsa` class names | (lot C) |
 
-### Still open from lot C
+### Lot C finished too
 
-1. **PE triage** (`ctfc pe`): sections with per-section entropy, imports, suspicious
-   API list, overlay data after the last section, Rich header. Partly covered today by
-   the `diec` tool suggestion.
-2. **A real `.evtx` parser**: Security 4688 command lines and PowerShell 4104 script
-   blocks. Binary XML is a chunk of work; `psenc` already gets the command line out of
-   an `.evtx` without it (see 5quinquies), which is what the challenges actually need.
-3. **Protobuf in `auto` chains**: the wire format is self-describing enough to dump
-   field numbers and types with no `.proto`.
+| Feature | What it does |
+|---|---|
+| `ctfc pe` | sections + per-section entropy, imports read for what they mean, packing, TLS anti-debug, overlay. Validated against the mingw PE32/PE32+ zlib1.dll and a .NET SDK assembly |
+| `ctfc evtx` | chunks and records with real timestamps, the UTF-16LE strings inside each one, and the records holding a flag / credential / encoded command |
+| `protobuf` | a registry decoder, so `auto` picks it up: fields by number, nesting, no `.proto` needed |
+
+**Nothing from the original three batches is left.** Further ideas are collected in
+`docs/ideas.md`, ordered by value against effort.
 
 ### Decisions worth keeping
 
@@ -608,6 +608,9 @@ ctfc jwt <token> --show-code                       # alg=none / weak HMAC secret
 ctfc time 133476575820000000                       # Windows FILETIME
 ctfc hive <a SYSTEM hive>                          # the boot key
 ctfc hive <NTUSER.DAT> --key 'Microsoft\Windows\CurrentVersion\Run'
+ctfc pe /usr/i686-w64-mingw32/lib/zlib1.dll        # a real PE32, if mingw is installed
+ctfc evtx tests/fixtures/audit_security.evtx       # the record holding the encoded command
+ctfc auto tests/fixtures/audit_message.pb          # a protobuf message, no .proto needed
 ctfc radius hex:<User-Password> --authenticator hex:<16 bytes>   # the paste-two-blobs path
 ctfc tools tests/fixtures/audit_zipcrypto.zip       # prints the ready-to-run bkcrack command
 ctfc scan tests/fixtures --min-interest 0.9
