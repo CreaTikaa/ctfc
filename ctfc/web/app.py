@@ -102,6 +102,23 @@ def candidate_from_dict(raw: dict) -> Candidate:
     )
 
 
+def radius_snippet(encrypted: bytes, authenticator: bytes, secret: bytes) -> str:
+    """A tiny standalone script that redoes one RADIUS PAP recovery (teaching layer)."""
+    return (
+        "import hashlib\n"
+        f"enc = bytes.fromhex({encrypted.hex()!r})\n"
+        f"auth = bytes.fromhex({authenticator.hex()!r})\n"
+        f"secret = {secret!r}\n"
+        "out, prev = bytearray(), auth\n"
+        "for i in range(0, len(enc), 16):\n"
+        "    block = enc[i : i + 16]\n"
+        "    stream = hashlib.md5(secret + prev).digest()  # RFC 2865 section 5.2\n"
+        "    out += bytes(c ^ s for c, s in zip(block, stream))\n"
+        "    prev = block\n"
+        "print(bytes(out).rstrip(b'\\x00'))\n"
+    )
+
+
 # The CLI command a web run corresponds to: the write-up shows commands that can
 # be typed again. Options are added when they were filled in.
 WEB_OPTIONS = {
@@ -115,6 +132,7 @@ WEB_OPTIONS = {
         ("passphrase", "--pass"),
     ),
     "keys": (("cipher", "--cipher"), ("mode", "--mode")),
+    "radius": (("authenticator", "--authenticator"), ("secret", "--secret")),
 }
 
 
@@ -469,6 +487,43 @@ def create_app(config: Config | None = None) -> Flask:
         options = payload.get("options") or {}
         report = identify_hash(value, try_passwords=not options.get("no_passwords"))
         return jsonify(report.to_dict())
+
+    @app.post("/api/radius")
+    def api_radius():
+        """RADIUS PAP recovery: instant (undo RFC 2865, guess the shared secret)."""
+        from ctfc.core import radius as radius_mod
+
+        payload = read_payload()
+        inp = input_from_payload(payload, decode_bare=False)  # the encrypted User-Password
+        options = payload.get("options") or {}
+        authenticator = option_bytes(options, "authenticator", decode_bare=False) or b""
+        if len(authenticator) != 16:
+            raise InputError(t("web_radius_bad_auth"))
+        secret = str(options.get("secret") or "").strip()
+        secrets = [secret.encode()] if secret else None
+        found = radius_mod.recover(inp.data, authenticator, secrets, flagset=flagset)
+        candidates = []
+        for item in found[: config.top_n]:
+            name = item.secret.decode("utf-8", "replace")
+            candidates.append(
+                Candidate(
+                    label=f"shared secret {name!r}",
+                    data=item.password,
+                    score=1.0 if item.is_flag else min(1.0, item.score),
+                    reasons=[
+                        "matches a flag pattern" if item.is_flag else "fully printable password",
+                        "RFC 2865 section 5.2: password XOR MD5(secret + authenticator)",
+                    ],
+                    params={"secret": name, "authenticator": authenticator.hex()},
+                    python=radius_snippet(inp.data, authenticator, item.secret),
+                ).to_dict()
+            )
+        notes = []
+        if not found:
+            notes = [t("web_radius_none_secret") if secret else t("web_radius_none")]
+        answer = {"input": input_summary(inp), "candidates": candidates, "notes": notes}
+        record(payload, "radius", inp, answer)
+        return jsonify(answer)
 
     @app.post("/api/lens")
     def api_lens():

@@ -218,6 +218,39 @@ def test_api_lens_keeps_a_script_as_text(client):
     assert answer["input"]["length"] == len("YWJjZGVmZ2g=")
 
 
+def test_api_radius_recovers_the_password(client):
+    """The RADIUS tab undoes RFC 2865 and guesses the shared secret."""
+    import hashlib
+
+    auth = bytes(range(16))
+    padded = b"CYBN{web_radius}" + b"\x00"
+    padded += b"\x00" * (-len(padded) % 16)
+    enc, prev = bytearray(), auth
+    for i in range(0, len(padded), 16):
+        stream = hashlib.md5(b"testing123" + prev).digest()  # noqa: S324
+        block = bytes(p ^ s for p, s in zip(padded[i : i + 16], stream, strict=True))
+        enc += block
+        prev = block
+    payload = {
+        "input": "hex:" + bytes(enc).hex(),
+        "options": {"authenticator": "hex:" + auth.hex()},
+    }
+    answer = client.post("/api/radius", json=payload).get_json()
+    assert answer["candidates"], "no password recovered"
+    best = answer["candidates"][0]
+    assert bytes.fromhex(best["data_hex"]).startswith(b"CYBN{web_radius}")
+    assert "testing123" in best["label"]
+    assert "hashlib" in best["python"]
+
+
+def test_api_radius_rejects_a_bad_authenticator(client):
+    response = client.post(
+        "/api/radius", json={"input": "hex:" + "00" * 16, "options": {"authenticator": "hex:00"}}
+    )
+    assert response.status_code == 400
+    assert "16 bytes" in response.get_json()["error"]
+
+
 def test_api_rsa_job_with_attack(client, fixture_bytes):
     """The RSA tab runs as a job, because an attack can take seconds."""
     import time

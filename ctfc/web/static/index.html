@@ -63,6 +63,7 @@
         <button class="tab" data-tab="lens" data-t="web_tab_lens">Code Lens</button>
         <button class="tab" data-tab="hash" data-t="web_tab_hash">Hash</button>
         <button class="tab" data-tab="keys" data-t="web_tab_keys">Keys</button>
+        <button class="tab" data-tab="radius" data-t="web_tab_radius">RADIUS</button>
         <button class="tab" data-tab="cheatsheet" data-t="web_tab_cheatsheet">Cheatsheet</button>
       </nav>
       <!-- Options of the Pipeline tab: the recipe, as editable JSON -->
@@ -195,6 +196,13 @@
           </select></label>
         <label><span data-t="web_sym_seconds">time budget (s)</span>
           <input id="keys-seconds" type="number" min="1" max="300" value="60"></label>
+      </div>
+      <!-- Options of the RADIUS tab: the input is the encrypted User-Password -->
+      <div id="options-radius" class="options hidden">
+        <label class="wide"><span data-t="web_radius_authenticator">Request Authenticator (16 bytes): hex:... or b64:...</span>
+          <input id="radius-authenticator" type="text" spellcheck="false" data-t-placeholder="web_radius_authenticator_ph"></label>
+        <label><span data-t="web_radius_secret">shared secret (optional)</span>
+          <input id="radius-secret" type="text" spellcheck="false" data-t-placeholder="web_radius_secret_ph"></label>
       </div>
       <!-- Options of the Hash tab -->
       <div id="options-hash" class="options hidden">

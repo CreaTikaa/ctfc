@@ -29,13 +29,14 @@ const TOOLS = {
   hash: "sync",
   pipeline: "sync",
   keys: "job",
+  radius: "sync",
 };
 
 // API route of a tab, when it is not /api/<tab>.
 const API_PATH = { pipeline: "/api/recipe" };
 
 // Tabs that have their own options panel (#options-<tab>).
-const OPTION_PANELS = ["xor", "sym", "rsa", "hash", "pipeline", "keys", "lens"];
+const OPTION_PANELS = ["xor", "sym", "rsa", "hash", "pipeline", "keys", "lens", "radius"];
 
 // Tabs after which the "Suggested tools" strip is computed (data tabs, not scripts).
 const SUGGEST_TABS = ["auto", "detect", "xor", "sym", "hash"];
@@ -169,6 +170,9 @@ function currentOptions() {
   }
   if (state.tab === "lens") {
     return { against: $("lens-against").value };
+  }
+  if (state.tab === "radius") {
+    return { authenticator: $("radius-authenticator").value, secret: $("radius-secret").value };
   }
   if (state.tab === "keys") {
     return {

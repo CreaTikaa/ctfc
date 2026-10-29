@@ -374,6 +374,19 @@ EN: dict[str, str] = {
     "web_lens_against_results": "The encrypted file, decrypted with the script's own literals",
     "web_keys_winner": "The key that works was found at offset",
     "web_keys_candidates": "Candidate keys, strongest first",
+    # RADIUS tab
+    "web_tab_radius": "RADIUS",
+    "web_radius_help": "Paste the encrypted User-Password attribute on the left. ctfc undoes "
+    "RFC 2865 and guesses the shared secret from common ones + the embedded list. A whole "
+    "capture? `ctfc pcap capture.pcap` does it on its own.",
+    "web_radius_authenticator": "Request Authenticator (16 bytes): hex:... or b64:...",
+    "web_radius_authenticator_ph": "hex:0123... (the 16-byte authenticator from the packet)",
+    "web_radius_secret": "shared secret (optional)",
+    "web_radius_secret_ph": "leave empty to guess it (testing123, secret, ...)",
+    "web_radius_bad_auth": "the Request Authenticator must be 16 bytes (hex:... or b64:...)",
+    "web_radius_none": "No common shared secret worked. Fill the secret if you know it "
+    "(it may be in a config from the same box).",
+    "web_radius_none_secret": "That shared secret did not give a readable password.",
     # CyberChef links
     "web_open_cyberchef": "Open in CyberChef",
     "web_no_cyberchef": "No CyberChef link for this result.",
