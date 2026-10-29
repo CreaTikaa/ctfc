@@ -54,6 +54,8 @@ SIG_HINTS = {
     "zip": "unzip -l <file>; a .docm/.xlsm? ctfc office <file>; encrypted? "
     "zip2john <file> > h && john h",
     "doc": "ctfc office <file>   (OLE2: extracts the VBA macros and reads them)",
+    "png": "ctfc stego <file>   (low-bit message); exiftool <file>; zsteg -a <file>",
+    "bmp": "ctfc stego <file>   (low-bit message); exiftool <file>",
     "7z": "7z l <file>; encrypted? 7z2john.pl <file>",
     "rar": "unrar l <file>; encrypted? rar2john <file>",
     "kdbx": "keepass2john <file> > h; hashcat -m 13400 h wordlist",

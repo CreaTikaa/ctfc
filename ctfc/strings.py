@@ -205,6 +205,13 @@ EN: dict[str, str] = {
         "ctfc pdf sample.pdf --extract ./out && ctfc scan ./out. "
         "Nothing is executed: the JavaScript is extracted and read by Code Lens."
     ),
+    "cmd_stego": "look for a message hidden in the low bits of a PNG or BMP",
+    "cmd_stego_ex": (
+        "examples: ctfc stego cat.png  |  ctfc stego photo.bmp --show-code. "
+        "Tries the bit plane, channel order, scan direction and bit order, and "
+        "scores each result; the winning combination is printed so you can redo it."
+    ),
+    "arg_image": "the image (PNG or BMP) - a path, or -",
     "opt_pdf_extract": (
         "save the embedded files into this folder (plus the first revision, when the "
         "PDF was updated incrementally)"

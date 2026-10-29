@@ -1189,6 +1189,27 @@ def gray_png(text: bytes = b"") -> bytes:
     return b"\x89PNG\r\n\x1a\n" + body + png_chunk(b"IEND", b"")
 
 
+def png_with_chunks(
+    width: int, height: int, pixels: bytes, extra: list[tuple[bytes, bytes]] | None = None
+) -> bytes:
+    """A real 8-bit RGB PNG from raw pixels, with optional extra chunks.
+
+    Each scanline is prefixed with filter type 0 (none), which is what makes the
+    bytes come back out of the decoder exactly as they went in - the point when
+    the fixture is meant to carry a bit-exact LSB message.
+    """
+    raw = bytearray()
+    stride = width * 3
+    for row in range(height):
+        raw += b"\x00" + pixels[row * stride : (row + 1) * stride]
+    head = width.to_bytes(4, "big") + height.to_bytes(4, "big") + bytes([8, 2, 0, 0, 0])
+    body = png_chunk(b"IHDR", head)
+    for kind, payload in extra or []:
+        body += png_chunk(kind, payload)
+    body += png_chunk(b"IDAT", zlib.compress(bytes(raw)))
+    return b"\x89PNG\r\n\x1a\n" + body + png_chunk(b"IEND", b"")
+
+
 def dns_query_name(name: str) -> bytes:
     """A DNS question for `name` (type A, class IN)."""
     body = b"".join(bytes([len(label)]) + label.encode() for label in name.split("."))
@@ -1301,6 +1322,31 @@ def write_audit_fixtures() -> None:
     frame = ethernet_ipv4("10.0.0.5", "10.0.0.1", 17, udp_datagram(51000, 1812, request))
     header = struct.pack("<IHHiIII", 0xA1B2C3D4, 2, 4, 0, 0, 65535, 1)
     write("audit_radius.pcap", header + pcap_packet(frame, 1700000500))
+
+    # 13. LSB steganography: the flag is written one bit per red sample, in the
+    #     usual row-major / MSB-first way, and a tEXt comment acts as the decoy.
+    lsb_width, lsb_height = 64, 24
+    secret = b"CYBN{fixture_lsb_red}\x00"
+    bits = [(byte >> (7 - position)) & 1 for byte in secret for position in range(8)]
+    pixels = bytearray()
+    index = 0
+    for y in range(lsb_height):
+        for x in range(lsb_width):
+            # A gentle gradient, so the image looks like something.
+            red, green, blue = (x * 4) % 256, (y * 10) % 256, 128
+            if index < len(bits):
+                red = (red & 0xFE) | bits[index]
+                index += 1
+            pixels += bytes([red, green, blue])
+    write(
+        "audit_lsb.png",
+        png_with_chunks(
+            lsb_width,
+            lsb_height,
+            bytes(pixels),
+            [(b"tEXt", b"Comment\x00nothing to see here, move along")],
+        ),
+    )
 
     # 12. A PDF built like a malicious one: /OpenAction fires JavaScript that
     #     rebuilds the flag from character codes, an embedded file carries a

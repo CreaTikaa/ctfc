@@ -486,6 +486,23 @@ def print_pdf(console: Console, report, saved: list[str]) -> None:
         console.print(f"[green]saved {len(saved)} file(s)[/]; next: ctfc scan <that folder>")
 
 
+def print_stego(console: Console, report, show_code: bool = False) -> None:
+    """`ctfc stego`: the image, its metadata, and what the low bits spell out."""
+    facts = Table(title="image", show_header=False, expand=False)
+    facts.add_column("name", style="cyan")
+    facts.add_column("value")
+    facts.add_row("format", report.kind)
+    facts.add_row("size", f"{report.width}x{report.height}")
+    facts.add_row("channels", str(report.channels))
+    console.print(facts)
+
+    for note in report.notes:
+        console.print(f"[cyan]*[/] {safe(note)}")
+    print_candidates(
+        console, report.candidates, show_code=show_code, title="hidden in the low bits"
+    )
+
+
 def print_radius(console: Console, found, had_secret: bool) -> None:
     """`ctfc radius`: the shared secret(s) that decrypted the PAP password."""
     if not found:

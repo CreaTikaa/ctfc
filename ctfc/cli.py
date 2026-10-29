@@ -135,6 +135,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("input", help=t("arg_input"))
     p.add_argument("--extract", help=t("opt_pdf_extract"))
 
+    p = add("stego")
+    p.add_argument("input", help=t("arg_image"))
+    p.add_argument("--seconds", type=float, default=20.0, help=t("opt_seconds"))
+
     p = add("keys")
     p.add_argument("dump", help=t("arg_dump"))
     p.add_argument("--against", help=t("opt_keys_against"))
@@ -716,6 +720,24 @@ def cmd_pdf(args: argparse.Namespace, config: Config, console: Console) -> int:
     return 0 if report.objects else 1
 
 
+def cmd_stego(args: argparse.Namespace, config: Config, console: Console) -> int:
+    """Look for a message hidden in the low bits of a PNG or BMP."""
+    from ctfc.core import stego
+
+    inp = parse_input(args.input, decode_bare=False)
+    budget = Budget(max_attempts=10_000, max_seconds=args.seconds)
+    report = stego.analyse(
+        inp.data, flagset=flagset_from(config), budget=budget, top_n=config.top_n
+    )
+    remember(args, config, inp.data, args.input, report.candidates, report.notes[:3])
+    if args.json:
+        print(json.dumps({"input": input_to_dict(inp), **report.to_dict()}, indent=2))
+        return 0 if report.candidates else 1
+    render.print_input_notes(console, inp)
+    render.print_stego(console, report, show_code=args.show_code)
+    return 0 if report.candidates else 1
+
+
 def parse_number(text: str | None) -> int | None:
     """Read a big integer written in decimal or as 0x hex."""
     if not text:
@@ -1053,6 +1075,7 @@ def main(argv: list[str] | None = None) -> int:
         "scan": cmd_scan,
         "office": cmd_office,
         "pdf": cmd_pdf,
+        "stego": cmd_stego,
         "pcap": cmd_pcap,
         "radius": cmd_radius,
         "recipe": cmd_recipe,
