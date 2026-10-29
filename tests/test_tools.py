@@ -276,3 +276,19 @@ def test_a_value_starting_with_a_dash_is_refused(monkeypatch):
     values = {"hashcat_mode": 0, "input": "h.txt", "wordlist": "--outfile=/tmp/x"}
     result = run_tool(tool_by_id("hashcat"), values)
     assert "starts with '-'" in result.error
+
+
+def test_john_extractors_fire_on_their_file_magic(no_embedded_copy):
+    """Each *2john / oletools entry is suggested by the matching file signature."""
+    cases = {
+        "magic.zip": "zip2john",
+        "magic.rar": "rar2john",
+        "magic.7z": "sevenz2john",
+        "magic.pdf": "pdf2john",
+        "magic.kdbx": "keepass2john",
+        "magic.doc": "office2john",  # olevba/oleid also fire, but office2john is in the list
+    }
+    for rule, tool_id in cases.items():
+        found = suggest([Signal(rule, 0.95)], {"input": "f.bin"}, limit=10)
+        ids = {item.tool.id for item in found}
+        assert tool_id in ids, f"{rule} should suggest {tool_id}, got {ids}"

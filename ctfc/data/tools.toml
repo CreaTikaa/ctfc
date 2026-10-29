@@ -206,3 +206,87 @@ suggest_when = ["polyglot.trailing", "embedded"]
 offline_safe = true
 install = "apt install foremost"
 notes = "another carver, with different signatures than binwalk; then `ctfc scan` the output"
+
+# --- Hash extractors (the *2john family): turn a password-protected file into a
+# hash line, which you then paste into `ctfc hash` to get the hashcat/john mode,
+# then crack. They print the hash to stdout; they do not crack anything themselves.
+
+[[tool]]
+id = "zip2john"
+name = "zip2john"
+kind = "local"
+command_template = ["zip2john", "{input}"]
+suggest_when = ["magic.zip"]
+offline_safe = true
+install = "comes with john the ripper (apt install john, the 'jumbo' build)"
+notes = "password-protected ZIP: prints a $zip2$/$pkzip$ hash. Paste it into `ctfc hash`, then hashcat -m 13600/17200. Known-plaintext instead? see bkcrack"
+
+[[tool]]
+id = "rar2john"
+name = "rar2john"
+kind = "local"
+command_template = ["rar2john", "{input}"]
+suggest_when = ["magic.rar"]
+offline_safe = true
+install = "comes with john the ripper (jumbo build)"
+notes = "password-protected RAR: prints a $rar5$/$RAR3$ hash for `ctfc hash` -> hashcat -m 13000/12500"
+
+[[tool]]
+id = "sevenz2john"
+name = "7z2john"
+kind = "local"
+command_template = ["7z2john.pl", "{input}"]
+suggest_when = ["magic.7z"]
+offline_safe = true
+install = "comes with john the ripper (jumbo build); the script is run/7z2john.pl"
+notes = "encrypted 7z: prints a $7z$ hash for `ctfc hash` -> hashcat -m 11600"
+
+[[tool]]
+id = "pdf2john"
+name = "pdf2john"
+kind = "local"
+command_template = ["pdf2john.pl", "{input}"]
+suggest_when = ["magic.pdf"]
+offline_safe = true
+install = "comes with john the ripper (jumbo build); the script is run/pdf2john.pl"
+notes = "password-protected PDF: prints a $pdf$ hash for `ctfc hash` -> hashcat -m 10400..10700"
+
+[[tool]]
+id = "keepass2john"
+name = "keepass2john"
+kind = "local"
+command_template = ["keepass2john", "{input}"]
+suggest_when = ["magic.kdbx", "magic.kdb"]
+offline_safe = true
+install = "comes with john the ripper (jumbo build)"
+notes = "KeePass database: prints a $keepass$ hash for `ctfc hash` -> hashcat -m 13400. The master password unlocks every entry"
+
+[[tool]]
+id = "office2john"
+name = "office2john"
+kind = "local"
+command_template = ["office2john.py", "{input}"]
+suggest_when = ["magic.doc"]
+offline_safe = true
+install = "comes with john the ripper (jumbo build); the script is run/office2john.py"
+notes = "password-protected MS Office (.doc/.xls or OOXML): prints a $office$ hash for `ctfc hash` -> hashcat -m 9400..9800"
+
+[[tool]]
+id = "olevba"
+name = "olevba (oletools)"
+kind = "local"
+command_template = ["olevba", "{input}"]
+suggest_when = ["magic.doc"]
+offline_safe = true
+install = "pipx install oletools"
+notes = "OLE2 document: extracts and deobfuscates VBA macros statically. The usual place a .doc hides its payload"
+
+[[tool]]
+id = "oleid"
+name = "oleid (oletools)"
+kind = "local"
+command_template = ["oleid", "{input}"]
+suggest_when = ["magic.doc"]
+offline_safe = true
+install = "pipx install oletools"
+notes = "OLE2 document: flags macros, encryption and other risk indicators at a glance"
