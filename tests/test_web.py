@@ -1,5 +1,7 @@
 """Tests for the Flask app, using Flask's test client (no real server)."""
 
+from pathlib import Path
+
 import pytest
 
 from ctfc.config import Config
@@ -596,3 +598,36 @@ def test_a_format_error_comes_back_as_json_not_a_500(client):
     response = client.post("/api/jwt", json={"input": "not-a-token"})
     assert response.status_code == 400
     assert "three dot-separated parts" in response.get_json()["error"]
+
+
+def test_api_prng_clones_mt19937(client):
+    """The PRNG tab: 624 numbers in the input box are the whole state."""
+    import random
+
+    rng = random.Random(1234)
+    captured = [rng.getrandbits(32) for _ in range(624)]
+    answer = client.post(
+        "/api/prng",
+        json={"input": "\n".join(str(value) for value in captured), "options": {"forward": 2}},
+    ).get_json()
+    assert answer["generator"] == "MT19937"
+    assert answer["next_values"] == [rng.getrandbits(32) for _ in range(2)]
+
+
+def test_api_prng_short_run_is_a_400_with_the_reason(client):
+    response = client.post("/api/prng", json={"input": "11111111 22222222 33333333"})
+    assert response.status_code == 400
+    assert "too few to clone MT19937" in response.get_json()["error"]
+
+
+def test_prng_tab_is_wired_end_to_end():
+    """The ids the page reads must be the ids the page declares."""
+    static = Path(__file__).resolve().parent.parent / "ctfc" / "web" / "static"
+    page = (static / "index.html").read_text()
+    script = (static / "app.js").read_text()
+    assert 'data-tab="prng"' in page
+    for name in ("prng-generator", "prng-forward", "prng-backward"):
+        assert f'id="{name}"' in page, f"{name} is read by app.js but not declared"
+        assert f'$("{name}")' in script
+    assert 'prng: "sync"' in script
+    assert '"prng"' in script.split("OPTION_PANELS")[1][:200]

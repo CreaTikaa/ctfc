@@ -1055,3 +1055,57 @@ A timestamp is reported under every clock it plausibly fits (Unix, FILETIME,
 WebKit, Mac, DOS), filtered to 1990..2100 and to readings more than a day past
 their own epoch - without that second rule every number also "reads as" the
 epoch itself.
+
+## 16. Weak random generators (`ctfc/core/prng.py`)
+
+A challenge that hands out "random" session tokens, shuffles a deck, or picks an
+AES key with `random.getrandbits()` has not encrypted anything - it has published
+its generator's state. Two generators cover nearly all of these.
+
+### MT19937 (Python's `random`, PHP's `mt_rand`, most JS polyfills)
+
+The state is 624 words of 32 bits. Each call hands out one word passed through
+**tempering**, and every 624 calls the array is stirred by a **twist**. Both
+steps are invertible, which is what makes the whole thing fall over:
+
+- Tempering is four operations of the form `y ^= y >> k` or
+  `y ^= (y << k) & mask`. Each one can be undone by applying it again a few
+  times: `y ^= y >> 11` leaves the top 11 bits untouched, and every block of 11
+  bits below is fixed as soon as the block above it is known. So `untemper()` is
+  exact - not a search, not a guess.
+- The twist is a fixed linear recurrence. Written over the *sequence* of state
+  words rather than over the 624-slot array it reads:
+
+  ```
+  w[k] = w[k-227] ^ (y >> 1) ^ (A if y & 1 else 0)
+  y    = (w[k-624] & 0x80000000) | (w[k-623] & 0x7fffffff)
+  ```
+
+  which is why it does not matter where in a twist cycle the capture started.
+
+Untemper 624 consecutive outputs and you hold the state: stepping the recurrence
+forward gives every future value. Backwards is the half that wins challenges -
+the tokens handed out *before* you started looking. Two equations mention the
+unknown word `w[j]`: the one that produced `w[j+624]` carries its top bit, and
+the one that produced `w[j+623]` carries its other 31. The top bit of
+`(y >> 1) ^ (A if y & 1)` says whether `A` was mixed in, because `y >> 1` always
+has a zero there and `A` has a one - so `y` comes back, and with it the word.
+Those two equations also share a bit, which is a free check that the numbers
+really are one uninterrupted MT19937 run.
+
+What does *not* work, and the tool says so instead of pretending:
+`random.random()` spends two words but shows only 27 and 26 of their bits, PHP's
+`mt_rand()` drops the low bit, and `getrandbits(k)` for `k < 32` keeps only the
+top `k`. Untempering needs all 32 bits of a word, so those captures need a
+different attack (a GF(2) solve over the whole 19937-bit state) that ctfc does
+not do. The honest answer is to name the call that *would* give full words.
+
+### java.util.Random
+
+A 48-bit linear congruential generator with published constants:
+`seed = (seed * 0x5DEECE66D + 0xB) mod 2^48`, and `nextInt()` returns the top 32
+bits. The 16 bits it drops are the only secret, so one output leaves 65536
+candidate states and a second output picks the right one - a search small enough
+to be instant. Running the recurrence backwards (the multiplier is invertible
+modulo 2^48) and undoing the constructor's `seed ^ 0x5DEECE66D` gives the literal
+number the challenge wrote in `new Random(...)`.

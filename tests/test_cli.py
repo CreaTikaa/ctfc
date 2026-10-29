@@ -414,3 +414,30 @@ def test_keys_command_finds_the_key_and_its_offset():
     report = json.loads(result.stdout)
     assert report["winner"]["offset_hex"] == "0x5a30"
     assert "CYBN{fixture_key_schedule}" in report["results"][0]["data_text"]
+
+
+def test_prng_clones_the_fixture_generator():
+    import json
+    import random
+
+    result = run_ctfc("prng", "tests/fixtures/prng_mt19937.txt", "--forward", "3", "--json")
+    assert result.returncode == 0, result.stderr.decode()
+    report = json.loads(result.stdout)
+    assert report["generator"] == "MT19937"
+    expected = random.Random(20251029)
+    [expected.getrandbits(32) for _ in range(624)]
+    assert report["next_values"] == [expected.getrandbits(32) for _ in range(3)]
+
+
+def test_prng_java_seed_from_the_fixture():
+    import json
+
+    result = run_ctfc("prng", "tests/fixtures/prng_java_nextint.txt", "--json")
+    assert result.returncode == 0, result.stderr.decode()
+    assert json.loads(result.stdout)["seed"] == 1234567890123
+
+
+def test_prng_says_how_many_values_are_missing():
+    result = run_ctfc("prng", "text:1234567890 987654321 1122334455")
+    assert result.returncode == 2
+    assert "too few to clone MT19937" in result.stderr.decode()

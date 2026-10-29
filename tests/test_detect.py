@@ -148,3 +148,21 @@ def test_apply_survives_the_json_round_trip(fixture_bytes):
     payload = json.loads(json.dumps(report.to_dict()))
     actions = [guess["apply"] for guess in payload["guesses"] if guess["apply"]]
     assert {"tab": "xor", "options": {"keylen": 6}} in actions
+
+
+def test_detect_spots_a_column_of_generator_output():
+    """624 big integers are not a ciphertext: they are MT19937's state."""
+    import random
+
+    rng = random.Random(5)
+    text = "\n".join(str(rng.getrandbits(32)) for _ in range(624)).encode()
+    report = detect(text)
+    guess = next(g for g in report.guesses if g.rule == "prng.mt19937")
+    assert guess.apply == {"tab": "prng", "options": {}}
+    assert guess.next_step == "ctfc prng <input>"
+
+
+def test_detect_does_not_call_prose_with_numbers_a_capture():
+    body = b"The report was filed in 2024 after 1200 hours of work, costing 350000 euros. " * 6
+    report = detect(body)
+    assert not [g for g in report.guesses if g.rule.startswith("prng.")]

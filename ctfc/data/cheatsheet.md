@@ -41,6 +41,7 @@ mirror the encryptor, do not guess.
 | PEM / RSA numbers | `ctfc rsa --key k.pem --decrypt ct.bin --attack` |
 | a pcap / pcapng | `ctfc pcap cap.pcap --extract out/` then `ctfc scan out/` |
 | zero-width characters | `ctfc auto` (both bit mappings) or a StegCloak decoder |
+| a column of big integers (tokens, "random" ids) | `ctfc prng <file>` - 624 of them clone MT19937 |
 
 Not sure? `ctfc tools <file>` names the external tool that fits, with the command.
 
@@ -61,6 +62,9 @@ Not sure? `ctfc tools <file>` names the external tool that fits, with the comman
 - `ctfc xor <ct> --hashed-keys` - md5/sha of common words as the XOR key.
 - `ctfc xor <ct> --crib 'CYBN{'` - known plaintext; file headers are tried by themselves.
 - Two ciphertexts, same key stream? `ctfc xor c1 --with c2 --crib ' the '`.
+- The key *was* random? `ctfc prng tokens.txt` - 624 consecutive 32-bit outputs of
+  Python's `random` (or two `java.util.Random` nextInt values) give the whole
+  sequence, before and after the capture, so the "random" key comes back.
 
 ## 5. Redo it by hand
 

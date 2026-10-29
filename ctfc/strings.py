@@ -253,6 +253,27 @@ EN: dict[str, str] = {
         "only the readings that land between 1990 and 2100 are shown."
     ),
     "arg_time": "the number (decimal, 0x hex) or the raw field as hex:<8 or 4 bytes>",
+    "cmd_prng": "clone a weak random generator from its own output (MT19937, java.util.Random)",
+    "cmd_prng_ex": (
+        "examples: ctfc prng tokens.txt  |  ctfc prng text:'1234, 5678, ...' --forward 5  |  "
+        "ctfc prng outputs.txt --generator java --show-code. "
+        "MT19937 (Python random, PHP mt_rand) needs 624 consecutive full 32-bit outputs; "
+        "java.util.Random needs two nextInt() values. Both give the past as well as the future."
+    ),
+    "arg_prng": "the numbers the generator handed out (a file, -, or text:1,2,3...)",
+    "opt_prng_gen": "which generator to assume (default: auto, from how many values there are)",
+    "opt_prng_forward": "how many future values to print (default: 10)",
+    "opt_prng_backward": "how many values from before the capture to print (default: 10)",
+    "web_tab_prng": "PRNG",
+    "web_prng_help": "Paste the numbers a generator handed out (one per line, or a list). "
+    "624 consecutive full 32-bit outputs clone Python's random / MT19937 exactly - past and "
+    "future; two java.util.Random nextInt() values give the seed back.",
+    "web_prng_next": "the values it will hand out next",
+    "web_prng_previous": "the values it handed out before the capture (most recent first)",
+    "web_prng_floats": "what random() would return instead (two outputs per float)",
+    "web_prng_generator": "generator (auto, mt19937, java)",
+    "web_prng_forward": "future values to show",
+    "web_prng_backward": "earlier values to show",
     "cmd_jwt": "decode a JWT and report what is wrong with it",
     "cmd_jwt_ex": (
         "examples: ctfc jwt eyJhbGciOi...  |  ctfc jwt <token> --secret mykey  |  "

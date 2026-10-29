@@ -166,6 +166,14 @@ def build_parser() -> argparse.ArgumentParser:
     p = add("time")
     p.add_argument("value", help=t("arg_time"))
 
+    p = add("prng")
+    p.add_argument("input", help=t("arg_prng"))
+    p.add_argument(
+        "--generator", choices=["auto", "mt19937", "java"], default="auto", help=t("opt_prng_gen")
+    )
+    p.add_argument("--forward", type=int, default=10, help=t("opt_prng_forward"))
+    p.add_argument("--backward", type=int, default=10, help=t("opt_prng_backward"))
+
     p = add("jwt")
     p.add_argument("token", help=t("arg_token"))
     p.add_argument("--secret", help=t("opt_jwt_secret"))
@@ -980,6 +988,28 @@ def cmd_time(args: argparse.Namespace, config: Config, console: Console) -> int:
     return 0
 
 
+def cmd_prng(args: argparse.Namespace, config: Config, console: Console) -> int:
+    """Clone a weak random number generator from the numbers it handed out."""
+    from ctfc.core import prng
+
+    # Numbers, not bytes: keep the text as text (no bare hex/base64 decoding).
+    inp = parse_input(args.input, decode_bare=False)
+    text = inp.data.decode("utf-8", "replace")
+    integers, floats = prng.parse_numbers(text)
+    report = prng.solve(
+        integers,
+        generator=args.generator,
+        forward=max(0, args.forward),
+        backward=max(0, args.backward),
+    )
+    report.notes += prng.float_notes(len(floats)) + prng.truncation_notes(integers)
+    if args.json:
+        print(json.dumps(report.to_dict(), indent=2))
+        return 0
+    render.print_prng(console, report, args.show_code)
+    return 0
+
+
 def parse_number(text: str | None) -> int | None:
     """Read a big integer written in decimal or as 0x hex."""
     if not text:
@@ -1323,6 +1353,7 @@ def main(argv: list[str] | None = None) -> int:
         "sqlite": cmd_sqlite,
         "jwt": cmd_jwt,
         "time": cmd_time,
+        "prng": cmd_prng,
         "zip": cmd_zip,
         "hive": cmd_hive,
         "pe": cmd_pe,

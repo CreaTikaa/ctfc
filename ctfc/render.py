@@ -615,6 +615,42 @@ def print_jwt(console: Console, report, show_code: bool = False) -> None:
         console.print(Syntax(report.python, "python", theme="ansi_dark", word_wrap=True))
 
 
+def print_prng(console: Console, report, show_code: bool = False) -> None:
+    """`ctfc prng`: what was recovered, then the values before and after the capture."""
+    facts = Table(title="generator", show_header=False, expand=False)
+    facts.add_column("name", style="cyan")
+    facts.add_column("value")
+    facts.add_row("cloned", f"[bold green]{report.generator}[/]")
+    facts.add_row("values used", str(report.used))
+    if report.confirmed:
+        facts.add_row("confirmed on", f"{report.confirmed} further value(s)")
+    if report.seed is not None:
+        facts.add_row("seed", f"[bold green]{report.seed}[/]")
+    console.print(facts)
+
+    sections = (
+        ("the values it will hand out next", report.next_values),
+        ("the values it handed out before the capture (most recent first)", report.previous_values),
+    )
+    for title, values in sections:
+        if not values:
+            continue
+        table = Table(title=title, expand=True)
+        table.add_column("#", width=4, justify="right")
+        table.add_column("decimal", ratio=2)
+        table.add_column("hex", ratio=2)
+        for index, value in enumerate(values, start=1):
+            table.add_row(str(index), str(value), f"{value & 0xFFFFFFFF:08x}")
+        console.print(table)
+
+    if report.next_floats:
+        joined = ", ".join(f"{value:.17g}" for value in report.next_floats)
+        console.print(f"[bold]random() instead:[/] {safe(joined, 300)}")
+    print_notes(console, report.notes)
+    if show_code and report.python:
+        console.print(Syntax(report.python, "python", theme="ansi_dark", word_wrap=True))
+
+
 def print_timestamps(console: Console, groups) -> None:
     """`ctfc time`: every plausible reading of the number, with its epoch named."""
     for label, readings in groups:

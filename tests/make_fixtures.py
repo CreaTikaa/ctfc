@@ -1638,6 +1638,26 @@ def write_audit_fixtures() -> None:
     write("audit_usb_keyboard.pcap", usb_header + b"".join(records))
 
 
+def write_prng_fixtures() -> None:
+    """Captures of a weak random generator's output, as a challenge hands them over.
+
+    `prng_mt19937.txt` is 624 consecutive `getrandbits(32)` values of a known
+    seed, which is exactly MT19937's whole state; the test re-seeds the same
+    generator to know what must come next.
+
+    `prng_java_nextint.txt` is the real output of
+    `new java.util.Random(1234567890123L).nextInt()`, checked against a JVM
+    (openjdk on this machine) so the test is not just our own code agreeing with
+    itself.
+    """
+    captured = random.Random(20251029)
+    words = [captured.getrandbits(32) for _ in range(624)]
+    write("prng_mt19937.txt", "\n".join(str(word) for word in words) + "\n")
+
+    java_next_int = [-8722476, -1977939436, -999828940, -741339138]
+    write("prng_java_nextint.txt", "\n".join(str(value) for value in java_next_int) + "\n")
+
+
 def main() -> None:
     FIXTURES.mkdir(exist_ok=True)
     print(f"writing fixtures to {FIXTURES}")
@@ -1813,6 +1833,9 @@ def main() -> None:
 
     # --- audit: shapes from the user's Notion challenge notes ---
     write_audit_fixtures()
+
+    # --- weak random generators (ideas.md 1.1) ---
+    write_prng_fixtures()
 
 
 if __name__ == "__main__":

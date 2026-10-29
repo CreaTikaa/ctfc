@@ -33,6 +33,7 @@ const TOOLS = {
   keys: "job",
   radius: "sync",
   jwt: "sync",
+  prng: "sync",
 };
 
 // API route of a tab, when it is not /api/<tab>.
@@ -40,7 +41,7 @@ const API_PATH = { pipeline: "/api/recipe" };
 
 // Tabs that have their own options panel (#options-<tab>).
 const OPTION_PANELS = [
-  "xor", "sym", "rsa", "hash", "pipeline", "keys", "lens", "radius", "volatility", "jwt",
+  "xor", "sym", "rsa", "hash", "pipeline", "keys", "lens", "radius", "volatility", "jwt", "prng",
 ];
 
 // Tabs that are reference pages, not tools: opening them shows the page and
@@ -186,6 +187,13 @@ function currentOptions() {
   if (state.tab === "jwt") {
     return { no_secrets: $("jwt-no-secrets").checked };
   }
+  if (state.tab === "prng") {
+    return {
+      generator: $("prng-generator").value,
+      forward: $("prng-forward").value,
+      backward: $("prng-backward").value,
+    };
+  }
   if (state.tab === "keys") {
     return {
       against: $("keys-against").value,
@@ -326,6 +334,11 @@ function showAnswer(tab, answer) {
   }
   if (tab === "jwt") {
     renderJwt(answer);
+    setStatus("");
+    return;
+  }
+  if (tab === "prng") {
+    renderPrng(answer);
     setStatus("");
     return;
   }
@@ -1126,6 +1139,42 @@ function renderJwt(report) {
     results.append(box);
     results.append(copyButton(T("web_copy"), () => report.forged));
   }
+  if (report.python) {
+    results.append(el("h3", "", "reproduce it"));
+    results.append(el("pre", "code", report.python));
+  }
+}
+
+// ---------------------------------------------------------------------- PRNG
+function renderPrng(report) {
+  const results = $("results");
+  const facts = el("table", "facts");
+  const rows = [["cloned", report.generator], ["values used", report.used]];
+  if (report.confirmed) rows.push(["confirmed on", report.confirmed + " further value(s)"]);
+  if (report.seed !== null && report.seed !== undefined) rows.push(["seed", report.seed]);
+  for (const [name, value] of rows) {
+    const row = el("tr");
+    row.append(el("td", "dim", name), el("td", "", String(value)));
+    facts.append(row);
+  }
+  results.append(facts);
+
+  const sections = [
+    [T("web_prng_next"), report.next_values],
+    [T("web_prng_previous"), report.previous_values],
+  ];
+  for (const [title, values] of sections) {
+    if (!values || !values.length) continue;
+    results.append(el("h3", "", title));
+    const text = values.join("\n");
+    results.append(el("pre", "code", text));
+    results.append(copyButton(T("web_copy"), () => text));
+  }
+  if (report.next_floats && report.next_floats.length) {
+    results.append(el("h3", "", T("web_prng_floats")));
+    results.append(el("pre", "code", report.next_floats.join("\n")));
+  }
+  if (report.notes && report.notes.length) renderNotes(report.notes);
   if (report.python) {
     results.append(el("h3", "", "reproduce it"));
     results.append(el("pre", "code", report.python));

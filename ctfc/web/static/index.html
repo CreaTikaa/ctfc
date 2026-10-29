@@ -64,6 +64,7 @@
         <button class="tab" data-tab="hash" data-t="web_tab_hash">Hash</button>
         <button class="tab" data-tab="keys" data-t="web_tab_keys">Keys</button>
         <button class="tab" data-tab="jwt" data-t="web_tab_jwt">JWT</button>
+        <button class="tab" data-tab="prng" data-t="web_tab_prng">PRNG</button>
         <button class="tab" data-tab="radius" data-t="web_tab_radius">RADIUS</button>
         <button class="tab" data-tab="volatility" data-t="web_tab_volatility">Volatility</button>
         <button class="tab" data-tab="cheatsheet" data-t="web_tab_cheatsheet">Cheatsheet</button>
@@ -229,6 +230,19 @@
       <div id="options-jwt" class="options hidden">
         <label class="checkbox"><input id="jwt-no-secrets" type="checkbox">
           <span data-t="web_jwt_no_secrets">do not try the embedded password list as the HMAC secret</span></label>
+      </div>
+      <!-- Options of the PRNG tab: the numbers go in the input box on the left -->
+      <div id="options-prng" class="options hidden">
+        <label><span data-t="web_prng_generator">generator (auto, mt19937, java)</span>
+          <select id="prng-generator">
+            <option value="auto">auto</option>
+            <option value="mt19937">mt19937</option>
+            <option value="java">java</option>
+          </select></label>
+        <label><span data-t="web_prng_forward">future values to show</span>
+          <input id="prng-forward" type="number" min="0" max="200" value="10"></label>
+        <label><span data-t="web_prng_backward">earlier values to show</span>
+          <input id="prng-backward" type="number" min="0" max="200" value="10"></label>
       </div>
       <!-- Options of the Hash tab -->
       <div id="options-hash" class="options hidden">

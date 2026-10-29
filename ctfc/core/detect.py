@@ -12,6 +12,7 @@ Checks (one small function each, in the order they run):
 - repeating pattern (XOR key length)  - crypto constants (AES S-box, TEA delta...)
 - custom base64 alphabets             - classical ciphers (letter statistics, see classical.py)
 - AES key schedules (an expanded AES key in a memory dump, see keyhunt.py)
+- a column of big integers (a weak random generator's output, see prng.py)
 
 When the input is hex/base64 text, the binary checks also run on the decoded bytes.
 """
@@ -24,7 +25,7 @@ from collections import Counter
 from dataclasses import asdict, dataclass, field
 from functools import lru_cache
 
-from ctfc.core import classical, encodings, keyhunt, secrets
+from ctfc.core import classical, encodings, keyhunt, prng, secrets
 from ctfc.core.datafiles import load_toml
 from ctfc.core.flags import FlagSet, default_flagset, find_flags
 from ctfc.core.magic import (
@@ -126,6 +127,7 @@ def detect(data: bytes, flagset: FlagSet | None = None) -> DetectReport:
     guesses += _check_classical(data, flagset)
     guesses += _check_key_schedules(data)
     guesses += _check_secrets(data)
+    guesses += _check_prng_output(data)
     # Zero-width characters are invisible but not "binary": ignore them here.
     visible = data.decode("utf-8", errors="ignore")
     visible = "".join(c for c in visible if c not in encodings.ZERO_WIDTH).encode()
@@ -463,6 +465,62 @@ def _check_key_schedules(data: bytes) -> list[Guess]:
             )
         )
     return guesses
+
+
+PRNG_MIN_VALUES = 16  # fewer than this is not a "column of numbers"
+PRNG_DENSITY = 0.5  # the digits have to be most of the text, else it is prose
+
+
+def _check_prng_output(data: bytes) -> list[Guess]:
+    """A long column of big integers is a generator's output, not a ciphertext.
+
+    Worth saying out loud, because the right tool is then `ctfc prng` and not any
+    amount of XOR or AES: 624 consecutive full 32-bit values *are* MT19937's
+    state, and two java.util.Random values are its seed.
+    """
+    if len(data) > 4 * 1024 * 1024:
+        return []
+    text = data.decode("utf-8", "ignore").strip()
+    if not text:
+        return []
+    integers, _floats = prng.parse_numbers(text)
+    if len(integers) < PRNG_MIN_VALUES:
+        return []
+    # Numbers buried in prose are not a capture: the digits must dominate.
+    if sum(len(str(value)) for value in integers) < PRNG_DENSITY * len(text):
+        return []
+    wide = [value for value in integers if 1 << 20 <= value <= 0xFFFFFFFF]
+    if len(wide) < 0.9 * len(integers):
+        return []
+    if len(integers) >= prng.N:
+        return [
+            Guess(
+                rule="prng.mt19937",
+                label=f"{len(integers)} full 32-bit values: enough to clone MT19937",
+                confidence=0.9,
+                reasons=[
+                    f"{len(integers)} values, all between 2^20 and 2^32",
+                    f"{prng.N} consecutive outputs are the whole state of MT19937 "
+                    "(Python random, PHP mt_rand): untempering them is exact",
+                ],
+                next_step="ctfc prng <input>",
+                apply={"tab": "prng", "options": {}},
+            )
+        ]
+    return [
+        Guess(
+            rule="prng.short_run",
+            label=f"{len(integers)} large integers: a random generator's output?",
+            confidence=0.45,
+            reasons=[
+                f"{prng.N - len(integers)} more consecutive 32-bit values would clone "
+                "MT19937 outright",
+                "two java.util.Random nextInt() values are already enough for that one",
+            ],
+            next_step="ctfc prng <input>",
+            apply={"tab": "prng", "options": {}},
+        )
+    ]
 
 
 CLASSICAL_APPLY = {"tab": "auto", "options": {}}

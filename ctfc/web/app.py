@@ -505,6 +505,27 @@ def create_app(config: Config | None = None) -> Flask:
         record(payload, "jwt", None, answer)
         return jsonify(answer)
 
+    @app.post("/api/prng")
+    def api_prng():
+        """PRNG cloning: untempering 624 words is instant, the Java search is 2^16."""
+        from ctfc.core import prng as prng_mod
+
+        payload = read_payload()
+        # Numbers, not bytes: never auto-decode the pasted text as hex/base64.
+        inp = input_from_payload(payload, decode_bare=False)
+        options = payload.get("options") or {}
+        integers, floats = prng_mod.parse_numbers(inp.data.decode("utf-8", "replace"))
+        report = prng_mod.solve(
+            integers,
+            generator=str(options.get("generator") or "auto"),
+            forward=max(0, min(200, int(options.get("forward") or 10))),
+            backward=max(0, min(200, int(options.get("backward") or 10))),
+        )
+        report.notes += prng_mod.float_notes(len(floats)) + prng_mod.truncation_notes(integers)
+        answer = {"input": input_summary(inp), **report.to_dict()}
+        record(payload, "prng", inp, answer)
+        return jsonify(answer)
+
     @app.post("/api/radius")
     def api_radius():
         """RADIUS PAP recovery: instant (undo RFC 2865, guess the shared secret)."""
@@ -751,6 +772,7 @@ def create_app(config: Config | None = None) -> Flask:
     from ctfc.core.jwt import JwtError
     from ctfc.core.office import OfficeError
     from ctfc.core.pdf import PdfError
+    from ctfc.core.prng import PrngError
     from ctfc.core.sqlitedb import SqliteError
     from ctfc.core.stego import StegoError
 
@@ -759,6 +781,7 @@ def create_app(config: Config | None = None) -> Flask:
     @app.errorhandler(JwtError)
     @app.errorhandler(OfficeError)
     @app.errorhandler(PdfError)
+    @app.errorhandler(PrngError)
     @app.errorhandler(SqliteError)
     @app.errorhandler(StegoError)
     def bad_format(error: Exception):
