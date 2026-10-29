@@ -205,6 +205,14 @@ EN: dict[str, str] = {
         "ctfc pdf sample.pdf --extract ./out && ctfc scan ./out. "
         "Nothing is executed: the JavaScript is extracted and read by Code Lens."
     ),
+    "cmd_git": "read a .git and find what the current files no longer show",
+    "cmd_git_ex": (
+        "examples: ctfc git ./challenge  |  ctfc git ./challenge/.git --extract ./blobs. "
+        "Finds the secret that was committed and then removed - which `git fsck` "
+        "does not report, because history still reaches it."
+    ),
+    "arg_repo": "the repository folder (or the .git folder itself)",
+    "opt_git_extract": "write every recovered blob into this folder (then: ctfc scan)",
     "cmd_stego": "look for a message hidden in the low bits of a PNG or BMP",
     "cmd_stego_ex": (
         "examples: ctfc stego cat.png  |  ctfc stego photo.bmp --show-code. "

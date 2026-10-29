@@ -503,6 +503,46 @@ def print_stego(console: Console, report, show_code: bool = False) -> None:
     )
 
 
+def print_git(console: Console, report, saved: list[str]) -> None:
+    """`ctfc git`: the blobs the current files no longer show."""
+    facts = Table(title="repository", show_header=False, expand=False)
+    facts.add_column("name", style="cyan")
+    facts.add_column("value")
+    facts.add_row("git dir", report.git_dir)
+    facts.add_row("objects", ", ".join(f"{count} {kind}" for kind, count in report.counts.items()))
+    facts.add_row("refs", ", ".join(report.refs) or "none")
+    console.print(facts)
+
+    for note in report.notes:
+        console.print(f"[cyan]*[/] {safe(note)}")
+    if not report.lost:
+        return
+    table = Table(title="in the history, not in the current files", expand=True, show_lines=True)
+    table.add_column("state", width=12)
+    table.add_column("name", ratio=2)
+    table.add_column("size", justify="right", width=7)
+    table.add_column("what is in it", ratio=4)
+    for blob in report.lost:
+        found = []
+        if blob.flags:
+            found.append("[bold green]" + safe(", ".join(blob.flags), 90) + "[/]")
+        if blob.secrets:
+            found.append("[bold]" + safe("; ".join(blob.secrets), 90) + "[/]")
+        if not found:
+            found.append(preview(blob.data, 70))
+        if blob.commits:
+            found.append(f"[dim]in commit(s) {', '.join(blob.commits[:3])}[/]")
+        table.add_row(
+            blob.kind,
+            safe(", ".join(blob.names) or blob.sha[:10], 40),
+            str(blob.size),
+            "\n".join(found),
+        )
+    console.print(table)
+    if saved:
+        console.print(f"[green]saved {len(saved)} blob(s)[/]; next: ctfc scan <that folder>")
+
+
 def print_radius(console: Console, found, had_secret: bool) -> None:
     """`ctfc radius`: the shared secret(s) that decrypted the PAP password."""
     if not found:

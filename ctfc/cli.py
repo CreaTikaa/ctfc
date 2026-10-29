@@ -139,6 +139,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("input", help=t("arg_image"))
     p.add_argument("--seconds", type=float, default=20.0, help=t("opt_seconds"))
 
+    p = add("git")
+    p.add_argument("folder", help=t("arg_repo"))
+    p.add_argument("--extract", help=t("opt_git_extract"))
+
     p = add("keys")
     p.add_argument("dump", help=t("arg_dump"))
     p.add_argument("--against", help=t("opt_keys_against"))
@@ -738,6 +742,29 @@ def cmd_stego(args: argparse.Namespace, config: Config, console: Console) -> int
     return 0 if report.candidates else 1
 
 
+def cmd_git(args: argparse.Namespace, config: Config, console: Console) -> int:
+    """Find what a .git still holds that the current files no longer show."""
+    from ctfc.core import gitrepo
+
+    report = gitrepo.analyse(Path(args.folder), flagset=flagset_from(config))
+    saved = []
+    if args.extract:
+        folder = Path(args.extract)
+        folder.mkdir(parents=True, exist_ok=True)
+        for blob in report.lost:
+            stem = re.sub(r"[^A-Za-z0-9._-]", "_", blob.names[0]) if blob.names else "blob"
+            target = folder / f"{blob.sha[:10]}_{stem.lstrip('.') or 'blob'}"
+            target.write_bytes(blob.data)
+            saved.append(str(target))
+    summary = [f"{blob.names or blob.sha[:10]}: {blob.why[:60]}" for blob in report.lost[:4]]
+    remember(args, config, None, args.folder, summary=summary)
+    if args.json:
+        print(json.dumps({**report.to_dict(), "saved": saved}, indent=2))
+        return 0 if report.lost else 1
+    render.print_git(console, report, saved)
+    return 0 if report.lost else 1
+
+
 def parse_number(text: str | None) -> int | None:
     """Read a big integer written in decimal or as 0x hex."""
     if not text:
@@ -1076,6 +1103,7 @@ def main(argv: list[str] | None = None) -> int:
         "office": cmd_office,
         "pdf": cmd_pdf,
         "stego": cmd_stego,
+        "git": cmd_git,
         "pcap": cmd_pcap,
         "radius": cmd_radius,
         "recipe": cmd_recipe,
