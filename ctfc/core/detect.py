@@ -356,7 +356,7 @@ PREFIX_APPLY: dict[str, dict] = {
     "pem": {"tab": "rsa", "options": {}},
     "fernet": {"tab": "sym", "options": {}},
     "openssl.salted_b64": {"tab": "sym", "options": {"passwords": True}},
-    "jwt": {"tab": "auto", "options": {}},
+    "jwt": {"tab": "jwt", "options": {}},
 }
 
 

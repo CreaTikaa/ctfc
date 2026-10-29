@@ -1,5 +1,8 @@
 """detect() on fixtures that mirror real challenge shapes."""
 
+import re
+from pathlib import Path
+
 from ctfc.core.detect import detect
 
 
@@ -126,7 +129,11 @@ def test_every_apply_names_a_real_tab_and_options():
     """A typo in an apply action would make a dead button in the UI."""
     from ctfc.core.detect import PREFIX_APPLY, SIG_APPLY
 
-    tabs = {"auto", "detect", "xor", "sym", "rsa", "lens", "hash", "pipeline", "keys"}
+    # Read the tabs out of the page rather than listing them here, so this check
+    # cannot drift as tabs are added.
+    page = (Path(__file__).parent.parent / "ctfc/web/static/index.html").read_text()
+    tabs = set(re.findall(r'data-tab="([a-z]+)"', page))
+    assert "auto" in tabs, "the tab list could not be read from index.html"
     for table in (PREFIX_APPLY, SIG_APPLY):
         for rule, action in table.items():
             assert action["tab"] in tabs, f"{rule}: unknown tab {action['tab']}"

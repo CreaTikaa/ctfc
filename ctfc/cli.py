@@ -146,6 +146,11 @@ def build_parser() -> argparse.ArgumentParser:
     p = add("sqlite")
     p.add_argument("input", help=t("arg_database"))
 
+    p = add("jwt")
+    p.add_argument("token", help=t("arg_token"))
+    p.add_argument("--secret", help=t("opt_jwt_secret"))
+    p.add_argument("--no-secrets", action="store_true", help=t("opt_jwt_no_secrets"))
+
     p = add("keys")
     p.add_argument("dump", help=t("arg_dump"))
     p.add_argument("--against", help=t("opt_keys_against"))
@@ -789,6 +794,26 @@ def cmd_sqlite(args: argparse.Namespace, config: Config, console: Console) -> in
     return 0 if report.deleted else 1
 
 
+def cmd_jwt(args: argparse.Namespace, config: Config, console: Console) -> int:
+    """Decode a JWT and report what is wrong with it."""
+    from ctfc.core import jwt as jwt_module
+
+    secrets = [args.secret.encode()] if args.secret else None
+    report = jwt_module.analyse(
+        args.token,
+        flagset=flagset_from(config),
+        secrets=secrets,
+        try_secrets=not args.no_secrets,
+    )
+    summary = [f"{finding.rule}: {finding.what}" for finding in report.findings[:4]]
+    remember(args, config, None, args.token, summary=summary)
+    if args.json:
+        print(json.dumps(report.to_dict(), indent=2))
+        return 0 if report.findings else 1
+    render.print_jwt(console, report, show_code=args.show_code)
+    return 0 if report.findings else 1
+
+
 def parse_number(text: str | None) -> int | None:
     """Read a big integer written in decimal or as 0x hex."""
     if not text:
@@ -1129,6 +1154,7 @@ def main(argv: list[str] | None = None) -> int:
         "stego": cmd_stego,
         "git": cmd_git,
         "sqlite": cmd_sqlite,
+        "jwt": cmd_jwt,
         "pcap": cmd_pcap,
         "radius": cmd_radius,
         "recipe": cmd_recipe,

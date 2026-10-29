@@ -570,3 +570,29 @@ def test_api_volatility_serves_the_cheatsheet(client):
     commands = [step["cmd"] for section in answer["section"] for step in section["step"]]
     assert any(cmd.startswith("vol <image> windows.") for cmd in commands)
     assert any(cmd.startswith("vol2 <image> --profile=") for cmd in commands)
+
+
+def test_api_jwt_cracks_a_weak_secret(client):
+    """The JWT tab: decode, then verify the secret against the signature."""
+    import base64
+    import hashlib
+    import hmac
+    import json
+
+    def b64(data: bytes) -> str:
+        return base64.urlsafe_b64encode(data).decode().rstrip("=")
+
+    head = b64(json.dumps({"alg": "HS256"}, separators=(",", ":")).encode())
+    body = b64(json.dumps({"u": "bob"}, separators=(",", ":")).encode())
+    signature = hmac.new(b"secret", f"{head}.{body}".encode(), hashlib.sha256).digest()
+    answer = client.post("/api/jwt", json={"input": f"{head}.{body}.{b64(signature)}"}).get_json()
+    assert answer["secret"] == "secret"
+    assert any(finding["rule"] == "jwt.weak_secret" for finding in answer["findings"])
+    assert answer["forged"]
+
+
+def test_a_format_error_comes_back_as_json_not_a_500(client):
+    """Every new format reader has its own error type; the page needs a 400."""
+    response = client.post("/api/jwt", json={"input": "not-a-token"})
+    assert response.status_code == 400
+    assert "three dot-separated parts" in response.get_json()["error"]

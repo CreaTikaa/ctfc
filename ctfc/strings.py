@@ -213,6 +213,20 @@ EN: dict[str, str] = {
     ),
     "arg_repo": "the repository folder (or the .git folder itself)",
     "opt_git_extract": "write every recovered blob into this folder (then: ctfc scan)",
+    "cmd_jwt": "decode a JWT and report what is wrong with it",
+    "cmd_jwt_ex": (
+        "examples: ctfc jwt eyJhbGciOi...  |  ctfc jwt <token> --secret mykey  |  "
+        "ctfc jwt <token> --show-code. "
+        "The header and payload are only base64: no key is needed to read them."
+    ),
+    "arg_token": "the JWT (header.payload.signature)",
+    "opt_jwt_secret": "only try this secret, instead of the embedded password list",
+    "opt_jwt_no_secrets": "do not try to find the HMAC secret at all",
+    "web_tab_jwt": "JWT",
+    "web_jwt_help": "Paste a JWT on the left. The header and payload are only base64, so they "
+    "are read without any key; a weak HMAC secret is found from the embedded list, and alg=none "
+    "or a key-choosing header is reported.",
+    "web_jwt_no_secrets": "do not try the embedded password list as the HMAC secret",
     "cmd_sqlite": "read a SQLite database, including the rows it thinks it deleted",
     "cmd_sqlite_ex": (
         "examples: ctfc sqlite places.sqlite  |  ctfc sqlite History --json. "

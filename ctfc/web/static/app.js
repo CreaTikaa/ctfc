@@ -32,6 +32,7 @@ const TOOLS = {
   pipeline: "sync",
   keys: "job",
   radius: "sync",
+  jwt: "sync",
 };
 
 // API route of a tab, when it is not /api/<tab>.
@@ -39,7 +40,7 @@ const API_PATH = { pipeline: "/api/recipe" };
 
 // Tabs that have their own options panel (#options-<tab>).
 const OPTION_PANELS = [
-  "xor", "sym", "rsa", "hash", "pipeline", "keys", "lens", "radius", "volatility",
+  "xor", "sym", "rsa", "hash", "pipeline", "keys", "lens", "radius", "volatility", "jwt",
 ];
 
 // Tabs that are reference pages, not tools: opening them shows the page and
@@ -182,6 +183,9 @@ function currentOptions() {
   if (state.tab === "radius") {
     return { authenticator: $("radius-authenticator").value, secret: $("radius-secret").value };
   }
+  if (state.tab === "jwt") {
+    return { no_secrets: $("jwt-no-secrets").checked };
+  }
   if (state.tab === "keys") {
     return {
       against: $("keys-against").value,
@@ -317,6 +321,11 @@ function showAnswer(tab, answer) {
   }
   if (tab === "hash") {
     renderHash(answer);
+    setStatus("");
+    return;
+  }
+  if (tab === "jwt") {
+    renderJwt(answer);
     setStatus("");
     return;
   }
@@ -1074,6 +1083,52 @@ async function showCheatsheet() {
     $("results").replaceChildren(renderMarkdown(answer.markdown));
   } catch (error) {
     setStatus(error.message, true);
+  }
+}
+
+// ---------------------------------------------------------------- JWT
+function renderJwt(report) {
+  const results = $("results");
+  const facts = el("table", "facts");
+  const rows = [
+    ["algorithm", report.algorithm || "(none)"],
+    ["signature", report.signature_bytes + " bytes"],
+  ];
+  if (report.secret !== null && report.secret !== undefined) rows.push(["secret", report.secret]);
+  for (const [name, value] of rows) {
+    const row = el("tr");
+    row.append(el("td", "dim", name), el("td", "", String(value)));
+    facts.append(row);
+  }
+  results.append(facts);
+
+  for (const finding of report.findings) {
+    const card = el("div", "card " + (finding.severity === "high" ? "good" : ""));
+    const head = el("div", "card-head");
+    head.append(el("span", "score", finding.severity), el("span", "label", finding.rule));
+    card.append(head, el("p", "", finding.what));
+    if (finding.next_step) card.append(el("p", "vol-tip", "\u2192 " + finding.next_step));
+    results.append(card);
+  }
+  for (const [title, value] of [["header", report.header], ["payload", report.payload]]) {
+    results.append(el("h3", "", title));
+    results.append(el("pre", "code", JSON.stringify(value, null, 2)));
+  }
+  if (report.times.length) {
+    results.append(el("h3", "", "times"));
+    const list = el("ul", "notes");
+    for (const line of report.times) list.append(el("li", "", line));
+    results.append(list);
+  }
+  if (report.forged) {
+    results.append(el("h3", "", "a token you can send instead"));
+    const box = el("pre", "code", report.forged);
+    results.append(box);
+    results.append(copyButton(T("web_copy"), () => report.forged));
+  }
+  if (report.python) {
+    results.append(el("h3", "", "reproduce it"));
+    results.append(el("pre", "code", report.python));
   }
 }
 

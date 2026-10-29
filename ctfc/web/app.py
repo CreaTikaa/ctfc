@@ -488,6 +488,23 @@ def create_app(config: Config | None = None) -> Flask:
         report = identify_hash(value, try_passwords=not options.get("no_passwords"))
         return jsonify(report.to_dict())
 
+    @app.post("/api/jwt")
+    def api_jwt():
+        """JWT: decoding is instant, and the secret list is small enough to be too."""
+        from ctfc.core import jwt as jwt_module
+
+        payload = read_payload()
+        token = str(payload.get("input", "")).strip()
+        if not token:
+            raise InputError(t("web_empty_input"))
+        options = payload.get("options") or {}
+        report = jwt_module.analyse(
+            token, flagset=flagset, try_secrets=not options.get("no_secrets")
+        )
+        answer = report.to_dict()
+        record(payload, "jwt", None, answer)
+        return jsonify(answer)
+
     @app.post("/api/radius")
     def api_radius():
         """RADIUS PAP recovery: instant (undo RFC 2865, guess the shared secret)."""
@@ -725,6 +742,26 @@ def create_app(config: Config | None = None) -> Flask:
 
     @app.errorhandler(InputError)
     def bad_input(error: InputError):
+        return jsonify({"error": str(error)}), 400
+
+    # The format readers each raise their own error for "this is not that kind of
+    # file". They all mean the same thing to the page: a 400 with the reason.
+    from ctfc.core.cfb import CfbError
+    from ctfc.core.gitrepo import GitError
+    from ctfc.core.jwt import JwtError
+    from ctfc.core.office import OfficeError
+    from ctfc.core.pdf import PdfError
+    from ctfc.core.sqlitedb import SqliteError
+    from ctfc.core.stego import StegoError
+
+    @app.errorhandler(CfbError)
+    @app.errorhandler(GitError)
+    @app.errorhandler(JwtError)
+    @app.errorhandler(OfficeError)
+    @app.errorhandler(PdfError)
+    @app.errorhandler(SqliteError)
+    @app.errorhandler(StegoError)
+    def bad_format(error: Exception):
         return jsonify({"error": str(error)}), 400
 
     @app.errorhandler(413)

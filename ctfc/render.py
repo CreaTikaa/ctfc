@@ -6,6 +6,8 @@ bytes from a sample can never inject rich markup or terminal escape sequences.
 
 from __future__ import annotations
 
+import json
+
 from rich.console import Console
 from rich.markup import escape
 from rich.panel import Panel
@@ -573,6 +575,44 @@ def print_sqlite(console: Console, report) -> None:
             text = "[bold]" + safe("; ".join(row.secrets), 90) + "[/] " + text
         table.add_row("" if row.rowid is None else str(row.rowid), safe(row.where, 24), text)
     console.print(table)
+
+
+def print_jwt(console: Console, report, show_code: bool = False) -> None:
+    """`ctfc jwt`: the decoded parts, then what can be done with the token."""
+    facts = Table(title="token", show_header=False, expand=False)
+    facts.add_column("name", style="cyan")
+    facts.add_column("value")
+    facts.add_row("algorithm", report.algorithm or "(none)")
+    facts.add_row("signature", f"{report.signature_bytes} bytes")
+    if report.secret is not None:
+        facts.add_row("secret", f"[bold green]{safe(report.secret.decode('utf-8', 'replace'))}[/]")
+    console.print(facts)
+
+    if report.findings:
+        table = Table(title="what is wrong with it", expand=True, show_lines=True)
+        table.add_column("", width=6)
+        table.add_column("rule", width=20)
+        table.add_column("what it means", ratio=4)
+        for finding in report.findings:
+            style = {"high": "bold red", "medium": "yellow", "info": "dim"}[finding.severity]
+            cell = safe(finding.what, 200)
+            if finding.next_step:
+                cell += f"\n[green]-> {safe(finding.next_step, 200)}[/]"
+            table.add_row(f"[{style}]{finding.severity}[/]", finding.rule, cell)
+        console.print(table)
+
+    for title, value in (("header", report.header), ("payload", report.payload)):
+        console.print(f"[bold]{title}[/]")
+        console.print(Panel(escape(json.dumps(value, indent=2)[:3000]), border_style="dim"))
+    for line in report.times:
+        console.print(f"[cyan]*[/] {safe(line)}")
+    if report.flags:
+        console.print(f"[bold green]flag in the payload:[/] {safe(', '.join(report.flags))}")
+    if report.forged:
+        console.print("[bold]a token you can send instead[/] (payload + admin:true)")
+        console.print(Panel(escape(report.forged), border_style="green"))
+    if show_code and report.python:
+        console.print(Syntax(report.python, "python", theme="ansi_dark", word_wrap=True))
 
 
 def print_radius(console: Console, found, had_secret: bool) -> None:

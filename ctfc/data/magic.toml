@@ -368,7 +368,7 @@ strength = 0.95
 id = "jwt"
 regex = '^\s*eyJ[A-Za-z0-9_\-]+\.eyJ[A-Za-z0-9_\-]*\.[A-Za-z0-9_\-]*\s*$'
 label = "JSON Web Token (header.payload.signature, base64url)"
-hint = "base64url-decode the first two parts; alg=none or weak HS256 secret are classic"
+hint = "ctfc jwt <token>   (decodes it, tries the HMAC secret, flags alg=none)"
 strength = 0.95
 
 [[prefix]]
