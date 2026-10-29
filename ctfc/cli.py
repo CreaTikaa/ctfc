@@ -144,6 +144,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--extract", help=t("opt_pcap_extract"))
     p.add_argument("--seconds", type=float, default=30.0, help=t("opt_seconds"))
 
+    p = add("radius")
+    p.add_argument("input", help=t("arg_radius_input"))
+    p.add_argument("--authenticator", required=True, help=t("opt_radius_authenticator"))
+    p.add_argument("--secret", help=t("opt_radius_secret"))
+
     p = add("scan")
     p.add_argument("folder", help=t("arg_folder"))
     p.add_argument("--no-recursive", action="store_true", help=t("opt_scan_no_recursive"))
@@ -737,6 +742,51 @@ def cmd_pcap(args: argparse.Namespace, config: Config, console: Console) -> int:
     return 0 if findings else 1
 
 
+def cmd_radius(args: argparse.Namespace, config: Config, console: Console) -> int:
+    """Recover a RADIUS PAP password from the User-Password attribute + authenticator."""
+    from ctfc.core import radius
+
+    encrypted = parse_input(args.input, decode_bare=False).data
+    authenticator = parse_input(args.authenticator, decode_bare=False).data
+    if len(authenticator) != 16:
+        raise ValueError(
+            f"the Request Authenticator must be 16 bytes, got {len(authenticator)} "
+            "(pass it as hex:... or b64:...)"
+        )
+    secrets = [args.secret.encode()] if args.secret else None
+    found = radius.recover(encrypted, authenticator, secrets, flagset=flagset_from(config))
+    best = found[0] if found else None
+    remember(
+        args,
+        config,
+        best.password if best else None,
+        args.input,
+        summary=[
+            f"secret {best.secret.decode('utf-8', 'replace')!r}: {best.password!r}"
+            for best in found[:3]
+        ],
+    )
+    if args.json:
+        print(
+            json.dumps(
+                {
+                    "recovered": [
+                        {
+                            "secret": r.secret.decode("utf-8", "replace"),
+                            "password": r.password.decode("utf-8", "replace"),
+                            "is_flag": r.is_flag,
+                        }
+                        for r in found
+                    ]
+                },
+                indent=2,
+            )
+        )
+        return 0 if found else 1
+    render.print_radius(console, found, bool(args.secret))
+    return 0 if found else 1
+
+
 def cmd_scan(args: argparse.Namespace, config: Config, console: Console) -> int:
     """Run detect + auto on every file of a folder and rank them."""
     budget = Budget(max_attempts=10_000_000, max_seconds=args.seconds)
@@ -919,6 +969,7 @@ def main(argv: list[str] | None = None) -> int:
         "hash": cmd_hash,
         "scan": cmd_scan,
         "pcap": cmd_pcap,
+        "radius": cmd_radius,
         "recipe": cmd_recipe,
         "tools": cmd_tools,
     }

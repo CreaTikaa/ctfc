@@ -118,6 +118,24 @@ def zipcrypto_zip(entry_name: str, content: bytes, password: bytes) -> bytes:
     return local + central + end
 
 
+def radius_hide_password(password: bytes, authenticator: bytes, secret: bytes) -> bytes:
+    """Hide a PAP password the RADIUS way (RFC 2865 section 5.2), independently of ctfc.
+
+    Pad with NULs to a multiple of 16, then XOR each block with MD5(secret + the
+    previous ciphertext block), the first block using the authenticator.
+    """
+    padded = password + b"\x00" * (-len(password) % 16)
+    out = bytearray()
+    previous = authenticator
+    for start in range(0, len(padded), 16):
+        block = padded[start : start + 16]
+        stream = hashlib.md5(secret + previous).digest()
+        cipher = bytes(p ^ s for p, s in zip(block, stream, strict=True))
+        out += cipher
+        previous = cipher
+    return bytes(out)
+
+
 def evp_bytes_to_key(
     password: bytes, salt: bytes, key_len: int, iv_len: int
 ) -> tuple[bytes, bytes]:
@@ -1073,6 +1091,23 @@ def write_audit_fixtures() -> None:
     #    ciphertext - which is exactly what ctfc works out for the bkcrack command.
     png = gray_png()
     write("audit_zipcrypto.zip", zipcrypto_zip("flag.png", png, b"s3cr3t"))
+
+    # 7. RADIUS Access-Request: the PAP password is hidden under a weak shared
+    #    secret ("testing123"), the kind ctfc guesses, so the capture alone leaks it.
+    authenticator = RNG.randbytes(16)
+    hidden = radius_hide_password(b"CYBN{fixture_radius_pap}", authenticator, b"testing123")
+    request = (
+        bytes([1, 37])  # code = Access-Request, identifier 37
+        + struct.pack(">H", 20 + 2 + 5 + 2 + len(hidden))  # total length
+        + authenticator
+        + bytes([1, 2 + 5])
+        + b"alice"  # User-Name = "alice"
+        + bytes([2, 2 + len(hidden)])
+        + hidden  # User-Password (encrypted)
+    )
+    frame = ethernet_ipv4("10.0.0.5", "10.0.0.1", 17, udp_datagram(51000, 1812, request))
+    header = struct.pack("<IHHiIII", 0xA1B2C3D4, 2, 4, 0, 0, 65535, 1)
+    write("audit_radius.pcap", header + pcap_packet(frame, 1700000500))
 
 
 def main() -> None:

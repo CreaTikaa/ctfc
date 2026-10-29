@@ -191,6 +191,15 @@ EN: dict[str, str] = {
         "(then: ctfc scan ./objects)"
     ),
     "opt_pcap_extract": "also save every extracted object into this folder",
+    "cmd_radius": "recover a RADIUS PAP password (RFC 2865) from the captured attribute",
+    "cmd_radius_ex": (
+        "example: ctfc radius hex:<User-Password> --authenticator hex:<16-byte authenticator>  "
+        "(the shared secret is guessed; pass --secret if you know it). "
+        "A whole capture: ctfc pcap capture.pcap does it on its own."
+    ),
+    "arg_radius_input": "the encrypted User-Password attribute (file, hex:..., b64:...)",
+    "opt_radius_authenticator": "the 16-byte Request Authenticator (hex:... or b64:...)",
+    "opt_radius_secret": "the shared secret, if you know it (else common secrets are tried)",
     "cmd_scan": "run detect + auto on every file of a folder and rank them",
     "cmd_scan_ex": (
         "examples: ctfc scan _dump.bin.extracted  |  ctfc scan ./objects --seconds 300  |  "

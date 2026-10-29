@@ -677,6 +677,83 @@ def _from_base64(text: str) -> bytes | None:
 
 
 # ---------------------------------------------------------------------------
+# RADIUS PAP
+# ---------------------------------------------------------------------------
+
+
+def _port(endpoint: str) -> int:
+    """The port number of a "host:port" string, or -1 if there is none."""
+    _, _, port = endpoint.rpartition(":")
+    return int(port) if port.isdigit() else -1
+
+
+def extract_radius(packets: list[Packet]) -> tuple[list[Extracted], set[bytes]]:
+    """Find RADIUS Access-Requests and recover the PAP password in each.
+
+    Returns the extracted objects and the raw payloads consumed (so the generic
+    UDP dump does not repeat them). The shared secret is brute-forced from the
+    common list + the embedded passwords, so a capture alone yields the password.
+    """
+    from ctfc.core import radius
+
+    objects: list[Extracted] = []
+    consumed: set[bytes] = set()
+    for packet in packets:
+        if packet.protocol != "udp" or not packet.payload:
+            continue
+        if _port(packet.destination) not in radius.AUTH_PORTS:
+            continue
+        request = radius.parse_access_request(packet.payload)
+        if request is None:
+            continue
+        consumed.add(packet.payload)
+        user = request.user_name.decode("utf-8", "replace") or "?"
+        found = radius.recover(request.user_password, request.authenticator)
+        if found:
+            best = found[0]
+            objects.append(
+                Extracted(
+                    kind="radius-pap",
+                    name=f"radius_{user}_password.txt",
+                    data=best.password,
+                    description=(
+                        f"RADIUS PAP password for {user!r}, recovered with the shared "
+                        f"secret {best.secret.decode('utf-8', 'replace')!r}"
+                    ),
+                    source=packet.source,
+                    destination=packet.destination,
+                    details=[
+                        f"user {user}",
+                        f"shared secret {best.secret.decode('utf-8', 'replace')!r} "
+                        "(guessed from the common list)",
+                        "RFC 2865 section 5.2: password XOR MD5(secret + authenticator)",
+                    ],
+                )
+            )
+        else:
+            objects.append(
+                Extracted(
+                    kind="radius-pap",
+                    name=f"radius_{user}_encrypted.bin",
+                    data=request.user_password,
+                    description=(
+                        f"RADIUS Access-Request for {user!r}: the password is hidden and "
+                        "the shared secret was not in the list"
+                    ),
+                    source=packet.source,
+                    destination=packet.destination,
+                    details=[
+                        f"authenticator {request.authenticator.hex()}",
+                        "try your own secret: ctfc radius "
+                        f"hex:{request.user_password.hex()} "
+                        f"--authenticator hex:{request.authenticator.hex()} --secret <secret>",
+                    ],
+                )
+            )
+    return objects, consumed
+
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 
@@ -739,11 +816,17 @@ def analyse(data: bytes, path: str = "") -> PcapReport:
 
     report.objects += extract_dns(packets)
 
+    radius_objects, radius_payloads = extract_radius(packets)
+    report.objects += radius_objects
+    seen |= radius_payloads
+
     # UDP payloads that are not DNS, grouped per flow.
     udp: dict[tuple[str, str], bytearray] = {}
     for packet in packets:
         if packet.protocol != "udp" or packet.destination.endswith(":53") or not packet.payload:
             continue
+        if packet.payload in radius_payloads:
+            continue  # already handled as a RADIUS Access-Request
         udp.setdefault(packet.flow, bytearray()).extend(packet.payload)
     for (source, destination), blob in udp.items():
         if len(blob) < 16 or bytes(blob) in seen:

@@ -438,6 +438,30 @@ def print_pcap(
         print_candidate_details(console, best.best, show_code)
 
 
+def print_radius(console: Console, found, had_secret: bool) -> None:
+    """`ctfc radius`: the shared secret(s) that decrypted the PAP password."""
+    if not found:
+        if had_secret:
+            console.print("[yellow]That shared secret did not give a readable password.[/]")
+        else:
+            console.print(
+                "[yellow]No common shared secret worked.[/] "
+                "Pass --secret if you know it (it may be in a config from the same box)."
+            )
+        return
+    table = Table(title="recovered RADIUS PAP password", expand=True, show_lines=True)
+    table.add_column("shared secret", ratio=2)
+    table.add_column("password", ratio=3)
+    table.add_column("flag?", width=6)
+    for item in found[:10]:
+        secret = item.secret.decode("utf-8", "replace")
+        password = item.password.decode("utf-8", "replace")
+        table.add_row(
+            safe(secret), f"[bold green]{safe(password)}[/]", "yes" if item.is_flag else ""
+        )
+    console.print(table)
+
+
 def print_recipe(console: Console, result, show_code: bool = False) -> None:
     """`ctfc recipe run`: every step with its own output, then the final result."""
     for note in result.notes:
