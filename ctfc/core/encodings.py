@@ -524,6 +524,71 @@ def utf16le_decode(data: bytes) -> bytes:
         raise DecodeError(str(exc)) from exc
 
 
+# A PowerShell encoded command. `-EncodedCommand` may be shortened to any
+# unambiguous prefix ("-e", "-enc", "-encodedcommand"), so the flag is matched
+# loosely and the base64 that follows is what really decides.
+PS_ENCODED = re.compile(r"-e[a-z]*[\s:]+([A-Za-z0-9+/=]{20,})", re.IGNORECASE)
+PS_SEARCH_LIMIT = 4 * 1024 * 1024  # bytes of a dump we are willing to scan
+
+
+def _text_views(data: bytes):
+    """The data read as text, the three ways a command line hides in a binary.
+
+    Once as raw bytes (an ASCII command line), then as UTF-16LE at both byte
+    alignments - Windows writes its event logs and registry values in UTF-16LE,
+    so the command sits there with a zero byte after every character.
+    """
+    window = data[:PS_SEARCH_LIMIT]
+    yield window.decode("latin-1")
+    for start in (0, 1):
+        chunk = window[start:]
+        if len(chunk) % 2:
+            chunk = chunk[:-1]
+        # errors="ignore" is deliberate: the surrounding binary noise is not text
+        # and we only ever regex-search the result.
+        yield chunk.decode("utf-16-le", errors="ignore")
+
+
+def find_encoded_command(data: bytes) -> bytes | None:
+    """The script behind a PowerShell `-EncodedCommand`, wherever it hides.
+
+    PowerShell takes that argument as base64 of UTF-16LE source, which is why a
+    dropper line looks like noise. Returns the decoded script, or None.
+    """
+    for view in _text_views(data):
+        for match in PS_ENCODED.finditer(view):
+            blob = match.group(1)
+            try:
+                raw = base64.b64decode(blob + "=" * (-len(blob) % 4), validate=True)
+            except (binascii.Error, ValueError):
+                continue
+            if len(raw) < 8 or len(raw) % 2:
+                continue
+            try:
+                script = raw.decode("utf-16-le")
+            except UnicodeDecodeError:
+                continue
+            # A real script is readable *ASCII*: random bytes also decode as
+            # UTF-16LE, and land on printable Unicode letters often enough that
+            # str.isprintable() alone would accept them.
+            printable = sum(1 for char in script if " " <= char < "\x7f" or char in "\r\n\t")
+            if printable >= 0.9 * len(script):
+                return script.encode("utf-8")
+    return None
+
+
+def powershell_enc_ok(data: bytes) -> bool:
+    """Is there a PowerShell encoded command hidden in here?"""
+    return find_encoded_command(data) is not None
+
+
+def powershell_enc_decode(data: bytes) -> bytes:
+    script = find_encoded_command(data)
+    if script is None:
+        raise DecodeError("no PowerShell -EncodedCommand found")
+    return script
+
+
 def zero_width_chars(data: bytes) -> list[str]:
     """Return the zero-width characters of the text, in order."""
     try:
@@ -845,6 +910,16 @@ DECODERS: list[Decoder] = [
         python="data = rot47(data)",
         helper=ROT47_HELPER,
         cyberchef="ROT47(47)",
+    ),
+    Decoder(
+        name="psenc",
+        label="PowerShell -EncodedCommand found in the data",
+        decode=powershell_enc_decode,
+        applicable=powershell_enc_ok,
+        imports=("base64", "re"),
+        python='match = re.search(rb"-e[a-z]*[\\s:]+([A-Za-z0-9+/=]{20,})", data, re.I)\n'
+        'data = base64.b64decode(match.group(1)).decode("utf-16-le").encode()',
+        helper="# the command may be UTF-16LE inside the dump: decode that view first",
     ),
     Decoder(
         name="utf16le",

@@ -10,6 +10,7 @@ import zlib
 
 import pytest
 
+from ctfc.core import encodings
 from ctfc.core.encodings import (
     DECODERS_BY_NAME,
     DecodeError,
@@ -193,3 +194,61 @@ def test_generated_snippet_decodes_a_custom_alphabet(tmp_path, seed):
     )
     assert result.returncode == 0, best.python + result.stderr.decode()
     assert b"CYBN{custom_alphabet_auto}" in result.stdout
+
+
+# ---------------------------------------------------------------------------
+# PowerShell -EncodedCommand hidden in a binary (core/encodings.py)
+# ---------------------------------------------------------------------------
+
+
+def _ps_command(script: str, flag: str = "-enc") -> str:
+    blob = base64.b64encode(script.encode("utf-16-le")).decode()
+    return f"powershell.exe -NoProfile -W Hidden {flag} {blob}"
+
+
+def test_encoded_command_in_plain_text():
+    line = _ps_command("Write-Host 'hi'")
+    assert encodings.find_encoded_command(line.encode()) == b"Write-Host 'hi'"
+
+
+def test_every_abbreviation_of_the_flag_is_accepted():
+    """PowerShell takes any unambiguous prefix of -EncodedCommand."""
+    for flag in ("-e", "-en", "-enc", "-EncodedCommand", "-encodedcommand"):
+        line = _ps_command("Write-Host 1", flag)
+        assert encodings.find_encoded_command(line.encode()) == b"Write-Host 1", flag
+
+
+def test_encoded_command_hidden_in_binary_noise_as_utf16le():
+    """The .evtx / registry case: the command line is UTF-16LE inside a binary."""
+    line = _ps_command("Get-Content secret.txt")
+    for pad in (0, 1):  # both byte alignments
+        blob = b"\x00" * pad + b"\xde\xad\xbe\xef" + line.encode("utf-16-le") + b"\x99" * 40
+        assert encodings.find_encoded_command(blob) == b"Get-Content secret.txt"
+
+
+def test_encoded_command_hidden_in_binary_noise_as_ascii():
+    script = "whoami; Get-Process | Out-File log.txt"
+    line = _ps_command(script)
+    blob = b"\x00\x01\x02" + line.encode() + b"\xff\xfe"
+    assert encodings.find_encoded_command(blob) == script.encode()
+
+
+def test_no_command_means_none():
+    assert encodings.find_encoded_command(b"nothing to see here") is None
+    assert encodings.find_encoded_command(b"\x00\xff" * 500) is None
+
+
+def test_a_long_option_value_is_not_mistaken_for_a_command():
+    """-ExecutionPolicy and friends must not produce a bogus decode."""
+    assert encodings.find_encoded_command(b"powershell -ExecutionPolicy Bypass -File x.ps1") is None
+
+
+def test_base64_that_is_not_utf16_text_is_rejected():
+    """Random bytes behind the flag are a false match, not a script."""
+    blob = base64.b64encode(bytes(range(200))).decode()
+    assert encodings.find_encoded_command(f"-enc {blob}".encode()) is None
+
+
+def test_the_decoder_raises_cleanly_when_there_is_nothing():
+    with pytest.raises(encodings.DecodeError):
+        encodings.powershell_enc_decode(b"no command in here at all")

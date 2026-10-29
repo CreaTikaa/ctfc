@@ -1160,6 +1160,26 @@ def write_audit_fixtures() -> None:
     header = struct.pack("<IHHiIII", 0xA1B2C3D4, 2, 4, 0, 0, 65535, 1)
     write("audit_radius.pcap", header + pcap_packet(frame, 1700000500))
 
+    # 10. A Windows event log holding the dropper's command line, the "Cave
+    #     Expedition" first step: .evtx stores its strings as UTF-16LE, so the
+    #     -EncodedCommand is invisible to a plain ASCII strings pass.
+    script = (
+        "$k='CYBN';$b=[Convert]::FromBase64String('"
+        + base64.b64encode(b"CYBN{fixture_evtx_dropper}").decode()
+        + "');[Text.Encoding]::UTF8.GetString($b)"
+    )
+    encoded = base64.b64encode(script.encode("utf-16-le")).decode()
+    command = f"powershell.exe -NoProfile -W Hidden -enc {encoded}"
+    noise = bytes(RNG.randrange(256) for _ in range(600))
+    log = (
+        b"ElfFile\x00"
+        + noise[:300]
+        + b"ElfChnk\x00"
+        + command.encode("utf-16-le")  # the record string, as Windows writes it
+        + noise[300:]
+    )
+    write("audit_evtx_dropper.evtx", log)
+
     # 9. IMAP traffic carrying a phishing mail: the HTML body gives the password
     #    of the attached ZIP, which holds a double-extension payload. The flag is
     #    in the body, so `ctfc pcap` alone is enough to read it.

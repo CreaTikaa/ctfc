@@ -12,7 +12,9 @@ from ctfc.core.budget import Budget
 CASES = [
     ("layers_b64_zlib_hex.txt", "base64 -> zlib -> hex", b"CYBN{fixture_layers_b64_zlib_hex}"),
     ("reversed_b64.txt", "reverse -> base64", b"CYBN{fixture_reversed}"),
-    ("powershell_encoded.txt", "extract_base64 -> utf16le", b"CYBN{fixture_encodedcommand}"),
+    # One `psenc` step now beats the old extract_base64 -> utf16le chain: it finds
+    # the -EncodedCommand itself, so it also works when the line sits in a binary.
+    ("powershell_encoded.txt", "psenc", b"CYBN{fixture_encodedcommand}"),
     ("zero_width.txt", "zero_width_a", b"CYBN{zero_width}"),
 ]
 
@@ -60,3 +62,11 @@ def test_cancel():
 def test_input_that_is_already_the_answer():
     best = auto_decode(b"the flag is CYBN{already_here}")[0]
     assert best.label == "(input as given)"
+
+
+def test_evtx_dropper_command_is_decoded_from_a_binary_log(fixture_bytes):
+    """Cave Expedition's first step: the command line is UTF-16LE inside the .evtx."""
+    best = auto_decode(fixture_bytes("audit_evtx_dropper.evtx"))[0]
+    assert best.label.startswith("psenc")
+    assert b"CYBN{fixture_evtx_dropper}" in best.data
+    assert best.score >= 0.9
