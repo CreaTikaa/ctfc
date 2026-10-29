@@ -29,6 +29,8 @@ import zlib
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from ctfc.core import usb
+
 # Capture file magics.
 PCAP_MAGICS = {
     b"\xd4\xc3\xb2\xa1": ("<", 1_000_000),  # little-endian, microseconds
@@ -677,6 +679,35 @@ def _from_base64(text: str) -> bytes | None:
 
 
 # ---------------------------------------------------------------------------
+# USB
+# ---------------------------------------------------------------------------
+
+
+def extract_usb(frames: list[bytes], link_type: int) -> list[Extracted]:
+    """Decode what was typed on each USB keyboard in the capture (see core/usb.py)."""
+    objects = []
+    for typed in usb.extract_keystrokes(frames, link_type):
+        objects.append(
+            Extracted(
+                kind="usb-keystrokes",
+                name=f"usb_{typed.device.replace('.', '_')}_typed.txt",
+                data=typed.text.encode(),
+                description=(
+                    f"USB keyboard {typed.device}: {typed.reports} report(s) decoded into "
+                    f"{len(typed.text)} character(s)"
+                ),
+                source=f"usb {typed.device}",
+                details=[
+                    "HID boot-protocol reports, decoded with the usage table (page 0x07)",
+                    "Backspace was applied as a real deletion",
+                    *typed.notes,
+                ],
+            )
+        )
+    return objects
+
+
+# ---------------------------------------------------------------------------
 # RADIUS PAP
 # ---------------------------------------------------------------------------
 
@@ -765,6 +796,17 @@ def analyse(data: bytes, path: str = "") -> PcapReport:
     report.format = kind
     report.link_type = link_type
     report.notes.append(f"{kind} file, link type {link_type}, {len(frames)} frame(s)")
+
+    # A USB capture holds no network traffic at all: the payloads are HID reports,
+    # so the whole IP/TCP walk below would find nothing.
+    if link_type in usb.USB_LINK_TYPES:
+        report.objects += extract_usb(frames, link_type)
+        if not report.objects:
+            report.notes.append(
+                "USB capture, but no keyboard report was found: it may be a mouse, a "
+                "storage device or bulk traffic. `ctfc scan` the payloads instead."
+            )
+        return report
 
     packets = []
     for number, frame in enumerate(frames, start=1):

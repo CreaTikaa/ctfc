@@ -499,6 +499,57 @@ def pcap_packet(payload: bytes, timestamp: int) -> bytes:
     return struct.pack("<IIII", timestamp, 0, len(payload), len(payload)) + payload
 
 
+# HID usage codes for the characters the USB fixture types (page 0x07).
+USB_KEYCODES = {
+    **{chr(ord("a") + i): (0x04 + i, False) for i in range(26)},
+    **{chr(ord("A") + i): (0x04 + i, True) for i in range(26)},
+    **{"1": (0x1E, False), "2": (0x1F, False), "3": (0x20, False), "4": (0x21, False)},
+    **{"5": (0x22, False), "6": (0x23, False), "7": (0x24, False), "8": (0x25, False)},
+    **{"9": (0x26, False), "0": (0x27, False)},
+    "_": (0x2D, True),
+    "-": (0x2D, False),
+    "{": (0x2F, True),
+    "}": (0x30, True),
+    "!": (0x1E, True),
+    " ": (0x2C, False),
+    "\n": (0x28, False),
+    "\b": (0x2A, False),  # Backspace: the decoder must really delete
+}
+
+
+def usbmon_frame(report: bytes, device: int = 3, bus: int = 1) -> bytes:
+    """One usbmon (mmapped, link type 220) frame carrying an 8-byte HID report.
+
+    The 64-byte pseudo-header is written field by field; only devnum, busnum and
+    the lengths matter to a reader, the timestamps are left at zero.
+    """
+    header = (
+        (0).to_bytes(8, "little")  # urb id
+        + bytes([ord("C"), 1, 0x81, device])  # type 'C'allback, interrupt, endpoint 1 IN
+        + bus.to_bytes(2, "little")
+        + bytes([0, 0])  # flag_setup, flag_data
+        + (0).to_bytes(8, "little")  # ts_sec
+        + (0).to_bytes(4, "little")  # ts_usec
+        + (0).to_bytes(4, "little")  # status
+        + len(report).to_bytes(4, "little")  # urb length
+        + len(report).to_bytes(4, "little")  # captured length
+        + bytes(8)  # setup / iso union
+        + bytes(16)  # interval, start_frame, xfer_flags, ndesc
+    )
+    assert len(header) == 64, len(header)
+    return header + report
+
+
+def usb_keystroke_frames(text: str) -> list[bytes]:
+    """Type `text` on a keyboard: one report per key, each followed by a release."""
+    frames = []
+    for char in text:
+        code, shift = USB_KEYCODES[char]
+        frames.append(usbmon_frame(bytes([0x02 if shift else 0, 0, code, 0, 0, 0, 0, 0])))
+        frames.append(usbmon_frame(bytes(8)))  # every key released
+    return frames
+
+
 def ethernet_ipv4(source: str, destination: str, protocol: int, body: bytes) -> bytes:
     """An Ethernet frame carrying an IPv4 packet (no checksums: nothing verifies them)."""
 
@@ -1108,6 +1159,16 @@ def write_audit_fixtures() -> None:
     frame = ethernet_ipv4("10.0.0.5", "10.0.0.1", 17, udp_datagram(51000, 1812, request))
     header = struct.pack("<IHHiIII", 0xA1B2C3D4, 2, 4, 0, 0, 65535, 1)
     write("audit_radius.pcap", header + pcap_packet(frame, 1700000500))
+
+    # 8. A USB capture of someone typing the flag, with a typo they corrected:
+    #    "CYBN{usb_keyz" + Backspace + "strokes}". Link type 220 = usbmon mmapped.
+    typed = "CYBN{usb_keyz\bstrokes}\n"
+    usb_header = struct.pack("<IHHiIII", 0xA1B2C3D4, 2, 4, 0, 0, 65535, 220)
+    records = [
+        pcap_packet(frame, 1700000600 + number)
+        for number, frame in enumerate(usb_keystroke_frames(typed))
+    ]
+    write("audit_usb_keyboard.pcap", usb_header + b"".join(records))
 
 
 def main() -> None:
