@@ -1185,7 +1185,11 @@ def write_audit_fixtures() -> None:
     #    in the body, so `ctfc pcap` alone is enough to read it.
     payload_zip = io.BytesIO()
     with zipfile.ZipFile(payload_zip, "w", zipfile.ZIP_DEFLATED) as archive:
-        archive.writestr("Balance_Report.pdf.exe", b"MZ" + b"\x90" * 60 + b"payload")
+        # An explicit date: writestr() would otherwise stamp the entry with the
+        # current time, and this fixture has to come out byte-identical every run.
+        entry = zipfile.ZipInfo("Balance_Report.pdf.exe", date_time=(2026, 1, 1, 0, 0, 0))
+        entry.compress_type = zipfile.ZIP_DEFLATED
+        archive.writestr(entry, b"MZ" + b"\x90" * 60 + b"payload")
     attachment = base64.b64encode(payload_zip.getvalue()).decode()
     body_html = (
         "<html><body><p>Hello,</p><p>The report is attached. The archive password "
