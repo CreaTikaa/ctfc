@@ -146,6 +146,10 @@ def build_parser() -> argparse.ArgumentParser:
     p = add("sqlite")
     p.add_argument("input", help=t("arg_database"))
 
+    p = add("zip")
+    p.add_argument("input", help=t("arg_archive"))
+    p.add_argument("--seconds", type=float, default=30.0, help=t("opt_seconds"))
+
     p = add("time")
     p.add_argument("value", help=t("arg_time"))
 
@@ -817,6 +821,22 @@ def cmd_jwt(args: argparse.Namespace, config: Config, console: Console) -> int:
     return 0 if report.findings else 1
 
 
+def cmd_zip(args: argparse.Namespace, config: Config, console: Console) -> int:
+    """Look closely at a ZIP: encryption, mismatches, and the tiny files."""
+    from ctfc.core import zipinfo
+
+    inp = parse_input(args.input, decode_bare=False)
+    budget = Budget(max_attempts=20_000_000, max_seconds=args.seconds)
+    report = zipinfo.analyse(inp.data, args.input, budget)
+    remember(args, config, inp.data, args.input, summary=report.notes[:4])
+    if args.json:
+        print(json.dumps({"input": input_to_dict(inp), **report.to_dict()}, indent=2))
+        return 0
+    render.print_input_notes(console, inp)
+    render.print_zip(console, report)
+    return 0
+
+
 def cmd_time(args: argparse.Namespace, config: Config, console: Console) -> int:
     """Read a number as a date, across the epochs forensics runs into."""
     from ctfc.core import timestamps
@@ -1215,6 +1235,7 @@ def main(argv: list[str] | None = None) -> int:
         "sqlite": cmd_sqlite,
         "jwt": cmd_jwt,
         "time": cmd_time,
+        "zip": cmd_zip,
         "pcap": cmd_pcap,
         "radius": cmd_radius,
         "recipe": cmd_recipe,

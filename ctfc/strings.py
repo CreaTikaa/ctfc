@@ -213,6 +213,13 @@ EN: dict[str, str] = {
     ),
     "arg_repo": "the repository folder (or the .git folder itself)",
     "opt_git_extract": "write every recovered blob into this folder (then: ctfc scan)",
+    "cmd_zip": "look closely at a ZIP: encryption, header mismatches, tiny files",
+    "cmd_zip_ex": (
+        "examples: ctfc zip secret.zip  |  ctfc zip archive.zip --json. "
+        "Says whether it is ZipCrypto (known-plaintext, no password needed) or WinZip AES "
+        "(crack the password), and recovers files of 1-3 bytes from their CRC32."
+    ),
+    "arg_archive": "the ZIP archive (a path, or -)",
     "cmd_time": "read a number as a date, across the epochs forensics runs into",
     "cmd_time_ex": (
         "examples: ctfc time 1700000000  |  ctfc time 133476575820000000  |  "

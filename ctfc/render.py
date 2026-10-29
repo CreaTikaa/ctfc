@@ -627,6 +627,33 @@ def print_timestamps(console: Console, groups) -> None:
         console.print(table)
 
 
+def print_zip(console: Console, report) -> None:
+    """`ctfc zip`: the entries, then what to do about the encryption."""
+    table = Table(title=f"{len(report.entries)} entry/entries", expand=True)
+    table.add_column("name", ratio=3)
+    table.add_column("method", ratio=2)
+    table.add_column("size", justify="right", width=9)
+    table.add_column("crc", width=9)
+    table.add_column("notes", ratio=3)
+    for entry in report.entries:
+        notes = []
+        if entry.recovered is not None:
+            notes.append("[bold green]" + safe(repr(entry.recovered), 60) + "[/]")
+        notes += ["[red]" + safe(problem, 90) + "[/]" for problem in entry.problems]
+        table.add_row(
+            safe(entry.name, 50),
+            ("[yellow]" if entry.encrypted else "") + safe(entry.method_name, 30),
+            str(entry.uncompressed_size),
+            f"{entry.crc:08x}",
+            "\n".join(notes),
+        )
+    console.print(table)
+    for note in report.notes:
+        console.print(f"[cyan]*[/] {safe(note)}")
+    for command in report.commands:
+        console.print(f"[green]$[/] {escape(command)}")
+
+
 def print_radius(console: Console, found, had_secret: bool) -> None:
     """`ctfc radius`: the shared secret(s) that decrypted the PAP password."""
     if not found:
