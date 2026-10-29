@@ -146,6 +146,9 @@ def build_parser() -> argparse.ArgumentParser:
     p = add("sqlite")
     p.add_argument("input", help=t("arg_database"))
 
+    p = add("time")
+    p.add_argument("value", help=t("arg_time"))
+
     p = add("jwt")
     p.add_argument("token", help=t("arg_token"))
     p.add_argument("--secret", help=t("opt_jwt_secret"))
@@ -814,6 +817,62 @@ def cmd_jwt(args: argparse.Namespace, config: Config, console: Console) -> int:
     return 0 if report.findings else 1
 
 
+def cmd_time(args: argparse.Namespace, config: Config, console: Console) -> int:
+    """Read a number as a date, across the epochs forensics runs into."""
+    from ctfc.core import timestamps
+
+    text = args.value.strip()
+    groups: list[tuple[str, list]] = []
+    # A raw field lifted out of a binary: try it as bytes, both byte orders.
+    if text.lower().startswith(("hex:", "b64:")) or (
+        len(text) in (8, 16) and all(char in "0123456789abcdefABCDEF" for char in text)
+    ):
+        data = parse_input(text if ":" in text else f"hex:{text}", decode_bare=False).data
+        groups = timestamps.from_bytes(data)
+        if not groups:
+            raise ValueError(
+                f"{len(data)} bytes is not a timestamp field: 4 or 8 bytes are, "
+                "and no reading landed between 1990 and 2100"
+            )
+    else:
+        number = parse_number(text) if text.lower().startswith("0x") else None
+        if number is None:
+            try:
+                number = int(text)
+            except ValueError as exc:
+                raise ValueError(
+                    f"{text!r} is not a number: use decimal, 0x hex, or hex:<field bytes>"
+                ) from exc
+        found = timestamps.readings(number)
+        if not found:
+            raise ValueError(
+                f"no reading of {number} lands between 1990 and 2100: it is probably "
+                "not a timestamp (or it is a different epoch entirely)"
+            )
+        groups = [(str(number), found)]
+
+    if args.json:
+        print(
+            json.dumps(
+                {
+                    "readings": [
+                        {
+                            "input": label,
+                            "candidates": [
+                                {"epoch": r.epoch, "when": r.text, "note": r.note} for r in found
+                            ],
+                        }
+                        for label, found in groups
+                    ]
+                },
+                indent=2,
+            )
+        )
+        return 0
+    render.print_timestamps(console, groups)
+    return 0
+
+
 def parse_number(text: str | None) -> int | None:
     """Read a big integer written in decimal or as 0x hex."""
     if not text:
@@ -1155,6 +1214,7 @@ def main(argv: list[str] | None = None) -> int:
         "git": cmd_git,
         "sqlite": cmd_sqlite,
         "jwt": cmd_jwt,
+        "time": cmd_time,
         "pcap": cmd_pcap,
         "radius": cmd_radius,
         "recipe": cmd_recipe,

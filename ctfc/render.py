@@ -615,6 +615,18 @@ def print_jwt(console: Console, report, show_code: bool = False) -> None:
         console.print(Syntax(report.python, "python", theme="ansi_dark", word_wrap=True))
 
 
+def print_timestamps(console: Console, groups) -> None:
+    """`ctfc time`: every plausible reading of the number, with its epoch named."""
+    for label, readings in groups:
+        table = Table(title=f"readings of {label}", expand=True)
+        table.add_column("epoch", ratio=2)
+        table.add_column("date", width=24)
+        table.add_column("note", ratio=3)
+        for reading in readings:
+            table.add_row(reading.epoch, reading.text, safe(reading.note, 90))
+        console.print(table)
+
+
 def print_radius(console: Console, found, had_secret: bool) -> None:
     """`ctfc radius`: the shared secret(s) that decrypted the PAP password."""
     if not found:

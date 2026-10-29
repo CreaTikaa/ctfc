@@ -213,6 +213,14 @@ EN: dict[str, str] = {
     ),
     "arg_repo": "the repository folder (or the .git folder itself)",
     "opt_git_extract": "write every recovered blob into this folder (then: ctfc scan)",
+    "cmd_time": "read a number as a date, across the epochs forensics runs into",
+    "cmd_time_ex": (
+        "examples: ctfc time 1700000000  |  ctfc time 133476575820000000  |  "
+        "ctfc time hex:0080fc5ec4d1d901. "
+        "Unix, Windows FILETIME, Chrome/WebKit, Mac absolute and DOS are all tried; "
+        "only the readings that land between 1990 and 2100 are shown."
+    ),
+    "arg_time": "the number (decimal, 0x hex) or the raw field as hex:<8 or 4 bytes>",
     "cmd_jwt": "decode a JWT and report what is wrong with it",
     "cmd_jwt_ex": (
         "examples: ctfc jwt eyJhbGciOi...  |  ctfc jwt <token> --secret mykey  |  "
