@@ -171,3 +171,14 @@ def test_no_passwords_flag_skips_the_try():
     digest = hashlib.md5(b"password123").hexdigest()
     assert identify(digest, try_passwords=False).matches[0].cracked is None
     assert identify(digest, try_passwords=True).matches[0].cracked == "password123"
+
+
+def test_a_plain_digest_points_at_length_extension():
+    """Cracking is the wrong move when the digest signs a message."""
+    report = identify("5f4dcc3b5aa765d61d8327deb882cf99", try_passwords=False)
+    assert any("ctfc extend" in note for note in report.notes)
+
+
+def test_a_salted_format_does_not_mention_length_extension():
+    report = identify("$2y$10$" + "a" * 53, try_passwords=False)
+    assert not any("ctfc extend" in note for note in report.notes)

@@ -1109,3 +1109,36 @@ candidate states and a second output picks the right one - a search small enough
 to be instant. Running the recurrence backwards (the multiplier is invertible
 modulo 2^48) and undoing the constructor's `seed ^ 0x5DEECE66D` gives the literal
 number the challenge wrote in `new Random(...)`.
+
+## 17. Hash length extension (`ctfc/core/hashext.py`)
+
+MD5, SHA-1, SHA-256 and SHA-512 are **Merkle-Damgard** constructions: they pad
+the message, walk it block by block through a compression function, and print
+the internal state they stopped at. The digest holds nothing back, so it is a
+*resumable position* rather than a summary.
+
+That gives the forgery. Knowing `H(secret || data)` and the secret's **length**
+- not its bytes - we can rebuild the padding the hash already consumed (it
+depends only on the total length), load the digest back as the state, and keep
+hashing. The result is a correct digest of
+
+    secret || data || glue || append
+
+where `glue` is that padding, sitting in the middle of the message we send. A
+server that checks `H(secret || message)` accepts it, which is exactly why a MAC
+has to be HMAC and never a hash of a concatenation.
+
+Three practical details the module handles:
+
+- `hashlib` cannot resume from a state, so the four compression functions are
+  written out. The tests rebuild whole hashes from them and compare against
+  `hashlib`, which is what makes "our MD5 is MD5" a fact rather than a claim.
+- **SHA-224 and SHA-384 are immune**: they run the same compression but print
+  only part of the final state, so the digest is no longer the position. SHA-3
+  and BLAKE2 are not Merkle-Damgard at all. The tool refuses them with the
+  reason instead of producing a forgery that cannot work.
+- When the secret's length is unknown there is nothing to brute-force: one
+  candidate per plausible length, and the target accepts exactly one - which
+  also reveals the length. Lengths that land inside the same block produce the
+  *same* digest and differ only in the glue, and the report says so, because
+  "they are all identical" otherwise looks like a bug.

@@ -505,6 +505,41 @@ def create_app(config: Config | None = None) -> Flask:
         record(payload, "jwt", None, answer)
         return jsonify(answer)
 
+    @app.post("/api/extend")
+    def api_extend():
+        """Hash length extension: a few compression calls, so it answers directly."""
+        from ctfc.core import hashext
+
+        payload = read_payload()
+        # The message we already have a digest for: text, never auto-decoded.
+        inp = input_from_payload(payload, decode_bare=False)
+        options = payload.get("options") or {}
+        digest_text = str(options.get("digest") or "").strip()
+        if not digest_text:
+            raise hashext.HashExtError(t("web_extend_no_digest"))
+        try:
+            digest = bytes.fromhex(digest_text.removeprefix("hex:").replace(" ", ""))
+        except ValueError as exc:
+            raise hashext.HashExtError(f"{digest_text!r} is not a hex digest") from exc
+        append = option_bytes(options, "append", decode_bare=False) or b""
+        secret = option_bytes(options, "secret", decode_bare=False)
+        lengths = hashext.parse_lengths(str(options.get("secret_length") or "1-32"))
+        found = hashext.forge_range(
+            digest,
+            inp.data,
+            append,
+            lengths,
+            algorithm=str(options.get("algo") or "") or None,
+            secret=secret,
+        )
+        answer = {
+            "input": input_summary(inp),
+            "notes": hashext.notes(found),
+            "candidates": [forgery.to_dict() for forgery in found],
+        }
+        record(payload, "extend", inp, answer)
+        return jsonify(answer)
+
     @app.post("/api/prng")
     def api_prng():
         """PRNG cloning: untempering 624 words is instant, the Java search is 2^16."""
@@ -769,6 +804,7 @@ def create_app(config: Config | None = None) -> Flask:
     # file". They all mean the same thing to the page: a 400 with the reason.
     from ctfc.core.cfb import CfbError
     from ctfc.core.gitrepo import GitError
+    from ctfc.core.hashext import HashExtError
     from ctfc.core.jwt import JwtError
     from ctfc.core.office import OfficeError
     from ctfc.core.pdf import PdfError
@@ -778,6 +814,7 @@ def create_app(config: Config | None = None) -> Flask:
 
     @app.errorhandler(CfbError)
     @app.errorhandler(GitError)
+    @app.errorhandler(HashExtError)
     @app.errorhandler(JwtError)
     @app.errorhandler(OfficeError)
     @app.errorhandler(PdfError)

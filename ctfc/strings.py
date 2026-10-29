@@ -253,6 +253,31 @@ EN: dict[str, str] = {
         "only the readings that land between 1990 and 2100 are shown."
     ),
     "arg_time": "the number (decimal, 0x hex) or the raw field as hex:<8 or 4 bytes>",
+    "cmd_extend": "hash length extension: forge H(secret || data || anything) without the secret",
+    "cmd_extend_ex": (
+        "example: ctfc extend 5f4dcc3b5aa765d61d8327deb882cf99 --data 'user=guest' "
+        "--append '&admin=1' --secret-length 1-32. "
+        "MD5/SHA-1/SHA-256/SHA-512 print their whole internal state, so a digest can be "
+        "resumed. Unknown secret length: one candidate per length, the target picks."
+    ),
+    "arg_digest": "the known digest of secret || data, in hex",
+    "opt_extend_append": "what to add after the data (text:..., hex:..., or a file)",
+    "opt_extend_data": "the message you already have a digest for (default: empty)",
+    "opt_extend_length": "the secret's length in bytes: 16, 8-32, or 8,16,24 (default 1-32)",
+    "opt_extend_algo": "force the hash (default: from the digest's length)",
+    "opt_extend_secret": "the secret, if you have it: the forgery is then checked locally",
+    "web_tab_extend": "Extend",
+    "web_extend_help": "Hash length extension. Put the message you already have a digest for "
+    "in the box on the left, the digest and what to append on the right. The digest of a "
+    "Merkle-Damgard hash is the state it stopped at, so it can be resumed - HMAC cannot.",
+    "web_extend_digest": "known digest of secret || data (hex)",
+    "web_extend_append": "what to append",
+    "web_extend_length": "secret length (16, or 1-32)",
+    "web_extend_algo": "hash (empty = from the digest length)",
+    "web_extend_secret": "the secret, if you have it (checks the forgery)",
+    "web_extend_no_digest": "paste the known digest of secret || data in the Extend options",
+    "web_extend_message": "the message to send (after the secret)",
+    "web_extend_url": "url-encoded, ready to paste",
     "cmd_prng": "clone a weak random generator from its own output (MT19937, java.util.Random)",
     "cmd_prng_ex": (
         "examples: ctfc prng tokens.txt  |  ctfc prng text:'1234, 5678, ...' --forward 5  |  "

@@ -34,6 +34,7 @@ const TOOLS = {
   radius: "sync",
   jwt: "sync",
   prng: "sync",
+  extend: "sync",
 };
 
 // API route of a tab, when it is not /api/<tab>.
@@ -41,7 +42,7 @@ const API_PATH = { pipeline: "/api/recipe" };
 
 // Tabs that have their own options panel (#options-<tab>).
 const OPTION_PANELS = [
-  "xor", "sym", "rsa", "hash", "pipeline", "keys", "lens", "radius", "volatility", "jwt", "prng",
+  "xor", "sym", "rsa", "hash", "pipeline", "keys", "lens", "radius", "volatility", "jwt", "prng", "extend",
 ];
 
 // Tabs that are reference pages, not tools: opening them shows the page and
@@ -186,6 +187,15 @@ function currentOptions() {
   }
   if (state.tab === "jwt") {
     return { no_secrets: $("jwt-no-secrets").checked };
+  }
+  if (state.tab === "extend") {
+    return {
+      digest: $("extend-digest").value,
+      append: $("extend-append").value,
+      secret_length: $("extend-length").value,
+      algo: $("extend-algo").value,
+      secret: $("extend-secret").value,
+    };
   }
   if (state.tab === "prng") {
     return {
@@ -334,6 +344,11 @@ function showAnswer(tab, answer) {
   }
   if (tab === "jwt") {
     renderJwt(answer);
+    setStatus("");
+    return;
+  }
+  if (tab === "extend") {
+    renderExtend(answer);
     setStatus("");
     return;
   }
@@ -1142,6 +1157,50 @@ function renderJwt(report) {
   if (report.python) {
     results.append(el("h3", "", "reproduce it"));
     results.append(el("pre", "code", report.python));
+  }
+}
+
+// -------------------------------------------------------- length extension
+function renderExtend(answer) {
+  const results = $("results");
+  const best = answer.candidates[0];
+  const table = el("table", "facts");
+  for (const [name, value] of [
+    ["hash", best.algorithm],
+    ["secret length", best.secret_length + (best.verified ? " (verified)" : "")],
+    ["forged digest", best.digest],
+  ]) {
+    const row = el("tr");
+    row.append(el("td", "dim", name), el("td", "", String(value)));
+    table.append(row);
+  }
+  results.append(table);
+
+  results.append(el("h3", "", T("web_extend_message")));
+  results.append(el("pre", "code", best.message_hex));
+  results.append(copyButton(T("web_copy"), () => best.message_hex));
+  results.append(el("h3", "", T("web_extend_url")));
+  results.append(el("pre", "code", best.message_url));
+  results.append(copyButton(T("web_copy"), () => best.message_url));
+
+  if (answer.candidates.length > 1) {
+    const list = el("table", "facts");
+    for (const candidate of answer.candidates) {
+      const row = el("tr");
+      row.append(
+        el("td", "dim", "len " + candidate.secret_length),
+        el("td", "", candidate.digest),
+        el("td", "dim", candidate.message_url),
+      );
+      list.append(row);
+    }
+    results.append(el("h3", "", "every candidate length"));
+    results.append(list);
+  }
+  if (answer.notes && answer.notes.length) renderNotes(answer.notes);
+  if (best.python) {
+    results.append(el("h3", "", "reproduce it"));
+    results.append(el("pre", "code", best.python));
   }
 }
 

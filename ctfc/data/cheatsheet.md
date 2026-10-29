@@ -38,6 +38,7 @@ mirror the encryptor, do not guess.
 | natural letters, no words | transposition (rail fence): `ctfc classical <file>` |
 | `PLOA{` where `CYBN{` belongs | a shifted flag: `ctfc classical <file>` |
 | a hash (`$2y$`, 32 hex, `$krb5tgs$`...) | `ctfc hash <hash>` -> hashcat / john command |
+| a digest that *signs* a message (MAC, token, cookie) | `ctfc extend <digest> --data ... --append ...` - forge, do not crack |
 | PEM / RSA numbers | `ctfc rsa --key k.pem --decrypt ct.bin --attack` |
 | a pcap / pcapng | `ctfc pcap cap.pcap --extract out/` then `ctfc scan out/` |
 | zero-width characters | `ctfc auto` (both bit mappings) or a StegCloak decoder |

@@ -194,9 +194,29 @@ def identify(value: str, try_passwords: bool = True) -> HashReport:
         )
 
     _explain_dump_line(report)
+    _note_length_extension(report)
     if try_passwords:
         _try_the_password_list(report)
     return report
+
+
+# A plain Merkle-Damgard digest can be *extended*, which beats cracking it when the
+# hash is used as a signature: H(secret || message) is forgeable without the secret.
+EXTENDABLE = {"md5": 32, "sha1": 40, "sha256": 64, "sha512": 128}
+
+
+def _note_length_extension(report: HashReport) -> None:
+    """Point at `ctfc extend` when the hash is one that length extension breaks."""
+    names = {match.format.id for match in report.matches}
+    for algo, length in EXTENDABLE.items():
+        if algo in names and len(report.value) == length:
+            report.notes.append(
+                f"if this digest signs a message (a MAC of the form {algo}(secret || data), "
+                "a token, a cookie), do not crack it: extend it. "
+                f"`ctfc extend {report.value[:8]}... --data <message> --append <what you want>` "
+                "forges a valid digest for a longer message without the secret"
+            )
+            return
 
 
 # The LM / NT hash of an empty password: seen on every disabled account.

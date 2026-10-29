@@ -631,3 +631,40 @@ def test_prng_tab_is_wired_end_to_end():
         assert f'$("{name}")' in script
     assert 'prng: "sync"' in script
     assert '"prng"' in script.split("OPTION_PANELS")[1][:200]
+
+
+def test_api_extend_forges_a_digest(client):
+    """The Extend tab: the known message on the left, the digest in the options."""
+    import hashlib
+
+    secret, data, append = b"longer_secret", b"amount=1", b"&to=me"
+    digest = hashlib.md5(secret + data).hexdigest()
+    answer = client.post(
+        "/api/extend",
+        json={
+            "input": "text:amount=1",
+            "options": {"digest": digest, "append": "text:&to=me", "secret_length": "1-20"},
+        },
+    ).get_json()
+    assert len(answer["candidates"]) == 20
+    right = next(c for c in answer["candidates"] if c["secret_length"] == len(secret))
+    message = bytes.fromhex(right["message_hex"])
+    assert hashlib.md5(secret + message).hexdigest() == right["digest"]
+    assert message.startswith(data) and message.endswith(append)
+
+
+def test_api_extend_without_a_digest_is_a_400(client):
+    response = client.post("/api/extend", json={"input": "text:x", "options": {}})
+    assert response.status_code == 400
+    assert "digest" in response.get_json()["error"]
+
+
+def test_extend_tab_is_wired_end_to_end():
+    static = Path(__file__).resolve().parent.parent / "ctfc" / "web" / "static"
+    page = (static / "index.html").read_text()
+    script = (static / "app.js").read_text()
+    assert 'data-tab="extend"' in page
+    for name in ("extend-digest", "extend-append", "extend-length", "extend-algo", "extend-secret"):
+        assert f'id="{name}"' in page
+        assert f'$("{name}")' in script
+    assert 'extend: "sync"' in script

@@ -65,6 +65,7 @@
         <button class="tab" data-tab="keys" data-t="web_tab_keys">Keys</button>
         <button class="tab" data-tab="jwt" data-t="web_tab_jwt">JWT</button>
         <button class="tab" data-tab="prng" data-t="web_tab_prng">PRNG</button>
+        <button class="tab" data-tab="extend" data-t="web_tab_extend">Extend</button>
         <button class="tab" data-tab="radius" data-t="web_tab_radius">RADIUS</button>
         <button class="tab" data-tab="volatility" data-t="web_tab_volatility">Volatility</button>
         <button class="tab" data-tab="cheatsheet" data-t="web_tab_cheatsheet">Cheatsheet</button>
@@ -243,6 +244,25 @@
           <input id="prng-forward" type="number" min="0" max="200" value="10"></label>
         <label><span data-t="web_prng_backward">earlier values to show</span>
           <input id="prng-backward" type="number" min="0" max="200" value="10"></label>
+      </div>
+      <!-- Options of the Extend tab: the known message goes in the input box on the left -->
+      <div id="options-extend" class="options hidden">
+        <label><span data-t="web_extend_digest">known digest of secret || data (hex)</span>
+          <input id="extend-digest" type="text" spellcheck="false"></label>
+        <label><span data-t="web_extend_append">what to append</span>
+          <input id="extend-append" type="text" spellcheck="false"></label>
+        <label><span data-t="web_extend_length">secret length (16, or 1-32)</span>
+          <input id="extend-length" type="text" value="1-32" spellcheck="false"></label>
+        <label><span data-t="web_extend_algo">hash (empty = from the digest length)</span>
+          <select id="extend-algo">
+            <option value="">auto</option>
+            <option value="md5">md5</option>
+            <option value="sha1">sha1</option>
+            <option value="sha256">sha256</option>
+            <option value="sha512">sha512</option>
+          </select></label>
+        <label><span data-t="web_extend_secret">the secret, if you have it (checks the forgery)</span>
+          <input id="extend-secret" type="text" spellcheck="false"></label>
       </div>
       <!-- Options of the Hash tab -->
       <div id="options-hash" class="options hidden">

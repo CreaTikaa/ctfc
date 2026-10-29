@@ -441,3 +441,34 @@ def test_prng_says_how_many_values_are_missing():
     result = run_ctfc("prng", "text:1234567890 987654321 1122334455")
     assert result.returncode == 2
     assert "too few to clone MT19937" in result.stderr.decode()
+
+
+def test_extend_forges_a_digest():
+    import hashlib
+    import json
+
+    secret, data = b"s3cr3t", b"user=guest"
+    digest = hashlib.sha256(secret + data).hexdigest()
+    result = run_ctfc(
+        "extend",
+        digest,
+        "--data",
+        "text:user=guest",
+        "--append",
+        "text:&admin=1",
+        "--secret-length",
+        str(len(secret)),
+        "--json",
+    )
+    assert result.returncode == 0, result.stderr.decode()
+    best = json.loads(result.stdout)["candidates"][0]
+    message = bytes.fromhex(best["message_hex"])
+    assert hashlib.sha256(secret + message).hexdigest() == best["digest"]
+
+
+def test_extend_refuses_sha224_with_a_reason():
+    import hashlib
+
+    result = run_ctfc("extend", hashlib.sha224(b"x").hexdigest(), "--append", "text:x")
+    assert result.returncode == 2
+    assert "sha224" in result.stderr.decode()

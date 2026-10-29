@@ -615,6 +615,34 @@ def print_jwt(console: Console, report, show_code: bool = False) -> None:
         console.print(Syntax(report.python, "python", theme="ansi_dark", word_wrap=True))
 
 
+def print_extend(console: Console, found: list, notes: list[str], show_code: bool = False) -> None:
+    """`ctfc extend`: one forgery per candidate secret length, the verified one first."""
+    table = Table(title=f"{len(found)} forgery/forgeries", expand=True)
+    table.add_column("secret len", width=10, justify="right")
+    table.add_column("forged digest", ratio=3)
+    table.add_column("message", width=8, justify="right")
+    table.add_column("", width=8)
+    for forgery in found:
+        mark = "[bold green]verified[/]" if forgery.verified else ""
+        table.add_row(str(forgery.secret_length), forgery.digest, f"{len(forgery.message)} B", mark)
+    console.print(table)
+
+    best = found[0]
+    console.print(
+        f"[bold]the message to send[/] (secret length {best.secret_length}, "
+        f"{len(best.message)} bytes)"
+    )
+    # repr(), not a text preview: the glue is raw bytes, and this is also the form
+    # that can be pasted straight into a script.
+    console.print(Panel(escape(repr(best.message)[:600]), border_style="green"))
+    console.print("[bold]url-encoded[/]")
+    console.print(Panel(escape(safe(best.url_encoded, 900)), border_style="dim"))
+    console.print(f"[bold]hex[/] {safe(best.message.hex(), 400)}")
+    print_notes(console, notes)
+    if show_code and best.python:
+        console.print(Syntax(best.python, "python", theme="ansi_dark", word_wrap=True))
+
+
 def print_prng(console: Console, report, show_code: bool = False) -> None:
     """`ctfc prng`: what was recovered, then the values before and after the capture."""
     facts = Table(title="generator", show_header=False, expand=False)

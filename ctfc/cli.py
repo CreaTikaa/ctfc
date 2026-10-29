@@ -174,6 +174,16 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--forward", type=int, default=10, help=t("opt_prng_forward"))
     p.add_argument("--backward", type=int, default=10, help=t("opt_prng_backward"))
 
+    p = add("extend")
+    p.add_argument("digest", help=t("arg_digest"))
+    p.add_argument("--append", required=True, help=t("opt_extend_append"))
+    p.add_argument("--data", default="text:", help=t("opt_extend_data"))
+    p.add_argument("--secret-length", default="1-32", help=t("opt_extend_length"))
+    p.add_argument(
+        "--algo", choices=sorted(["md5", "sha1", "sha256", "sha512"]), help=t("opt_extend_algo")
+    )
+    p.add_argument("--secret", help=t("opt_extend_secret"))
+
     p = add("jwt")
     p.add_argument("token", help=t("arg_token"))
     p.add_argument("--secret", help=t("opt_jwt_secret"))
@@ -988,6 +998,40 @@ def cmd_time(args: argparse.Namespace, config: Config, console: Console) -> int:
     return 0
 
 
+def read_digest(spec: str) -> bytes:
+    """A digest is hex: accept it bare, with a `hex:` prefix, or spaced out."""
+    from ctfc.core.hashext import HashExtError
+    from ctfc.core.inputs import clean_hex
+
+    text = spec[4:] if spec.lower().startswith("hex:") else spec
+    try:
+        return bytes.fromhex(clean_hex(text))
+    except ValueError as exc:
+        raise HashExtError(
+            f"{spec!r} is not a hex digest (32 hex chars for md5, 40 sha1, 64 sha256, 128 sha512)"
+        ) from exc
+
+
+def cmd_extend(args: argparse.Namespace, config: Config, console: Console) -> int:
+    """Forge H(secret || data || append) from H(secret || data)."""
+    from ctfc.core import hashext
+
+    digest = read_digest(args.digest)
+    data = parse_input(args.data, decode_bare=False).data
+    append = parse_input(args.append, decode_bare=False).data
+    secret = parse_input(args.secret, decode_bare=False).data if args.secret else None
+    lengths = hashext.parse_lengths(args.secret_length)
+    found = hashext.forge_range(digest, data, append, lengths, algorithm=args.algo, secret=secret)
+    notes = hashext.notes(found)
+    if args.json:
+        print(
+            json.dumps({"notes": notes, "candidates": [item.to_dict() for item in found]}, indent=2)
+        )
+        return 0
+    render.print_extend(console, found, notes, args.show_code)
+    return 0
+
+
 def cmd_prng(args: argparse.Namespace, config: Config, console: Console) -> int:
     """Clone a weak random number generator from the numbers it handed out."""
     from ctfc.core import prng
@@ -1354,6 +1398,7 @@ def main(argv: list[str] | None = None) -> int:
         "jwt": cmd_jwt,
         "time": cmd_time,
         "prng": cmd_prng,
+        "extend": cmd_extend,
         "zip": cmd_zip,
         "hive": cmd_hive,
         "pe": cmd_pe,
