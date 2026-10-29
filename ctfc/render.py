@@ -676,6 +676,54 @@ def print_hive(console: Console, report) -> None:
         console.print(f"[green]$[/] {escape(command)}")
 
 
+def print_pe(console: Console, report) -> None:
+    """`ctfc pe`: what the executable is, its sections, and what its APIs say."""
+    facts = Table(title="executable", show_header=False, expand=False)
+    facts.add_column("name", style="cyan")
+    facts.add_column("value")
+    facts.add_row("format", "PE32+" if report.bits == 64 else "PE32")
+    facts.add_row("machine", report.machine)
+    facts.add_row(
+        "kind", ("DLL" if report.is_dll else "EXE") + (" / .NET" if report.is_dotnet else "")
+    )
+    facts.add_row("subsystem", report.subsystem)
+    facts.add_row("built", report.timestamp_text or "(not a date)")
+    facts.add_row("entry point", f"{report.entry_point:#x}")
+    facts.add_row("imports", f"{report.import_count} from {len(report.imports)} DLL(s)")
+    if report.exports:
+        facts.add_row("exports", str(len(report.exports)))
+    console.print(facts)
+
+    table = Table(title="sections", expand=True)
+    table.add_column("name", width=12)
+    table.add_column("flags", width=6)
+    table.add_column("virtual", justify="right", width=10)
+    table.add_column("on disk", justify="right", width=10)
+    table.add_column("entropy", justify="right", width=8)
+    for section in report.sections:
+        style = "bold red" if section.writable_and_executable else ""
+        table.add_row(
+            f"[{style}]{safe(section.name, 12)}[/]" if style else safe(section.name, 12),
+            section.flags,
+            str(section.virtual_size),
+            str(section.raw_size),
+            f"{section.entropy:.2f}",
+        )
+    console.print(table)
+
+    if report.notable:
+        notable = Table(title="what its API calls say it does", expand=True)
+        notable.add_column("import", ratio=2)
+        notable.add_column("meaning", ratio=3)
+        for line in report.notable:
+            name, _, meaning = line.partition(": ")
+            notable.add_row(safe(name, 60), safe(meaning, 120))
+        console.print(notable)
+
+    for note in report.notes:
+        console.print(f"[cyan]*[/] {safe(note)}")
+
+
 def print_radius(console: Console, found, had_secret: bool) -> None:
     """`ctfc radius`: the shared secret(s) that decrypted the PAP password."""
     if not found:

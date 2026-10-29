@@ -146,6 +146,10 @@ def build_parser() -> argparse.ArgumentParser:
     p = add("sqlite")
     p.add_argument("input", help=t("arg_database"))
 
+    p = add("pe")
+    p.add_argument("input", help=t("arg_executable"))
+    p.add_argument("--extract", help=t("opt_pe_extract"))
+
     p = add("hive")
     p.add_argument("input", help=t("arg_hive"))
     p.add_argument("--key", help=t("opt_hive_key"))
@@ -826,6 +830,31 @@ def cmd_jwt(args: argparse.Namespace, config: Config, console: Console) -> int:
     return 0 if report.findings else 1
 
 
+def cmd_pe(args: argparse.Namespace, config: Config, console: Console) -> int:
+    """Triage a Windows executable: sections, imports, packing, overlay."""
+    from ctfc.core import pe as pe_module
+
+    inp = parse_input(args.input, decode_bare=False)
+    report = pe_module.analyse(inp.data)
+    saved = []
+    if args.extract and report.overlay:
+        folder = Path(args.extract)
+        folder.mkdir(parents=True, exist_ok=True)
+        target = folder / "overlay.bin"
+        target.write_bytes(report.overlay)
+        saved.append(str(target))
+        console.print(f"[green]saved the overlay[/] to {target}")
+    remember(args, config, inp.data, args.input, summary=report.notes[:4])
+    if args.json:
+        print(
+            json.dumps({"input": input_to_dict(inp), **report.to_dict(), "saved": saved}, indent=2)
+        )
+        return 0
+    render.print_input_notes(console, inp)
+    render.print_pe(console, report)
+    return 0
+
+
 def cmd_hive(args: argparse.Namespace, config: Config, console: Console) -> int:
     """Read a registry hive: the keys that matter, or one you name."""
     from ctfc.core import hive as hive_module
@@ -1274,6 +1303,7 @@ def main(argv: list[str] | None = None) -> int:
         "time": cmd_time,
         "zip": cmd_zip,
         "hive": cmd_hive,
+        "pe": cmd_pe,
         "pcap": cmd_pcap,
         "radius": cmd_radius,
         "recipe": cmd_recipe,

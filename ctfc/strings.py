@@ -213,6 +213,13 @@ EN: dict[str, str] = {
     ),
     "arg_repo": "the repository folder (or the .git folder itself)",
     "opt_git_extract": "write every recovered blob into this folder (then: ctfc scan)",
+    "cmd_pe": "triage a Windows executable: sections, imports, packing, overlay",
+    "cmd_pe_ex": (
+        "examples: ctfc pe sample.exe  |  ctfc pe dropper.exe --extract ./out && ctfc scan ./out. "
+        "Nothing is executed: the headers and the import table are read as data."
+    ),
+    "arg_executable": "the executable (.exe, .dll) - a path, or -",
+    "opt_pe_extract": "save the overlay (the data after the last section) into this folder",
     "cmd_hive": "read a registry hive (SAM, SYSTEM, NTUSER.DAT) without Windows",
     "cmd_hive_ex": (
         "examples: ctfc hive SYSTEM  |  ctfc hive NTUSER.DAT --key "
