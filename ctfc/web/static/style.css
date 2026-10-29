@@ -255,3 +255,35 @@ table.facts td.th {
 .markdown code { font: 12px var(--mono); color: var(--mid); }
 .markdown table.facts td { border-bottom: 1px solid var(--border); padding: 0.2rem 0.8rem 0.2rem 0; }
 .markdown ul { padding-left: 1.2rem; }
+
+/* Volatility reference page */
+.vol { max-width: 72rem; }
+.vol-types td { vertical-align: top; padding-bottom: 0.5rem; }
+.vol-type-name { white-space: nowrap; color: var(--accent); padding-right: 1rem; }
+.vol-start { color: var(--good); margin-top: 0.15rem; }
+.vol-step {
+  border-left: 2px solid var(--border);
+  padding: 0.3rem 0 0.3rem 0.6rem;
+  margin: 0.45rem 0;
+}
+.vol-step:hover { border-left-color: var(--accent); }
+.vol-cmd-line { display: flex; gap: 0.5rem; align-items: flex-start; }
+.vol-cmd {
+  flex: 1;
+  background: #0d0f12;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 0.3rem 0.45rem;
+  font: 12.5px/1.4 var(--mono);
+  color: var(--mid);
+  white-space: pre-wrap;
+  word-break: break-all;
+  user-select: all; /* one click selects the whole command */
+}
+.vol-desc { font-size: 0.9rem; margin-top: 0.2rem; }
+.vol-tip { font-size: 0.9rem; margin-top: 0.15rem; color: var(--good); }
+button.vol-engine.active, button.vol-os.active {
+  background: var(--accent);
+  color: #000;
+  border-color: var(--accent);
+}

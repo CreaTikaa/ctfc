@@ -387,6 +387,20 @@ EN: dict[str, str] = {
     "web_radius_none": "No common shared secret worked. Fill the secret if you know it "
     "(it may be in a config from the same box).",
     "web_radius_none_secret": "That shared secret did not give a readable password.",
+    # Volatility tab (reference page: ctfc never runs Volatility)
+    "web_tab_volatility": "Volatility",
+    "web_volatility_help": "Memory-dump cheat sheet. Commands use your aliases "
+    "(vol = volatility3 -f, vol2 = volatility2.4 -f) and are filled in with the file name "
+    "and profile you type, so they can be pasted as they are.",
+    "web_vol_image": "memory dump file name",
+    "web_vol_profile": "vol2 --profile (from imageinfo)",
+    "web_vol_profile_ph": "Win7SP1x64 - run imageinfo first",
+    "web_vol_filter": "filter the commands",
+    "web_vol_filter_ph": "hash, network, inject, bash, ...",
+    "web_vol_engine": "tool:",
+    "web_vol_os": "OS:",
+    "web_vol_have": "What do I have?",
+    "web_vol_nomatch": "No command matches that filter.",
     # CyberChef links
     "web_open_cyberchef": "Open in CyberChef",
     "web_no_cyberchef": "No CyberChef link for this result.",

@@ -1,0 +1,433 @@
+# Interactive Volatility cheat sheet, shown in the web UI (Volatility tab).
+#
+# The commands assume the user's two aliases, so nothing repeats `-f`:
+#     vol  = volatility3 -f      (Volatility 3)
+#     vol2 = volatility2.4 -f    (Volatility 2.4)
+# so `vol <image> windows.pslist` runs `volatility3 -f <image> windows.pslist`.
+#
+# Each [[section]] is one phase of a memory investigation.
+#   engine : "vol3" | "vol2"          which tool, for the toggle at the top
+#   os     : "any" | "windows" | "linux"   for the OS filter
+#   group  : short phase name (ordered as written)
+#   title  : heading shown for the section
+#   intro  : one or two sentences of context
+#   [[section.step]]
+#     cmd  : the command, with <image>/<PID>/<offset>/<profile> placeholders
+#     desc : what it does / what to read in the output
+#     tip  : (optional) the decision: "if you see X, do Y" - this is the part that
+#            makes it a tree rather than a flat list
+#
+# <image> is the memory dump. Replace <PID>/<offset>/<profile> with a value a
+# previous command printed. ctfc never runs Volatility; this only shows commands.
+
+# ===========================================================================
+# WHAT DO I HAVE? - the triage shown at the top of the page.
+# `ctfc detect <file>` recognises most of these for you.
+# ===========================================================================
+
+[[filetype]]
+name = "Raw dump (.raw .mem .bin .dd)"
+how = "`ctfc detect` says only 'data', very high entropy, size is a round number of MB/GB."
+what = "The normal case. Both tools read it directly."
+start = "Go straight to 'Identify the image'."
+
+[[filetype]]
+name = "Windows crash dump (.dmp)"
+how = "Starts with PAGEDU64 or PAGEDUMP."
+what = "vol3 reads it as-is. vol2 reads it too, but some plugins behave better on a raw image."
+start = "vol2 only, if a plugin misbehaves: convert it first with `vol2 <image> --profile=<profile> imagecopy -O mem.raw`."
+
+[[filetype]]
+name = "Hibernation file (hiberfil.sys)"
+how = "Starts with HIBR or hibr, found at the root of a disk image."
+what = "Compressed, so it must be expanded before most plugins work."
+start = "vol2: `vol2 hiberfil.sys --profile=<profile> imagecopy -O mem.raw`, then treat mem.raw as a raw dump."
+
+[[filetype]]
+name = "VMware memory (.vmem / .vmss / .vmsn)"
+how = "Sits next to a .vmx; .vmem is already raw guest RAM."
+what = "The .vmem is a raw dump. The .vmss/.vmsn hold the metadata."
+start = "Use the .vmem as the image and go to 'Identify the image'."
+
+[[filetype]]
+name = "VirtualBox core (.elf) / LiME (.lime)"
+how = "ELF magic 7f 45 4c 46, or `ctfc detect` says 'LiME memory dump'."
+what = "vol3 handles both. These are the usual Linux CTF formats."
+start = "Run banners.Banners to get the kernel version, then load the matching ISF symbols."
+
+[[filetype]]
+name = "A dump you already carved out of something"
+how = "You got it from binwalk, `ctfc repair`, a ZIP or a pcap."
+what = "Check it really is a memory image before spending time on Volatility."
+start = "`ctfc detect` it, and `ctfc scan` the folder - the flag is sometimes in a dumped file, no Volatility needed."
+
+[[filetype]]
+name = "Not a memory dump at all"
+how = "`ctfc detect` names a real format (PNG, ZIP, pcap, SQLite, .evtx...)."
+what = "Volatility is the wrong tool."
+start = "Use the Auto / Detect tabs, or `ctfc pcap` for a capture. The Cheatsheet tab has the general decision tree."
+
+# ===========================================================================
+# VOLATILITY 3
+# ===========================================================================
+
+[[section]]
+engine = "vol3"
+os = "any"
+group = "Start here"
+title = "1. Identify the image"
+intro = "Volatility 3 needs no profile, but you must know the OS to pick the plugin namespace: windows.* , linux.* or mac.* . Run one of these first."
+[[section.step]]
+cmd = "vol <image> windows.info"
+desc = "Kernel build, base address and layers. If it prints cleanly, it is a Windows image and you can use every windows.* plugin."
+tip = "No output or an error? It is probably Linux/Mac: run banners.Banners next."
+[[section.step]]
+cmd = "vol <image> banners.Banners"
+desc = "Prints the kernel version strings found in the dump (Linux/Mac)."
+tip = "Match the banner to an ISF symbol table (the .json.xz for that exact kernel), drop it in volatility3/symbols/, then use the linux.* plugins."
+[[section.step]]
+cmd = "vol <image> frameworkinfo.FrameworkInfo"
+desc = "Lists what the framework detected and the plugins available for this image."
+
+[[section]]
+engine = "vol3"
+os = "windows"
+group = "Processes"
+title = "2. List the processes"
+intro = "The first triage on any Windows image: what was running, and what tried to hide."
+[[section.step]]
+cmd = "vol <image> windows.pstree"
+desc = "Parent/child tree. Read it first: a cmd.exe or powershell.exe under a browser or Office process is the odd one out."
+tip = "Spot a suspicious process? Note its PID, then jump to section 'Investigate one process'."
+[[section.step]]
+cmd = "vol <image> windows.pslist"
+desc = "Processes walked from the active list (what Task Manager would show)."
+[[section.step]]
+cmd = "vol <image> windows.psscan"
+desc = "Scans memory for process structures, including exited and unlinked ones."
+tip = "A PID in psscan but not in pslist is hidden or terminated: investigate it."
+
+[[section]]
+engine = "vol3"
+os = "windows"
+group = "Command line"
+title = "3. What each process was told to do"
+intro = "The arguments are where the flag, a URL or a staging path usually hides."
+[[section.step]]
+cmd = "vol <image> windows.cmdline"
+desc = "Full command line of every process. Look for powershell -enc, certutil, bitsadmin, long base64."
+tip = "Found a powershell -enc <base64>? Copy it, save it to a file and run `ctfc auto that-file` - it decodes the UTF-16LE command for you."
+[[section.step]]
+cmd = "vol <image> windows.envars --pid <PID>"
+desc = "Environment variables of a process; passwords and keys are sometimes passed this way."
+
+[[section]]
+engine = "vol3"
+os = "windows"
+group = "Network"
+title = "4. Network activity"
+intro = "Find the C2 address, the exfiltration port, or which process owned a connection."
+[[section.step]]
+cmd = "vol <image> windows.netscan"
+desc = "Scans for TCP/UDP endpoints and sockets, with the owning PID. The most reliable network plugin."
+tip = "An external IP tied to a strange PID is your lead: go investigate that PID."
+[[section.step]]
+cmd = "vol <image> windows.netstat"
+desc = "Walks the active connection tables. Faster but can miss closed connections; netscan is the fallback."
+
+[[section]]
+engine = "vol3"
+os = "windows"
+group = "Investigate one process"
+title = "5. Dig into a suspicious PID"
+intro = "Once a PID looks wrong, these tell you what it loaded, what it touched, and let you carve it out."
+[[section.step]]
+cmd = "vol <image> windows.dlllist --pid <PID>"
+desc = "DLLs the process loaded. An unusual DLL from a temp folder is a red flag."
+[[section.step]]
+cmd = "vol <image> windows.handles --pid <PID>"
+desc = "Open handles: files, registry keys and mutexes. The mutex name often names the malware family."
+[[section.step]]
+cmd = "vol <image> -o ./out windows.pslist --pid <PID> --dump"
+desc = "Dumps the process executable to ./out ."
+tip = "Then: `ctfc detect ./out/<file>` and `ctfc scan ./out` to identify and peel it."
+[[section.step]]
+cmd = "vol <image> -o ./out windows.memmap --pid <PID> --dump"
+desc = "Dumps the full memory of the process (not just the EXE) - use when the EXE alone has no strings."
+
+[[section]]
+engine = "vol3"
+os = "windows"
+group = "Files"
+title = "6. Files in memory"
+intro = "Documents, scripts and keys cached in RAM can be carved out even when they were deleted from disk."
+[[section.step]]
+cmd = "vol <image> windows.filescan"
+desc = "Every _FILE_OBJECT in memory. Pipe into a grep for the name you want (Desktop, .pdf, flag, .ps1)."
+tip = "Copy the offset in the first column of the line you want, then use it in dumpfiles below."
+[[section.step]]
+cmd = "vol <image> -o ./out windows.dumpfiles --virtaddr <offset>"
+desc = "Carves out the file at that offset from filescan into ./out ."
+tip = "Then `ctfc detect ./out/<file>`; a broken header? `ctfc repair` it."
+[[section.step]]
+cmd = "vol <image> -o ./out windows.dumpfiles --pid <PID>"
+desc = "Dumps every file mapped by a process at once."
+
+[[section]]
+engine = "vol3"
+os = "windows"
+group = "Registry & credentials"
+title = "7. Registry and secrets"
+intro = "Autoruns, user activity and password hashes all live in the registry hives in memory."
+[[section.step]]
+cmd = "vol <image> windows.registry.hivelist"
+desc = "Lists the loaded hives with their offsets - you need these for printkey -o and for knowing SYSTEM/SAM are present."
+[[section.step]]
+cmd = "vol <image> windows.registry.printkey --key \"Software\\Microsoft\\Windows\\CurrentVersion\\Run\""
+desc = "Autostart entries: a classic persistence spot. Drop --key to list the root, or add --offset <hive> for one hive."
+[[section.step]]
+cmd = "vol <image> windows.registry.userassist"
+desc = "Programs the user launched from Explorer, with run counts and timestamps."
+[[section.step]]
+cmd = "vol <image> windows.hashdump"
+desc = "Local account NT hashes (user:rid:lm:nt:::)."
+tip = "Paste a line into the Hash tab (or `ctfc hash`): it gives you hashcat -m 1000 for the NT hash."
+[[section.step]]
+cmd = "vol <image> windows.lsadump"
+desc = "LSA secrets: service account passwords, sometimes in clear."
+[[section.step]]
+cmd = "vol <image> windows.cachedump"
+desc = "Cached domain credentials (mscash), for hashcat -m 2100."
+
+[[section]]
+engine = "vol3"
+os = "windows"
+group = "Malware"
+title = "8. Hunt injected code"
+intro = "Code injection and unlinked modules are what separate a benign image from a compromised one."
+[[section.step]]
+cmd = "vol <image> -o ./out windows.malfind --dump"
+desc = "Finds executable private memory (injected shellcode/PE) and dumps each region to ./out ."
+tip = "An MZ header in a region marked PAGE_EXECUTE_READWRITE is an injected PE: `ctfc detect` the dump."
+[[section.step]]
+cmd = "vol <image> windows.ldrmodules"
+desc = "DLLs missing from one of the three load lists = unlinked / hidden module."
+[[section.step]]
+cmd = "vol <image> windows.svcscan"
+desc = "Windows services, including those added for persistence."
+[[section.step]]
+cmd = "vol <image> windows.ssdt"
+desc = "System call table; entries pointing outside a known driver suggest a rootkit hook."
+
+[[section]]
+engine = "vol3"
+os = "linux"
+group = "Linux"
+title = "9. Linux images"
+intro = "After you have loaded the matching ISF symbols (see 'Identify the image'), these are the high-value plugins."
+[[section.step]]
+cmd = "vol <image> linux.pstree"
+desc = "Process tree. linux.pslist and linux.psscan (hidden) are the same idea as on Windows."
+[[section.step]]
+cmd = "vol <image> linux.bash"
+desc = "Recovers the bash history from memory."
+tip = "On Linux CTF images the flag is very often typed straight into the shell - read this first."
+[[section.step]]
+cmd = "vol <image> linux.psaux"
+desc = "Full command line of each process (the Linux equivalent of windows.cmdline)."
+[[section.step]]
+cmd = "vol <image> linux.lsof --pid <PID>"
+desc = "Files a process had open."
+[[section.step]]
+cmd = "vol <image> linux.envars"
+desc = "Environment variables per process."
+[[section.step]]
+cmd = "vol <image> linux.malfind"
+desc = "Injected code in process memory, as on Windows."
+[[section.step]]
+cmd = "vol <image> linux.check_syscall"
+desc = "Hooked syscalls - a rootkit check. check_modules and tty_check are the related ones."
+
+# ===========================================================================
+# VOLATILITY 2.4
+# ===========================================================================
+
+[[section]]
+engine = "vol2"
+os = "any"
+group = "Start here"
+title = "1. Find the profile (mandatory)"
+intro = "Volatility 2 cannot do anything without the right --profile. Work it out first, then add --profile=<profile> to EVERY later command."
+[[section.step]]
+cmd = "vol2 <image> imageinfo"
+desc = "Prints 'Suggested Profile(s)'. Copy the first one that fits the OS."
+tip = "Put it in --profile= for all commands below, e.g. --profile=Win7SP1x64."
+[[section.step]]
+cmd = "vol2 <image> kdbgscan"
+desc = "More precise than imageinfo when it suggests several profiles or the image is odd. Use the profile whose KDBG has the most processes."
+
+[[section]]
+engine = "vol2"
+os = "windows"
+group = "Processes"
+title = "2. List the processes"
+intro = "Same triage as vol3, but psxview is the one vol3 lacks: it cross-checks seven sources to catch hidden processes."
+[[section.step]]
+cmd = "vol2 <image> --profile=<profile> pstree"
+desc = "Parent/child tree. pslist (active list) and psscan (scan, finds exited/hidden) are the siblings."
+tip = "Suspicious PID? Note it, then go to 'Investigate one process'."
+[[section.step]]
+cmd = "vol2 <image> --profile=<profile> psxview"
+desc = "Lists processes across pslist/psscan/thrdproc/etc. A row with False in some columns is hidden - a strong malware signal."
+
+[[section]]
+engine = "vol2"
+os = "windows"
+group = "Command line"
+title = "3. Command line and console"
+intro = "vol2 can also recover what was typed and printed in a console window, which vol3 cannot."
+[[section.step]]
+cmd = "vol2 <image> --profile=<profile> cmdline"
+desc = "Command-line arguments of every process."
+tip = "A powershell -enc <base64>? Save it and run `ctfc auto` on it."
+[[section.step]]
+cmd = "vol2 <image> --profile=<profile> consoles"
+desc = "Full console buffer: both what the attacker typed AND the command output. Often the richest single plugin."
+[[section.step]]
+cmd = "vol2 <image> --profile=<profile> cmdscan"
+desc = "Command history scanned from conhost/csrss, even when consoles finds nothing."
+
+[[section]]
+engine = "vol2"
+os = "windows"
+group = "Network"
+title = "4. Network activity"
+intro = "Which plugin works depends on the Windows version - try netscan first on Vista+, the others on XP/2003."
+[[section.step]]
+cmd = "vol2 <image> --profile=<profile> netscan"
+desc = "TCP/UDP endpoints on Vista and later, with the owning PID."
+[[section.step]]
+cmd = "vol2 <image> --profile=<profile> connscan"
+desc = "Scans for TCP connection objects (works on XP/2003, and finds closed ones). 'connections' lists only the active ones."
+[[section.step]]
+cmd = "vol2 <image> --profile=<profile> sockscan"
+desc = "Scans for socket objects (XP/2003)."
+
+[[section]]
+engine = "vol2"
+os = "windows"
+group = "Investigate one process"
+title = "5. Dig into a suspicious PID"
+intro = "Carve the process out and see what it loaded and held."
+[[section.step]]
+cmd = "vol2 <image> --profile=<profile> dlllist -p <PID>"
+desc = "DLLs loaded by the process. handles -p <PID> shows its files, keys and mutexes."
+[[section.step]]
+cmd = "vol2 <image> --profile=<profile> procdump -p <PID> -D ./out"
+desc = "Dumps the process executable to ./out ."
+tip = "Then `ctfc detect ./out/executable.<PID>.exe` and `ctfc scan ./out`."
+[[section.step]]
+cmd = "vol2 <image> --profile=<profile> memdump -p <PID> -D ./out"
+desc = "Dumps the full process memory (addressable pages). Use `strings` or `ctfc scan` on it."
+[[section.step]]
+cmd = "vol2 <image> --profile=<profile> vaddump -p <PID> -D ./out"
+desc = "Dumps each VAD region to its own file - handy to isolate one injected region."
+
+[[section]]
+engine = "vol2"
+os = "windows"
+group = "Files"
+title = "6. Files in memory"
+intro = "filescan to find, dumpfiles to carve - note that vol2 uses the PHYSICAL offset (-Q)."
+[[section.step]]
+cmd = "vol2 <image> --profile=<profile> filescan"
+desc = "Lists _FILE_OBJECTs. Grep for the name you want; the first column is the physical offset."
+tip = "Copy that offset into dumpfiles -Q below."
+[[section.step]]
+cmd = "vol2 <image> --profile=<profile> dumpfiles -Q <offset> -D ./out"
+desc = "Carves the file at that physical offset into ./out ."
+tip = "Then `ctfc detect ./out/<file>` (and `ctfc repair` if the header looks wrong)."
+[[section.step]]
+cmd = "vol2 <image> --profile=<profile> dumpfiles -n -r \"\\.(exe|dll|pdf|png|docx)$\" -D ./out"
+desc = "Dumps every file whose name matches the regex, keeping the original names (-n)."
+
+[[section]]
+engine = "vol2"
+os = "windows"
+group = "Registry & credentials"
+title = "7. Registry and secrets"
+intro = "Autoruns, user activity and hashes, as in vol3 but with the vol2 plugin names."
+[[section.step]]
+cmd = "vol2 <image> --profile=<profile> hivelist"
+desc = "Lists hives with their virtual offsets - you need the SYSTEM and SAM offsets for hashdump."
+[[section.step]]
+cmd = "vol2 <image> --profile=<profile> printkey -K \"Microsoft\\Windows\\CurrentVersion\\Run\""
+desc = "Reads a registry key across all hives (autoruns here). Add -o <hive_offset> for one specific hive."
+[[section.step]]
+cmd = "vol2 <image> --profile=<profile> hashdump -y <SYSTEM_offset> -s <SAM_offset>"
+desc = "Dumps local NT hashes using the two hive offsets from hivelist."
+tip = "Paste a line into the Hash tab or `ctfc hash` -> hashcat -m 1000."
+[[section.step]]
+cmd = "vol2 <image> --profile=<profile> lsadump"
+desc = "LSA secrets. cachedump gives cached domain hashes (hashcat -m 2100)."
+[[section.step]]
+cmd = "vol2 <image> --profile=<profile> userassist"
+desc = "Programs the user ran from Explorer. shimcache and shellbags are the related forensic artefacts."
+
+[[section]]
+engine = "vol2"
+os = "windows"
+group = "Malware"
+title = "8. Hunt injected code"
+intro = "vol2's malware plugins are deeper than vol3's - apihooks and ssdt have no vol3 equivalent."
+[[section.step]]
+cmd = "vol2 <image> --profile=<profile> malfind -D ./out"
+desc = "Finds and dumps injected executable regions to ./out ."
+tip = "An MZ in the dump = injected PE: `ctfc detect` it."
+[[section.step]]
+cmd = "vol2 <image> --profile=<profile> ldrmodules"
+desc = "DLLs missing from a load list (unlinked / hidden)."
+[[section.step]]
+cmd = "vol2 <image> --profile=<profile> apihooks"
+desc = "Inline and IAT hooks in user or kernel space."
+[[section.step]]
+cmd = "vol2 <image> --profile=<profile> svcscan"
+desc = "Services, including persistence ones. ssdt shows hooked syscalls (rootkits)."
+
+[[section]]
+engine = "vol2"
+os = "windows"
+group = "User artefacts"
+title = "9. What the user saw"
+intro = "vol2 keeps a few GUI plugins that are pure gold in a CTF and have no vol3 equivalent."
+[[section.step]]
+cmd = "vol2 <image> --profile=<profile> clipboard"
+desc = "Clipboard contents - a copied password or the flag itself turns up here surprisingly often."
+[[section.step]]
+cmd = "vol2 <image> --profile=<profile> screenshot -D ./out"
+desc = "Reconstructs the layout of each window from GDI data: shows what was on screen."
+[[section.step]]
+cmd = "vol2 <image> --profile=<profile> notepad"
+desc = "Text held in an open Notepad window (XP-era images)."
+[[section.step]]
+cmd = "vol2 <image> --profile=<profile> mftparser"
+desc = "Parses the MFT from memory: file names, timestamps and small resident file contents."
+
+[[section]]
+engine = "vol2"
+os = "linux"
+group = "Linux"
+title = "10. Linux images"
+intro = "vol2 needs a custom Linux profile built for that kernel (a zip in volatility/plugins/overlays/linux/). Then the plugins are prefixed linux_ ."
+[[section.step]]
+cmd = "vol2 <image> --profile=<LinuxProfile> linux_bash"
+desc = "Bash history from memory - read this first on a Linux CTF image."
+[[section.step]]
+cmd = "vol2 <image> --profile=<LinuxProfile> linux_psaux"
+desc = "Processes with full command lines. linux_pslist and linux_pstree are the siblings."
+[[section.step]]
+cmd = "vol2 <image> --profile=<LinuxProfile> linux_netstat"
+desc = "Network connections with the owning process - the Linux equivalent of netscan."
+[[section.step]]
+cmd = "vol2 <image> --profile=<LinuxProfile> linux_find_file -F /path/to/file -O ./out"
+desc = "Locates and dumps a file from the cached filesystem."

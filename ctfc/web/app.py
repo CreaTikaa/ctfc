@@ -637,6 +637,13 @@ def create_app(config: Config | None = None) -> Flask:
 
         return jsonify({"markdown": load_cheatsheet()})
 
+    @app.get("/api/volatility")
+    def volatility():
+        """The Volatility cheat sheet, as structured data the page makes interactive."""
+        from ctfc.core.datafiles import load_volatility
+
+        return jsonify(load_volatility())
+
     @app.get("/api/sessions")
     def list_sessions():
         current = sessions.current_session(sessions_base)

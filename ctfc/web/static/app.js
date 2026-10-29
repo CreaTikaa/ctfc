@@ -15,6 +15,8 @@ const state = {
   file: null,       // {name, b64, size} when a file was dropped
   job: null,        // id of the background job currently running
   session: "",      // the session runs are recorded in ("" = not recording)
+  // Volatility tab: the cheat sheet data, and how the user wants it shown.
+  vol: { data: null, engine: "vol3", os: "all" },
 };
 
 // Tabs that are built, and how they run: "sync" waits for the answer,
@@ -36,7 +38,13 @@ const TOOLS = {
 const API_PATH = { pipeline: "/api/recipe" };
 
 // Tabs that have their own options panel (#options-<tab>).
-const OPTION_PANELS = ["xor", "sym", "rsa", "hash", "pipeline", "keys", "lens", "radius"];
+const OPTION_PANELS = [
+  "xor", "sym", "rsa", "hash", "pipeline", "keys", "lens", "radius", "volatility",
+];
+
+// Tabs that are reference pages, not tools: opening them shows the page and
+// there is nothing to Run.
+const REFERENCE_TABS = ["cheatsheet", "volatility"];
 
 // Tabs after which the "Suggested tools" strip is computed (data tabs, not scripts).
 const SUGGEST_TABS = ["auto", "detect", "xor", "sym", "hash"];
@@ -1069,6 +1077,95 @@ async function showCheatsheet() {
   }
 }
 
+// ---------------------------------------------------------------- Volatility
+// A reference page, not a tool: ctfc never runs Volatility. The point is that
+// every command is already filled in with YOUR file name and profile, so it can
+// be copied and pasted as it stands.
+//
+// The commands in data/volatility.toml assume the user's aliases:
+//   vol  = volatility3 -f      vol2 = volatility2.4 -f
+
+async function showVolatility() {
+  if (state.vol.data === null) {
+    try {
+      state.vol.data = await (await fetch("/api/volatility")).json();
+    } catch (error) {
+      setStatus(error.message, true);
+      return;
+    }
+  }
+  renderVolatility();
+}
+
+// Put the user's file name / profile into a command from the table.
+function volCommand(cmd) {
+  const image = $("vol-image").value.trim() || "mem.raw";
+  const profile = $("vol-profile").value.trim();
+  return cmd
+    .replaceAll("<image>", image)
+    .replaceAll("<profile>", profile || "<profile>")
+    .replaceAll("<LinuxProfile>", profile || "<LinuxProfile>");
+}
+
+function renderVolatility() {
+  const data = state.vol.data;
+  const root = el("div", "markdown vol");
+  const needle = $("vol-filter").value.trim().toLowerCase();
+
+  // "What do I have?" - the file-type triage, always shown (it is what decides
+  // whether Volatility is even the right tool).
+  if (!needle) {
+    root.append(el("h2", "", T("web_vol_have")));
+    const table = el("table", "facts vol-types");
+    for (const item of data.filetype || []) {
+      const row = el("tr");
+      row.append(el("td", "vol-type-name", item.name));
+      const right = el("td");
+      right.append(el("div", "dim", item.how), el("div", "", item.what));
+      if (item.start) right.append(el("div", "vol-start", "→ " + item.start));
+      row.append(right);
+      table.append(row);
+    }
+    root.append(table);
+  }
+
+  // Then the phases of the chosen tool, in order.
+  let shown = 0;
+  for (const section of data.section || []) {
+    if (section.engine !== state.vol.engine) continue;
+    if (state.vol.os !== "all" && section.os !== "any" && section.os !== state.vol.os) continue;
+    const steps = (section.step || []).filter((step) => matchesVolFilter(step, section, needle));
+    if (!steps.length) continue;
+    shown += steps.length;
+    root.append(el("h2", "", section.title));
+    if (section.intro && !needle) root.append(el("p", "dim", section.intro));
+    for (const step of steps) root.append(volStepRow(step));
+  }
+  if (!shown) root.append(el("p", "dim", T("web_vol_nomatch")));
+  $("results").replaceChildren(root);
+}
+
+function matchesVolFilter(step, section, needle) {
+  if (!needle) return true;
+  const haystack = [step.cmd, step.desc, step.tip || "", section.title, section.group]
+    .join(" ")
+    .toLowerCase();
+  return haystack.includes(needle);
+}
+
+// One command: the line itself, a Copy button, what it does, and the decision.
+function volStepRow(step) {
+  const row = el("div", "vol-step");
+  const command = volCommand(step.cmd);
+  const head = el("div", "vol-cmd-line");
+  head.append(el("code", "vol-cmd", command));
+  head.append(copyButton(T("web_copy"), () => command));
+  row.append(head);
+  row.append(el("div", "vol-desc", step.desc));
+  if (step.tip) row.append(el("div", "vol-tip", "→ " + step.tip));
+  return row;
+}
+
 // A very small Markdown renderer for the cheat sheet: headings, paragraphs, lists,
 // tables, code blocks, `code` and **bold**. Every piece of text goes through
 // textContent, so nothing in the file can become HTML.
@@ -1216,9 +1313,10 @@ function selectTab(button) {
   $("results").replaceChildren();
   hideSuggestions();
   setStatus("");
-  // The cheat sheet is not a tool: it is shown as soon as the tab is opened.
-  $("run").classList.toggle("hidden", state.tab === "cheatsheet");
+  // A reference tab is not a tool: it is shown as soon as it is opened.
+  $("run").classList.toggle("hidden", REFERENCE_TABS.includes(state.tab));
   if (state.tab === "cheatsheet") showCheatsheet();
+  if (state.tab === "volatility") showVolatility();
 }
 
 // ---------------------------------------------------------------- start-up
@@ -1269,6 +1367,32 @@ async function init() {
     $("pipeline-recipe").value = "";
     $("results").replaceChildren();
   });
+
+  // Volatility tab: every control re-renders the page, so the commands shown
+  // always carry the current file name, profile, tool and filter.
+  for (const button of document.querySelectorAll(".vol-engine")) {
+    button.addEventListener("click", () => {
+      state.vol.engine = button.dataset.engine;
+      for (const other of document.querySelectorAll(".vol-engine")) {
+        other.classList.toggle("active", other === button);
+      }
+      renderVolatility();
+    });
+  }
+  for (const button of document.querySelectorAll(".vol-os")) {
+    button.addEventListener("click", () => {
+      state.vol.os = button.dataset.os;
+      for (const other of document.querySelectorAll(".vol-os")) {
+        other.classList.toggle("active", other === button);
+      }
+      renderVolatility();
+    });
+  }
+  for (const id of ["vol-image", "vol-profile", "vol-filter"]) {
+    $(id).addEventListener("input", () => {
+      if (state.vol.data) renderVolatility();
+    });
+  }
 
   loadSessions().catch(() => {});
   $("session-select").addEventListener("change", (event) => (state.session = event.target.value));

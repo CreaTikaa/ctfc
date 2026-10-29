@@ -64,6 +64,7 @@
         <button class="tab" data-tab="hash" data-t="web_tab_hash">Hash</button>
         <button class="tab" data-tab="keys" data-t="web_tab_keys">Keys</button>
         <button class="tab" data-tab="radius" data-t="web_tab_radius">RADIUS</button>
+        <button class="tab" data-tab="volatility" data-t="web_tab_volatility">Volatility</button>
         <button class="tab" data-tab="cheatsheet" data-t="web_tab_cheatsheet">Cheatsheet</button>
       </nav>
       <!-- Options of the Pipeline tab: the recipe, as editable JSON -->
@@ -203,6 +204,25 @@
           <input id="radius-authenticator" type="text" spellcheck="false" data-t-placeholder="web_radius_authenticator_ph"></label>
         <label><span data-t="web_radius_secret">shared secret (optional)</span>
           <input id="radius-secret" type="text" spellcheck="false" data-t-placeholder="web_radius_secret_ph"></label>
+      </div>
+      <!-- Controls of the Volatility tab: they rewrite every command shown below,
+           so the page always displays commands you can paste as they are. -->
+      <div id="options-volatility" class="options hidden">
+        <label><span data-t="web_vol_image">memory dump file name</span>
+          <input id="vol-image" type="text" spellcheck="false" value="mem.raw"></label>
+        <label><span data-t="web_vol_profile">vol2 --profile (from imageinfo)</span>
+          <input id="vol-profile" type="text" spellcheck="false" data-t-placeholder="web_vol_profile_ph"></label>
+        <label><span data-t="web_vol_filter">filter the commands</span>
+          <input id="vol-filter" type="search" spellcheck="false" data-t-placeholder="web_vol_filter_ph"></label>
+        <div class="wide step-buttons" id="vol-switches">
+          <span class="dim" data-t="web_vol_engine">tool:</span>
+          <button class="small vol-engine active" data-engine="vol3">Volatility 3 (vol)</button>
+          <button class="small vol-engine" data-engine="vol2">Volatility 2.4 (vol2)</button>
+          <span class="dim" data-t="web_vol_os">OS:</span>
+          <button class="small vol-os active" data-os="all">all</button>
+          <button class="small vol-os" data-os="windows">Windows</button>
+          <button class="small vol-os" data-os="linux">Linux</button>
+        </div>
       </div>
       <!-- Options of the Hash tab -->
       <div id="options-hash" class="options hidden">

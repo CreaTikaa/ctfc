@@ -44,3 +44,11 @@ def load_words() -> frozenset[str]:
 def load_cheatsheet() -> str:
     """The one-page decision tree (ctfc/data/cheatsheet.md), as Markdown text."""
     return (DATA_DIR / "cheatsheet.md").read_text(encoding="utf-8")
+
+
+def load_volatility() -> dict:
+    """The Volatility cheat sheet (ctfc/data/volatility.toml) for the web UI.
+
+    Reference data only: ctfc never runs Volatility, it shows the commands.
+    """
+    return load_toml("volatility.toml")

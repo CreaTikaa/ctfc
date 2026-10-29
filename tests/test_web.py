@@ -559,3 +559,14 @@ def test_cheatsheet_tab_and_api(client):
     assert "data-milestone" not in page  # every tab is built
     markdown = client.get("/api/cheatsheet").get_json()["markdown"]
     assert markdown.startswith("# ctfc cheat sheet")
+
+
+def test_api_volatility_serves_the_cheatsheet(client):
+    """The Volatility tab is reference data: the endpoint just hands the table over."""
+    answer = client.get("/api/volatility").get_json()
+    assert answer["filetype"] and answer["section"]
+    engines = {section["engine"] for section in answer["section"]}
+    assert engines == {"vol3", "vol2"}
+    commands = [step["cmd"] for section in answer["section"] for step in section["step"]]
+    assert any(cmd.startswith("vol <image> windows.") for cmd in commands)
+    assert any(cmd.startswith("vol2 <image> --profile=") for cmd in commands)
