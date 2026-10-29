@@ -1160,6 +1160,60 @@ def write_audit_fixtures() -> None:
     header = struct.pack("<IHHiIII", 0xA1B2C3D4, 2, 4, 0, 0, 65535, 1)
     write("audit_radius.pcap", header + pcap_packet(frame, 1700000500))
 
+    # 9. IMAP traffic carrying a phishing mail: the HTML body gives the password
+    #    of the attached ZIP, which holds a double-extension payload. The flag is
+    #    in the body, so `ctfc pcap` alone is enough to read it.
+    payload_zip = io.BytesIO()
+    with zipfile.ZipFile(payload_zip, "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("Balance_Report.pdf.exe", b"MZ" + b"\x90" * 60 + b"payload")
+    attachment = base64.b64encode(payload_zip.getvalue()).decode()
+    body_html = (
+        "<html><body><p>Hello,</p><p>The report is attached. The archive password "
+        "is <b>eldoriaismylife</b>.</p><p>CYBN{fixture_mail_imap}</p></body></html>"
+    )
+    message = (
+        "Return-Path: <attacker@eldoria.invalid>\r\n"
+        "From: Support <attacker@eldoria.invalid>\r\n"
+        "To: selene@rangers.eldoria.invalid\r\n"
+        "Subject: Bug Report - In-game Imbalance Issue\r\n"
+        "Date: Wed, 29 Oct 2026 15:46:02 +0000\r\n"
+        "MIME-Version: 1.0\r\n"
+        'Content-Type: multipart/mixed; boundary="SEP42"\r\n'
+        "\r\n"
+        "--SEP42\r\n"
+        "Content-Type: text/html; charset=utf-8\r\n"
+        "Content-Transfer-Encoding: base64\r\n"
+        "\r\n" + base64.b64encode(body_html.encode()).decode() + "\r\n"
+        "--SEP42\r\n"
+        'Content-Type: application/zip; name="report.zip"\r\n'
+        "Content-Transfer-Encoding: base64\r\n"
+        'Content-Disposition: attachment; filename="report.zip"\r\n'
+        "\r\n" + attachment + "\r\n"
+        "--SEP42--\r\n"
+    ).encode()
+    # The IMAP server announces the exact size with a {N} literal, then sends it.
+    imap = (
+        b"* OK [CAPABILITY IMAP4rev1] ready\r\n"
+        b"2 OK [READ-WRITE] SELECT completed\r\n"
+        b"3 FETCH (BODY[] {" + str(len(message)).encode() + b"}\r\n" + message + b")\r\n"
+        b"3 OK FETCH completed\r\n"
+    )
+    records = []
+    time_base = 1700000700
+    # Split across packets so the reassembly is exercised, like real IMAP.
+    for index in range(0, len(imap), 1400):
+        chunk = imap[index : index + 1400]
+        records.append(
+            pcap_packet(
+                ethernet_ipv4(
+                    "10.0.0.9", "10.0.0.20", 6, tcp_segment(143, 52000, 9000 + index, chunk)
+                ),
+                time_base + index // 1400,
+            )
+        )
+    header = struct.pack("<IHHiIII", 0xA1B2C3D4, 2, 4, 0, 0, 65535, 1)
+    write("audit_mail_imap.pcap", header + b"".join(records))
+
     # 8. A USB capture of someone typing the flag, with a typo they corrected:
     #    "CYBN{usb_keyz" + Backspace + "strokes}". Link type 220 = usbmon mmapped.
     typed = "CYBN{usb_keyz\bstrokes}\n"

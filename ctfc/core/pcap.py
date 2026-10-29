@@ -29,7 +29,7 @@ import zlib
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from ctfc.core import usb
+from ctfc.core import mail, usb
 
 # Capture file magics.
 PCAP_MAGICS = {
@@ -679,6 +679,61 @@ def _from_base64(text: str) -> bytes | None:
 
 
 # ---------------------------------------------------------------------------
+# Mail
+# ---------------------------------------------------------------------------
+
+
+def _safe_name(text: str, fallback: str) -> str:
+    """A file name taken from a capture, stripped of anything but a plain name.
+
+    An attachment is named by the sample, so it cannot be trusted: no directory
+    separators, no leading dots, no surprises for the `--extract` folder.
+    """
+    cleaned = re.sub(r"[^A-Za-z0-9._-]", "_", text).lstrip(".")[:80]
+    return cleaned or fallback
+
+
+def extract_mail(stream: Stream) -> list[Extracted]:
+    """Decode the e-mails in one reassembled stream: bodies and attachments.
+
+    The body matters as much as the attachment - a ZIP password is routinely
+    written in the HTML of the message that carries the ZIP.
+    """
+    objects: list[Extracted] = []
+    for number, item in enumerate(mail.extract(stream.data)):
+        summary = "; ".join(f"{name}: {value}" for name, value in item.headers.items())
+        for index, part in enumerate(item.parts):
+            if part.is_body:
+                name = f"mail_{number}_body_{index}.txt"
+                what = f"e-mail body ({part.content_type})"
+            else:
+                name = f"mail_{number}_{_safe_name(part.filename, f'part_{index}.bin')}"
+                what = f"attachment {part.filename or '(unnamed)'} ({part.content_type})"
+            objects.append(
+                Extracted(
+                    kind="mail-attachment" if not part.is_body else "mail-body",
+                    name=name,
+                    data=part.data[:MAX_OBJECT],
+                    description=f"{what}, {len(part.data)} bytes - {item.subject or 'no subject'}",
+                    source=stream.source,
+                    destination=stream.destination,
+                    details=[
+                        detail
+                        for detail in (
+                            summary,
+                            "decoded from its transfer encoding (base64 / quoted-printable)",
+                            "a password for an attachment is often written in the body"
+                            if part.is_body
+                            else "`ctfc detect` it: a double extension hides a real type",
+                        )
+                        if detail
+                    ],
+                )
+            )
+    return objects
+
+
+# ---------------------------------------------------------------------------
 # USB
 # ---------------------------------------------------------------------------
 
@@ -834,8 +889,16 @@ def analyse(data: bytes, path: str = "") -> PcapReport:
             if stream.gaps:
                 item.details.append("the stream had sequence gaps: this may be incomplete")
             report.objects.append(item)
-        if not http_objects and len(stream.data) >= 16:
-            # Not HTTP: hand over the raw stream, it may be a custom protocol.
+        # Mail protocols (IMAP/SMTP/POP3) carry whole messages: decode them rather
+        # than handing over a stream the user would have to read by hand.
+        mail_objects = extract_mail(stream)
+        for item in mail_objects:
+            if item.data in seen:
+                continue
+            seen.add(item.data)
+            report.objects.append(item)
+        if not http_objects and not mail_objects and len(stream.data) >= 16:
+            # Not HTTP nor mail: hand over the raw stream, it may be a custom protocol.
             if stream.data in seen:
                 continue
             seen.add(stream.data)
