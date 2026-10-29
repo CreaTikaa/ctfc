@@ -131,6 +131,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("document", help=t("arg_document"))
     p.add_argument("--save-macros", help=t("opt_office_save"))
 
+    p = add("pdf")
+    p.add_argument("input", help=t("arg_input"))
+    p.add_argument("--extract", help=t("opt_pdf_extract"))
+
     p = add("keys")
     p.add_argument("dump", help=t("arg_dump"))
     p.add_argument("--against", help=t("opt_keys_against"))
@@ -673,6 +677,45 @@ def cmd_office(args: argparse.Namespace, config: Config, console: Console) -> in
     return 0 if report.macros else 1
 
 
+def cmd_pdf(args: argparse.Namespace, config: Config, console: Console) -> int:
+    """Static analysis of a PDF: actions, JavaScript, embedded files, revisions."""
+    from ctfc.core import pdf as pdf_module
+
+    inp = parse_input(args.input, decode_bare=False)
+    flagset = flagset_from(config)
+    report = pdf_module.analyse(inp.data, flagset)
+    # The JavaScript is a script like any other: Code Lens already reads it.
+    source = "\n\n".join(code for _, code in report.javascript)
+    lens = analyse_script(source.encode(), filename="pdf.js", flagset=flagset) if source else None
+    saved = []
+    if args.extract:
+        folder = Path(args.extract)
+        folder.mkdir(parents=True, exist_ok=True)
+        for name, blob in report.embedded:
+            target = folder / (re.sub(r"[^A-Za-z0-9._-]", "_", name).lstrip(".") or "embedded.bin")
+            target.write_bytes(blob)
+            saved.append(str(target))
+        # Earlier revisions hold what looks removed: hand the first one over too.
+        if report.revisions > 1:
+            cut = inp.data.find(b"%%EOF")
+            first = folder / "revision_1.pdf"
+            first.write_bytes(inp.data[: cut + 5])
+            saved.append(str(first))
+    candidates = lens_candidates(lens) if lens is not None else []
+    remember(args, config, inp.data, args.input, candidates, report.indicators[:4])
+    if args.json:
+        payload = {"input": input_to_dict(inp), **report.to_dict()}
+        payload["lens"] = lens.to_dict() if lens is not None else None
+        payload["saved"] = saved
+        print(json.dumps(payload, indent=2))
+        return 0 if report.objects else 1
+    render.print_input_notes(console, inp)
+    render.print_pdf(console, report, saved)
+    if lens is not None:
+        render.print_lens(console, lens, show_code=args.show_code)
+    return 0 if report.objects else 1
+
+
 def parse_number(text: str | None) -> int | None:
     """Read a big integer written in decimal or as 0x hex."""
     if not text:
@@ -1009,6 +1052,7 @@ def main(argv: list[str] | None = None) -> int:
         "hash": cmd_hash,
         "scan": cmd_scan,
         "office": cmd_office,
+        "pdf": cmd_pdf,
         "pcap": cmd_pcap,
         "radius": cmd_radius,
         "recipe": cmd_recipe,

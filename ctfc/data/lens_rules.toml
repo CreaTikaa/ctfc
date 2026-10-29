@@ -290,6 +290,17 @@ capture = "blob"
 capture_as = "charcodes"
 
 [[rule]]
+id = "js.charcode.array"
+languages = ["javascript"]
+# The codes are usually kept in an array and only turned into characters in a
+# loop further down (`var a = [67, 89, ...]` ... `String.fromCharCode(a[i])`),
+# so the array itself has to be recognised, not just a direct fromCharCode call.
+regex = '''\[\s*((?:\d{1,3}\s*,\s*){7,}\d{1,3})\s*\]'''
+explain = "holds a string as an array of character codes"
+capture = "blob"
+capture_as = "charcodes"
+
+[[rule]]
 id = "js.eval"
 languages = ["javascript"]
 regex = '''(?:\beval\(|new\s+Function\(|setTimeout\(\s*['"])'''

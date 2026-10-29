@@ -455,6 +455,37 @@ def print_office(console: Console, report) -> None:
         console.print(f"[yellow]No VBA macro.[/] {len(report.streams)} stream(s)/part(s) inside.")
 
 
+def print_pdf(console: Console, report, saved: list[str]) -> None:
+    """`ctfc pdf`: what the document would do, and what it carries."""
+    facts = Table(title="PDF", show_header=False, expand=False)
+    facts.add_column("name", style="cyan")
+    facts.add_column("value")
+    facts.add_row("version", report.version)
+    facts.add_row("objects", str(len(report.objects)))
+    facts.add_row("revisions", str(report.revisions))
+    facts.add_row("streams decoded", str(sum(1 for obj in report.objects if obj.filters)))
+    facts.add_row("encrypted", "yes" if report.encrypted else "no")
+    console.print(facts)
+
+    for note in report.notes:
+        console.print(f"[cyan]*[/] {safe(note)}")
+    if report.indicators:
+        table = Table(title="what it would do", expand=True)
+        table.add_column("indicator", ratio=3)
+        for line in report.indicators:
+            table.add_row(safe(line, 160))
+        console.print(table)
+    for name, blob in report.embedded:
+        console.print(
+            f"[bold]embedded file[/] {escape(name)} ({len(blob)} bytes): {preview(blob, 60)}"
+        )
+    for number, code in report.javascript:
+        console.print(f"[bold]JavaScript[/] in object {number}:")
+        console.print(Panel(escape(code[:3000]), border_style="dim"))
+    if saved:
+        console.print(f"[green]saved {len(saved)} file(s)[/]; next: ctfc scan <that folder>")
+
+
 def print_radius(console: Console, found, had_secret: bool) -> None:
     """`ctfc radius`: the shared secret(s) that decrypted the PAP password."""
     if not found:

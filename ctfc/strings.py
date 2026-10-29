@@ -199,6 +199,16 @@ EN: dict[str, str] = {
     ),
     "arg_document": "the Office document (.doc, .xls, .docm, .xlsm) - a path, or -",
     "opt_office_save": "also write each recovered macro module into this folder as .vbs",
+    "cmd_pdf": "read a PDF statically: actions, JavaScript, embedded files, revisions",
+    "cmd_pdf_ex": (
+        "examples: ctfc pdf invoice.pdf  |  "
+        "ctfc pdf sample.pdf --extract ./out && ctfc scan ./out. "
+        "Nothing is executed: the JavaScript is extracted and read by Code Lens."
+    ),
+    "opt_pdf_extract": (
+        "save the embedded files into this folder (plus the first revision, when the "
+        "PDF was updated incrementally)"
+    ),
     "cmd_radius": "recover a RADIUS PAP password (RFC 2865) from the captured attribute",
     "cmd_radius_ex": (
         "example: ctfc radius hex:<User-Password> --authenticator hex:<16-byte authenticator>  "

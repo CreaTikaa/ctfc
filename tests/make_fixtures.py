@@ -1302,6 +1302,54 @@ def write_audit_fixtures() -> None:
     header = struct.pack("<IHHiIII", 0xA1B2C3D4, 2, 4, 0, 0, 65535, 1)
     write("audit_radius.pcap", header + pcap_packet(frame, 1700000500))
 
+    # 12. A PDF built like a malicious one: /OpenAction fires JavaScript that
+    #     rebuilds the flag from character codes, an embedded file carries a
+    #     second one, and an incremental update "hides" a third - the first
+    #     revision still holds it, which is the classic redaction failure.
+    def pdf_object(number: int, body: bytes) -> bytes:
+        return b"%d 0 obj\n" % number + body + b"\nendobj\n"
+
+    flag_js = "CYBN{fixture_pdf_js}"
+    codes = ", ".join(str(ord(char)) for char in flag_js)
+    javascript = (
+        f"var a = [{codes}];\n"
+        "var s = '';\n"
+        "for (var i = 0; i < a.length; i++) {{ s += String.fromCharCode(a[i]); }}\n"
+        "app.alert(s);\n"
+    ).format()
+    embedded_payload = b"CYBN{fixture_pdf_embedded}\n"
+    compressed = zlib.compress(embedded_payload)
+
+    body = b"%PDF-1.7\n"
+    body += pdf_object(1, b"<< /Type /Catalog /Pages 2 0 R /OpenAction 5 0 R >>")
+    body += pdf_object(2, b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>")
+    body += pdf_object(3, b"<< /Type /Page /Parent 2 0 R /Contents 4 0 R >>")
+    secret_text = b"BT (CYBN{fixture_pdf_revision}) Tj ET"
+    stream4 = zlib.compress(secret_text)
+    body += pdf_object(
+        4,
+        b"<< /Length %d /Filter /FlateDecode >>\nstream\n" % len(stream4)
+        + stream4
+        + b"\nendstream",
+    )
+    body += pdf_object(5, b"<< /Type /Action /S /JavaScript /JS (" + javascript.encode() + b") >>")
+    body += pdf_object(
+        6,
+        b"<< /Type /EmbeddedFile /Subtype /text#2Fplain /Length %d /Filter /FlateDecode >>\n"
+        b"stream\n" % len(compressed) + compressed + b"\nendstream",
+    )
+    body += pdf_object(7, b"<< /Type /Filespec /F (payload.txt) /EF << /F 6 0 R >> >>")
+    body += b"trailer\n<< /Root 1 0 R /Size 8 >>\n%%EOF\n"
+
+    # The incremental update: object 4 is replaced by an empty page, so a viewer
+    # shows nothing - but the original object 4 above is still in the file.
+    blank = zlib.compress(b"BT () Tj ET")
+    body += pdf_object(
+        4, b"<< /Length %d /Filter /FlateDecode >>\nstream\n" % len(blank) + blank + b"\nendstream"
+    )
+    body += b"trailer\n<< /Root 1 0 R /Size 8 /Prev 0 >>\n%%EOF\n"
+    write("audit_malicious.pdf", body)
+
     # 11. A macro-enabled Office document, the phishing-attachment shape: the
     #     VBA runs on open, XORs a blob with a one-letter key and shows the flag.
     #     The module stream gets a padded "performance cache" in front of the
