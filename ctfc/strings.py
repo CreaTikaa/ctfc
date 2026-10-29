@@ -191,6 +191,14 @@ EN: dict[str, str] = {
         "(then: ctfc scan ./objects)"
     ),
     "opt_pcap_extract": "also save every extracted object into this folder",
+    "cmd_office": "extract an Office document's VBA macros and read them with Code Lens",
+    "cmd_office_ex": (
+        "examples: ctfc office invoice.doc  |  ctfc office report.docm --save-macros ./macros  |  "
+        "ctfc office sample.xlsm --json. "
+        "Works on OLE2 (.doc/.xls) and OOXML (.docm/.xlsm); nothing is executed."
+    ),
+    "arg_document": "the Office document (.doc, .xls, .docm, .xlsm) - a path, or -",
+    "opt_office_save": "also write each recovered macro module into this folder as .vbs",
     "cmd_radius": "recover a RADIUS PAP password (RFC 2865) from the captured attribute",
     "cmd_radius_ex": (
         "example: ctfc radius hex:<User-Password> --authenticator hex:<16-byte authenticator>  "

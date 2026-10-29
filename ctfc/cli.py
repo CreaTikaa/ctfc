@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import shlex
 import sys
 import tempfile
@@ -125,6 +126,10 @@ def build_parser() -> argparse.ArgumentParser:
     p = add("lens")
     p.add_argument("script", help=t("arg_script"))
     p.add_argument("--against", help=t("opt_lens_against"))
+
+    p = add("office")
+    p.add_argument("document", help=t("arg_document"))
+    p.add_argument("--save-macros", help=t("opt_office_save"))
 
     p = add("keys")
     p.add_argument("dump", help=t("arg_dump"))
@@ -633,6 +638,41 @@ def cmd_lens(args: argparse.Namespace, config: Config, console: Console) -> int:
     return 0 if report.operations else 1
 
 
+def cmd_office(args: argparse.Namespace, config: Config, console: Console) -> int:
+    """Extract an Office document's VBA macros and read them with Code Lens."""
+    from ctfc.core import office
+
+    inp = parse_input(args.document, decode_bare=False)
+    report = office.analyse(inp.data)
+    flagset = flagset_from(config)
+    # The recovered source is VBS-flavoured, which Code Lens already handles: so
+    # the macro is not just printed, it is understood (keys, blobs, the flag).
+    lens = (
+        analyse_script(report.source.encode(), filename="macro.vbs", flagset=flagset)
+        if (report.macros)
+        else None
+    )
+    if args.save_macros:
+        folder = Path(args.save_macros)
+        folder.mkdir(parents=True, exist_ok=True)
+        for macro in report.macros:
+            name = re.sub(r"[^A-Za-z0-9._-]", "_", macro.module) + ".vbs"
+            (folder / name).write_text(macro.code, encoding="utf-8")
+        console.print(f"[green]saved {len(report.macros)} module(s)[/] to {folder}")
+    candidates = lens_candidates(lens) if lens is not None else []
+    remember(args, config, inp.data, args.document, candidates, report.indicators[:4])
+    if args.json:
+        payload = {"input": input_to_dict(inp), **report.to_dict()}
+        payload["lens"] = lens.to_dict() if lens is not None else None
+        print(json.dumps(payload, indent=2))
+        return 0 if report.macros else 1
+    render.print_input_notes(console, inp)
+    render.print_office(console, report)
+    if lens is not None:
+        render.print_lens(console, lens, show_code=args.show_code)
+    return 0 if report.macros else 1
+
+
 def parse_number(text: str | None) -> int | None:
     """Read a big integer written in decimal or as 0x hex."""
     if not text:
@@ -968,6 +1008,7 @@ def main(argv: list[str] | None = None) -> int:
         "rsa": cmd_rsa,
         "hash": cmd_hash,
         "scan": cmd_scan,
+        "office": cmd_office,
         "pcap": cmd_pcap,
         "radius": cmd_radius,
         "recipe": cmd_recipe,

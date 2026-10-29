@@ -259,7 +259,9 @@ XOR_VARIABLE: dict[str, tuple[str, str]] = {
         r"|\"[^\"\n]{{1,64}}\")",
     ),
     "vbs": (
-        r"\bXor\s+(\w+)\b",
+        # `Xor k`, but also the normal VBA idiom for a character key:
+        # `Xor Asc(key)`, `Xor AscW(key)`, `Xor Asc(Mid(key, i, 1))`.
+        r"\bXor\s+(?:Asc[Ww]?\s*\(\s*)?(?:Mid\s*\(\s*)?(\w+)",
         r"\b{name}\s*=\s*(\d{{1,3}}|&H[0-9A-Fa-f]{{1,2}}|\"[^\"\n]{{1,64}}\")",
     ),
 }

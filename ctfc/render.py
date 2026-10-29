@@ -438,6 +438,23 @@ def print_pcap(
         print_candidate_details(console, best.best, show_code)
 
 
+def print_office(console: Console, report) -> None:
+    """`ctfc office`: what the document holds, and the macro source itself."""
+    for note in report.notes:
+        console.print(f"[cyan]*[/] {safe(note)}")
+    if report.indicators:
+        table = Table(title="what the macro does", expand=True)
+        table.add_column("indicator", ratio=3)
+        for line in report.indicators:
+            table.add_row(safe(line, 160))
+        console.print(table)
+    for macro in report.macros:
+        console.print(f"[bold]{escape(macro.module)}[/] [dim](at offset {macro.offset})[/]")
+        console.print(Panel(escape(macro.code[:4000]), border_style="dim"))
+    if not report.macros:
+        console.print(f"[yellow]No VBA macro.[/] {len(report.streams)} stream(s)/part(s) inside.")
+
+
 def print_radius(console: Console, found, had_secret: bool) -> None:
     """`ctfc radius`: the shared secret(s) that decrypted the PAP password."""
     if not found:

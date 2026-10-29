@@ -118,6 +118,148 @@ def zipcrypto_zip(entry_name: str, content: bytes, password: bytes) -> bytes:
     return local + central + end
 
 
+def ovba_compress(data: bytes) -> bytes:
+    """Compress like MS-OVBA 2.4.1, written here to test ctfc's decompressor.
+
+    Greedy LZ77 in 4096-byte chunks. The offset/length split of a copy token
+    depends on how much has been produced in the current chunk, which is the part
+    worth testing, so this mirrors the spec's rule independently of ctfc.
+    """
+    out = bytearray(b"\x01")
+    for begin in range(0, len(data) or 1, 4096):
+        chunk = data[begin : begin + 4096]
+        body = bytearray()
+        position = 0
+        while position < len(chunk):
+            flags_at = len(body)
+            body.append(0)  # placeholder for the flag byte
+            flags = 0
+            for bit in range(8):
+                if position >= len(chunk):
+                    break
+                bit_count = max(4, (position - 1).bit_length() if position else 0)
+                length_mask = 0xFFFF >> bit_count
+                max_length = length_mask + 3
+                window = max(0, position - (1 << bit_count))
+                best_length, best_offset = 0, 0
+                for candidate in range(window, position):
+                    length = 0
+                    while (
+                        length < max_length
+                        and position + length < len(chunk)
+                        and chunk[candidate + length] == chunk[position + length]
+                    ):
+                        length += 1
+                    if length > best_length:
+                        best_length, best_offset = length, position - candidate
+                if best_length >= 3:
+                    token = ((best_offset - 1) << (16 - bit_count)) | (best_length - 3)
+                    body += token.to_bytes(2, "little")
+                    flags |= 1 << bit
+                    position += best_length
+                else:
+                    body.append(chunk[position])
+                    position += 1
+            body[flags_at] = flags
+        size = len(body) + 2
+        if size - 3 > 0x0FFF:
+            raise ValueError("compressed chunk too large for this helper; use smaller input")
+        header = 0x8000 | (CHUNK_SIG << 12) | (size - 3)
+        out += header.to_bytes(2, "little") + body
+    return bytes(out)
+
+
+CHUNK_SIG = 0b011
+ENDOFCHAIN = 0xFFFFFFFE
+FREESECT = 0xFFFFFFFF
+NOSTREAM = 0xFFFFFFFF
+
+
+def cfb_write(streams: list[tuple[str, bytes]]) -> bytes:
+    """Build a minimal OLE2 compound file holding `streams` under a VBA storage.
+
+    512-byte sectors, one FAT sector, one directory sector. Every stream is made
+    at least 4096 bytes by its caller so it uses a normal sector chain and this
+    helper does not need to implement the mini stream too.
+    """
+    sector_size = 512
+    # Sector 0 = FAT, sector 1 = directory, stream data from sector 2 on.
+    data_sectors: list[bytes] = []
+    entries: list[bytes] = []
+
+    def entry(name: str, kind: int, start: int, size: int, left: int, right: int, child: int):
+        raw = bytearray(128)
+        encoded = name.encode("utf-16-le")
+        raw[: len(encoded)] = encoded
+        raw[64:66] = (len(encoded) + 2).to_bytes(2, "little")
+        raw[66] = kind
+        raw[67] = 1  # black
+        raw[68:72] = left.to_bytes(4, "little")
+        raw[72:76] = right.to_bytes(4, "little")
+        raw[76:80] = child.to_bytes(4, "little")
+        raw[116:120] = start.to_bytes(4, "little")
+        raw[120:128] = size.to_bytes(8, "little")
+        return bytes(raw)
+
+    # Lay the stream data out first so we know each one's starting sector.
+    starts = []
+    next_sector = 2
+    for _, payload in streams:
+        starts.append(next_sector)
+        padded = payload + b"\x00" * (-len(payload) % sector_size)
+        for offset in range(0, len(padded), sector_size):
+            data_sectors.append(padded[offset : offset + sector_size])
+        next_sector += len(padded) // sector_size
+
+    # Directory: root -> "VBA" storage -> the streams as its children.
+    # Entry 0 root, entry 1 the VBA storage, entries 2.. the streams.
+    entries.append(entry("Root Entry", 5, ENDOFCHAIN, 0, NOSTREAM, NOSTREAM, 1))
+    entries.append(entry("VBA", 1, 0, 0, NOSTREAM, NOSTREAM, 2))
+    for index, ((name, payload), start) in enumerate(zip(streams, starts, strict=True)):
+        # A flat right-leaning chain is a valid (if unbalanced) red-black tree.
+        right = 3 + index if index + 1 < len(streams) else NOSTREAM
+        entries.append(entry(name, 2, start, len(payload), NOSTREAM, right, NOSTREAM))
+    directory = b"".join(entries)
+    directory += b"\x00" * (-len(directory) % sector_size)
+    directory_sectors = [
+        directory[offset : offset + sector_size] for offset in range(0, len(directory), sector_size)
+    ]
+
+    # The FAT: sector 0 is the FAT itself, then the directory chain, then the data.
+    total = 2 + len(data_sectors) + (len(directory_sectors) - 1)
+    fat = [FREESECT] * (sector_size // 4)
+    fat[0] = 0xFFFFFFFD  # FATSECT
+    # The directory occupies sector 1 and, if longer, sectors after the data.
+    fat[1] = ENDOFCHAIN if len(directory_sectors) == 1 else total
+    for position, start in enumerate(starts):
+        count = len(streams[position][1])
+        count = (count + sector_size - 1) // sector_size
+        for step in range(count):
+            fat[start + step] = ENDOFCHAIN if step == count - 1 else start + step + 1
+    fat_sector = b"".join(value.to_bytes(4, "little") for value in fat)
+
+    header = bytearray(512)
+    header[0:8] = bytes.fromhex("d0cf11e0a1b11ae1")
+    header[24:26] = (0x3E).to_bytes(2, "little")  # minor version
+    header[26:28] = (3).to_bytes(2, "little")  # major version 3 = 512-byte sectors
+    header[28:30] = (0xFFFE).to_bytes(2, "little")  # little-endian marker
+    header[30:32] = (9).to_bytes(2, "little")  # sector shift: 2^9 = 512
+    header[32:34] = (6).to_bytes(2, "little")  # mini sector shift: 2^6 = 64
+    header[44:48] = (1).to_bytes(4, "little")  # one FAT sector
+    header[48:52] = (1).to_bytes(4, "little")  # directory starts at sector 1
+    header[56:60] = (4096).to_bytes(4, "little")  # mini stream cutoff
+    header[60:64] = ENDOFCHAIN.to_bytes(4, "little")  # no mini FAT
+    header[64:68] = (0).to_bytes(4, "little")
+    header[68:72] = ENDOFCHAIN.to_bytes(4, "little")  # no DIFAT sectors
+    header[72:76] = (0).to_bytes(4, "little")
+    difat = [FREESECT] * 109
+    difat[0] = 0  # the FAT lives in sector 0
+    header[76:512] = b"".join(value.to_bytes(4, "little") for value in difat)
+
+    body = [fat_sector, directory_sectors[0], *data_sectors, *directory_sectors[1:]]
+    return bytes(header) + b"".join(body)
+
+
 def radius_hide_password(password: bytes, authenticator: bytes, secret: bytes) -> bytes:
     """Hide a PAP password the RADIUS way (RFC 2865 section 5.2), independently of ctfc.
 
@@ -1159,6 +1301,53 @@ def write_audit_fixtures() -> None:
     frame = ethernet_ipv4("10.0.0.5", "10.0.0.1", 17, udp_datagram(51000, 1812, request))
     header = struct.pack("<IHHiIII", 0xA1B2C3D4, 2, 4, 0, 0, 65535, 1)
     write("audit_radius.pcap", header + pcap_packet(frame, 1700000500))
+
+    # 11. A macro-enabled Office document, the phishing-attachment shape: the
+    #     VBA runs on open, XORs a blob with a one-letter key and shows the flag.
+    #     The module stream gets a padded "performance cache" in front of the
+    #     compressed container, exactly like a real one.
+    macro = (
+        'Attribute VB_Name = "Module1"\r\n'
+        "Sub AutoOpen()\r\n"
+        "    Dim blob As String\r\n"
+        "    Dim key As String\r\n"
+        '    key = "K"\r\n'
+        f'    blob = "{bytes(b ^ ord("K") for b in b"CYBN{fixture_vba_macro}").hex()}"\r\n'
+        "    Dim i As Integer\r\n"
+        "    Dim out As String\r\n"
+        "    For i = 1 To Len(blob) Step 2\r\n"
+        '        out = out & Chr(CLng("&H" & Mid(blob, i, 2)) Xor Asc(key))\r\n'
+        "    Next i\r\n"
+        "    MsgBox out\r\n"
+        "End Sub\r\n"
+    ).encode("latin-1")
+    container = ovba_compress(macro)
+    # Real module streams carry a performance cache first; pad past the 4096-byte
+    # mini-stream cutoff so the fixture uses a normal sector chain.
+    cache = bytes(RNG.randrange(1, 256) for _ in range(4200))
+    module_stream = cache + container
+    ole = cfb_write([("Module1", module_stream), ("dir", b"\x00" * 4096)])
+    write("audit_macro.doc", ole)
+
+    # The same project inside a .docm (a ZIP), plus a remote-template relationship.
+    docm = io.BytesIO()
+    with zipfile.ZipFile(docm, "w", zipfile.ZIP_DEFLATED) as archive:
+
+        def add(name: str, payload: bytes) -> None:
+            info = zipfile.ZipInfo(name, date_time=(2026, 1, 1, 0, 0, 0))
+            info.compress_type = zipfile.ZIP_DEFLATED
+            archive.writestr(info, payload)
+
+        add("[Content_Types].xml", b'<?xml version="1.0"?><Types/>')
+        add("word/document.xml", b'<?xml version="1.0"?><w:document/>')
+        add("word/vbaProject.bin", ole)
+        add(
+            "word/_rels/settings.xml.rels",
+            b'<?xml version="1.0"?><Relationships>'
+            b'<Relationship Id="rId1" Target="http://eldoria.invalid/template.dotm"'
+            b' TargetMode="External"/></Relationships>',
+        )
+    write("audit_macro.docm", docm.getvalue())
 
     # 10. A Windows event log holding the dropper's command line, the "Cave
     #     Expedition" first step: .evtx stores its strings as UTF-16LE, so the

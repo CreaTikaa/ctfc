@@ -51,7 +51,9 @@ SIG_APPLY: dict[str, dict] = {
 SIG_HINTS = {
     "enc": "openssl enc: ctfc sym <file> --pass <password> (or --passwords), or "
     "openssl enc -d -aes-256-cbc -md sha256 -pbkdf2 -in <file> -pass pass:<password>",
-    "zip": "unzip -l <file>; encrypted? zip2john <file> > h && john h",
+    "zip": "unzip -l <file>; a .docm/.xlsm? ctfc office <file>; encrypted? "
+    "zip2john <file> > h && john h",
+    "doc": "ctfc office <file>   (OLE2: extracts the VBA macros and reads them)",
     "7z": "7z l <file>; encrypted? 7z2john.pl <file>",
     "rar": "unrar l <file>; encrypted? rar2john <file>",
     "kdbx": "keepass2john <file> > h; hashcat -m 13400 h wordlist",
