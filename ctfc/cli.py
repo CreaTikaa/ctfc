@@ -143,6 +143,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("folder", help=t("arg_repo"))
     p.add_argument("--extract", help=t("opt_git_extract"))
 
+    p = add("sqlite")
+    p.add_argument("input", help=t("arg_database"))
+
     p = add("keys")
     p.add_argument("dump", help=t("arg_dump"))
     p.add_argument("--against", help=t("opt_keys_against"))
@@ -765,6 +768,27 @@ def cmd_git(args: argparse.Namespace, config: Config, console: Console) -> int:
     return 0 if report.lost else 1
 
 
+def cmd_sqlite(args: argparse.Namespace, config: Config, console: Console) -> int:
+    """Read a SQLite database, including the rows it thinks it deleted."""
+    from ctfc.core import sqlitedb
+
+    inp = parse_input(args.input, decode_bare=False)
+    # The live tables are read through sqlite3, which needs a real file; carving
+    # only needs the bytes, so a pasted database still gets the deleted rows.
+    path = Path(args.input)
+    report = sqlitedb.analyse(
+        inp.data, path if path.is_file() else None, flagset=flagset_from(config)
+    )
+    summary = [f"{row.rowid}: {row.text[:60]}" for row in report.deleted[:4]]
+    remember(args, config, None, args.input, summary=summary)
+    if args.json:
+        print(json.dumps({"input": input_to_dict(inp), **report.to_dict()}, indent=2))
+        return 0 if report.deleted else 1
+    render.print_input_notes(console, inp)
+    render.print_sqlite(console, report)
+    return 0 if report.deleted else 1
+
+
 def parse_number(text: str | None) -> int | None:
     """Read a big integer written in decimal or as 0x hex."""
     if not text:
@@ -1104,6 +1128,7 @@ def main(argv: list[str] | None = None) -> int:
         "pdf": cmd_pdf,
         "stego": cmd_stego,
         "git": cmd_git,
+        "sqlite": cmd_sqlite,
         "pcap": cmd_pcap,
         "radius": cmd_radius,
         "recipe": cmd_recipe,

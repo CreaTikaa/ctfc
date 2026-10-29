@@ -13,6 +13,7 @@ import hmac
 import io
 import math
 import random
+import sqlite3
 import struct
 import zipfile
 import zlib
@@ -1322,6 +1323,37 @@ def write_audit_fixtures() -> None:
     frame = ethernet_ipv4("10.0.0.5", "10.0.0.1", 17, udp_datagram(51000, 1812, request))
     header = struct.pack("<IHHiIII", 0xA1B2C3D4, 2, 4, 0, 0, 65535, 1)
     write("audit_radius.pcap", header + pcap_packet(frame, 1700000500))
+
+    # 14. A SQLite database with deleted rows still recoverable. `secure_delete`
+    #     is OFF, as it is in a browser's or a phone app's database - which is
+    #     what a challenge hands you. Note that Debian's own SQLite defaults it
+    #     ON, so a database made without this pragma really is wiped.
+    db_path = FIXTURES / "audit_notes.sqlite"
+    db_path.unlink(missing_ok=True)
+    connection = sqlite3.connect(db_path)
+    connection.execute("PRAGMA secure_delete=OFF")
+    connection.execute("CREATE TABLE notes (id INTEGER PRIMARY KEY, title TEXT, body TEXT)")
+    connection.executemany(
+        "INSERT INTO notes (title, body) VALUES (?, ?)",
+        [
+            (f"note {index}", f"ordinary note number {index}, nothing special")
+            for index in range(1, 80)
+        ],
+    )
+    connection.executemany(
+        "INSERT INTO notes (title, body) VALUES (?, ?)",
+        [
+            ("the flag", "CYBN{fixture_sqlite_deleted}"),
+            ("credentials", "admin_password = hunter2hunter2"),
+        ],
+    )
+    connection.commit()
+    # Delete enough to release whole pages onto the freelist.
+    connection.execute("DELETE FROM notes WHERE title IN ('the flag', 'credentials')")
+    connection.execute("DELETE FROM notes WHERE id < 50")
+    connection.commit()
+    connection.close()
+    print(f"  {'audit_notes.sqlite':32} {db_path.stat().st_size} bytes")
 
     # 13. LSB steganography: the flag is written one bit per red sample, in the
     #     usual row-major / MSB-first way, and a tEXt comment acts as the decoy.

@@ -543,6 +543,38 @@ def print_git(console: Console, report, saved: list[str]) -> None:
         console.print(f"[green]saved {len(saved)} blob(s)[/]; next: ctfc scan <that folder>")
 
 
+def print_sqlite(console: Console, report) -> None:
+    """`ctfc sqlite`: the live tables, then the rows carved out of free space."""
+    facts = Table(title="database", show_header=False, expand=False)
+    facts.add_column("name", style="cyan")
+    facts.add_column("value")
+    facts.add_row("page size", str(report.page_size))
+    facts.add_row("pages", str(report.pages))
+    facts.add_row("freelist pages", ", ".join(str(number) for number in report.freelist) or "none")
+    facts.add_row(
+        "live tables",
+        ", ".join(f"{name} ({count} rows)" for name, count in report.tables.items()) or "none read",
+    )
+    console.print(facts)
+
+    for note in report.notes:
+        console.print(f"[cyan]*[/] {safe(note)}")
+    if not report.deleted:
+        return
+    table = Table(title="rows carved out of free space", expand=True)
+    table.add_column("rowid", justify="right", width=7)
+    table.add_column("where", width=24)
+    table.add_column("values", ratio=4)
+    for row in report.deleted:
+        text = safe(row.text, 150)
+        if row.flags:
+            text = "[bold green]" + safe(", ".join(row.flags), 90) + "[/] " + text
+        elif row.secrets:
+            text = "[bold]" + safe("; ".join(row.secrets), 90) + "[/] " + text
+        table.add_row("" if row.rowid is None else str(row.rowid), safe(row.where, 24), text)
+    console.print(table)
+
+
 def print_radius(console: Console, found, had_secret: bool) -> None:
     """`ctfc radius`: the shared secret(s) that decrypted the PAP password."""
     if not found:

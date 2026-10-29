@@ -213,6 +213,12 @@ EN: dict[str, str] = {
     ),
     "arg_repo": "the repository folder (or the .git folder itself)",
     "opt_git_extract": "write every recovered blob into this folder (then: ctfc scan)",
+    "cmd_sqlite": "read a SQLite database, including the rows it thinks it deleted",
+    "cmd_sqlite_ex": (
+        "examples: ctfc sqlite places.sqlite  |  ctfc sqlite History --json. "
+        "DELETE does not erase: the old rows sit in the freelist pages until a VACUUM."
+    ),
+    "arg_database": "the SQLite database file (a path, or - for stdin)",
     "cmd_stego": "look for a message hidden in the low bits of a PNG or BMP",
     "cmd_stego_ex": (
         "examples: ctfc stego cat.png  |  ctfc stego photo.bmp --show-code. "
