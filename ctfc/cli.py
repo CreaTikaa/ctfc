@@ -146,6 +146,11 @@ def build_parser() -> argparse.ArgumentParser:
     p = add("sqlite")
     p.add_argument("input", help=t("arg_database"))
 
+    p = add("hive")
+    p.add_argument("input", help=t("arg_hive"))
+    p.add_argument("--key", help=t("opt_hive_key"))
+    p.add_argument("--list", action="store_true", help=t("opt_hive_list"))
+
     p = add("zip")
     p.add_argument("input", help=t("arg_archive"))
     p.add_argument("--seconds", type=float, default=30.0, help=t("opt_seconds"))
@@ -821,6 +826,37 @@ def cmd_jwt(args: argparse.Namespace, config: Config, console: Console) -> int:
     return 0 if report.findings else 1
 
 
+def cmd_hive(args: argparse.Namespace, config: Config, console: Console) -> int:
+    """Read a registry hive: the keys that matter, or one you name."""
+    from ctfc.core import hive as hive_module
+
+    inp = parse_input(args.input, decode_bare=False)
+    if args.key or args.list:
+        parsed = hive_module.Hive(inp.data)
+        if args.list:
+            for path, key in parsed.walk():
+                console.print(f"[cyan]{escape_path(path)}[/]  ({len(key.values)} value(s))")
+            return 0
+        key = parsed.open(args.key)
+        if key is None:
+            raise ValueError(f"no such key: {args.key!r} (try --list to see the tree)")
+        console.print(f"[bold]{escape_path(args.key)}[/]")
+        for value in key.values:
+            console.print(f"  {value.name or '(default)'} [{value.type_name}] = {value.text[:400]}")
+        if not key.values:
+            console.print("  (no values; it may only hold subkeys)")
+        return 0
+
+    report = hive_module.analyse(inp.data)
+    remember(args, config, inp.data, args.input, summary=report.notes[:4])
+    if args.json:
+        print(json.dumps({"input": input_to_dict(inp), **report.to_dict()}, indent=2))
+        return 0
+    render.print_input_notes(console, inp)
+    render.print_hive(console, report)
+    return 0
+
+
 def cmd_zip(args: argparse.Namespace, config: Config, console: Console) -> int:
     """Look closely at a ZIP: encryption, mismatches, and the tiny files."""
     from ctfc.core import zipinfo
@@ -1117,6 +1153,7 @@ def cmd_recipe(args: argparse.Namespace, config: Config, console: Console) -> in
 
 
 def escape_path(path: str) -> str:
+    """A path printed through rich: its backslashes and brackets must survive."""
     from rich.markup import escape
 
     return escape(str(path))
@@ -1236,6 +1273,7 @@ def main(argv: list[str] | None = None) -> int:
         "jwt": cmd_jwt,
         "time": cmd_time,
         "zip": cmd_zip,
+        "hive": cmd_hive,
         "pcap": cmd_pcap,
         "radius": cmd_radius,
         "recipe": cmd_recipe,

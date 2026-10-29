@@ -213,6 +213,16 @@ EN: dict[str, str] = {
     ),
     "arg_repo": "the repository folder (or the .git folder itself)",
     "opt_git_extract": "write every recovered blob into this folder (then: ctfc scan)",
+    "cmd_hive": "read a registry hive (SAM, SYSTEM, NTUSER.DAT) without Windows",
+    "cmd_hive_ex": (
+        "examples: ctfc hive SYSTEM  |  ctfc hive NTUSER.DAT --key "
+        "'Microsoft\\Windows\\CurrentVersion\\Run'  |  ctfc hive SAM --list. "
+        "Recovers the boot key from a SYSTEM hive; the NT hashes themselves are left "
+        "to samdump2 / secretsdump.py."
+    ),
+    "arg_hive": "the hive file (SAM, SYSTEM, SOFTWARE, NTUSER.DAT) - a path, or -",
+    "opt_hive_key": "read one key by path instead of the usual report",
+    "opt_hive_list": "print every key path in the hive",
     "cmd_zip": "look closely at a ZIP: encryption, header mismatches, tiny files",
     "cmd_zip_ex": (
         "examples: ctfc zip secret.zip  |  ctfc zip archive.zip --json. "

@@ -654,6 +654,28 @@ def print_zip(console: Console, report) -> None:
         console.print(f"[green]$[/] {escape(command)}")
 
 
+def print_hive(console: Console, report) -> None:
+    """`ctfc hive`: which hive it is, the keys that matter, and the boot key."""
+    facts = Table(title="registry hive", show_header=False, expand=False)
+    facts.add_column("name", style="cyan")
+    facts.add_column("value")
+    facts.add_row("file name inside", report.name)
+    facts.add_row("looks like", report.kind)
+    facts.add_row("keys", str(report.keys))
+    if report.boot_key is not None:
+        facts.add_row("boot key", f"[bold green]{report.boot_key.hex()}[/]")
+    console.print(facts)
+
+    for path, why, values in report.found:
+        console.print(f"[bold]{escape(path)}[/] [dim]{safe(why, 70)}[/]")
+        for line in values:
+            console.print(f"   {safe(line, 200)}")
+    for note in report.notes:
+        console.print(f"[cyan]*[/] {safe(note)}")
+    for command in report.commands:
+        console.print(f"[green]$[/] {escape(command)}")
+
+
 def print_radius(console: Console, found, had_secret: bool) -> None:
     """`ctfc radius`: the shared secret(s) that decrypted the PAP password."""
     if not found:
