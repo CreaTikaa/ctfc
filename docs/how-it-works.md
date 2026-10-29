@@ -956,3 +956,102 @@ UTF-16LE source. A match is kept only when the result is readable **ASCII**:
 random bytes also decode as UTF-16LE, and land on printable Unicode letters often
 enough that `str.isprintable()` alone would let them through. Being a normal
 registry entry, it works inside `auto`'s chains, in recipes and in codegen.
+
+## 15. File formats read by hand
+
+Each of these exists because the interesting thing is not what a well-behaved
+reader shows you. They share a shape: parse the container defensively (the files
+are samples), report what is there with the reason, and hand over to the part of
+ctfc that already knows what to do with the bytes.
+
+### Office documents (`ctfc/core/cfb.py`, `ctfc/core/office.py`)
+
+An OLE2 file (`.doc`, `.xls`, `vbaProject.bin`) is **a FAT filesystem in a file**:
+512-byte sectors, a FAT saying which sector follows which, a directory of
+128-byte entries naming streams and storages, and a "mini stream" packing
+everything under 4096 bytes so a 200-byte stream does not waste a sector.
+
+A macro lives in a stream called `VBA/<Module>`, and its source is wrapped in an
+MS-OVBA **compressed container**: LZ77 in 4096-byte chunks whose copy tokens
+split between offset and length *differently as the chunk fills up*. That is the
+only reason a macro looks like binary. A `.docm` is a ZIP with the whole OLE2
+container inside it as `word/vbaProject.bin`, so it takes the same path. The
+recovered source goes to Code Lens, which reads it as VBS.
+
+### PDF (`ctfc/core/pdf.py`)
+
+A PDF is an object database with an interpreter attached. Four things matter: an
+action that fires on open (`/OpenAction`, `/AA`), JavaScript, an embedded file,
+and **earlier revisions** - a PDF can be updated incrementally, so text that was
+"removed" or covered with a black box is still in the bytes before the first
+`%%EOF`.
+
+The parser is tolerant rather than correct, which is the right trade for
+hand-edited files: objects are found by scanning for `N G obj` instead of
+trusting the cross-reference table, and `/Length` is ignored in favour of
+`endstream`. All five real stream filters are implemented. The LZW one widens its
+code when `len(table) + 2` reaches the limit, because two off-by-ones stack:
+PDF's "early change" widens one code early, and a decoder is always one entry
+behind the encoder since it can only add an entry once it has read the next code.
+
+### Images (`ctfc/core/stego.py`)
+
+A pixel's lowest bit can be changed invisibly, so recovering a message means
+guessing the bit plane, which samples and in what order, the scan direction, and
+the bit order inside a byte - a few hundred combinations, scored by
+`scoring.py`. Getting to the pixels is most of the work: a PNG's samples are
+zlib-compressed with each scanline filtered against its neighbours (all five
+filters, Paeth included), and a BMP pads rows to four bytes and stores them
+bottom-up when its height is positive. A BMP also stores **B,G,R**, so labels are
+built from the image's real channel order - calling index 0 "red" in both would
+make the report lie about where to look.
+
+### Archives (`ctfc/core/zipinfo.py`)
+
+Bit 0 of an entry's flags only says "encrypted", and the two schemes behind it
+need **opposite** attacks: ZipCrypto falls to a known-plaintext attack with no
+password (bkcrack), WinZip AES does not and must be cracked as a hash. The CRC32
+is of the *plaintext* and is stored in clear even for an encrypted entry, so a
+file of one to three bytes gives up its content with no password - except under
+WinZip AE-2, which zeroes the CRC field, which is why that trick stops working
+there. Also reported: a local header that disagrees with the central directory
+(different tools believe different ones), traversal paths, and bomb ratios.
+
+### Git (`ctfc/core/gitrepo.py`)
+
+An object is `"<type> <size>\0<content>"`, zlib-compressed, named by its own
+SHA-1. The useful question is **not** "what is unreachable" - the commit that
+added a removed secret is still an ancestor of the branch, so `git fsck` is
+silent. It is "what is in the history but in no branch's current tree". Packs are
+walked straight through (zlib says where each object ends) and their deltas
+applied, because a cloned repository stores most objects as copy/insert
+instructions against another one.
+
+### SQLite (`ctfc/core/sqlitedb.py`)
+
+`DELETE` unlinks a cell and puts the space on a free list; it does not erase.
+Rows are carved from freelist pages, the gap between a page's cell pointer array
+and its first live cell, and the freeblock chain. What makes carving trustworthy
+is anchoring on the **cell** rather than the record: a cell is `payload length,
+rowid, record`, and a record read at the wrong offset practically never comes out
+exactly the declared length. Note that Debian's SQLite defaults `secure_delete`
+to ON, so a database made locally really is wiped - a browser's is not.
+
+### Registry hives (`ctfc/core/hive.py`)
+
+A 4096-byte `regf` header, then hive bins cut into cells whose signed size is
+negative when allocated. Values of four bytes or fewer are stored **inline in
+their own offset field**, which is the detail that makes a naive reader return
+nothing for every DWORD. The boot key is not a value at all: four keys under
+`Control\Lsa` carry eight hex characters each as their *class names*, and the
+sixteen bytes are unshuffled with a fixed permutation.
+
+### Tokens and timestamps (`ctfc/core/jwt.py`, `ctfc/core/timestamps.py`)
+
+A JWT's header and payload are base64, not encryption, so they read without a
+key; everything interesting is the signature, and cracking an HMAC secret is a
+*verification* rather than a guess - the recomputed HMAC matches or it does not.
+A timestamp is reported under every clock it plausibly fits (Unix, FILETIME,
+WebKit, Mac, DOS), filtered to 1990..2100 and to readings more than a day past
+their own epoch - without that second rule every number also "reads as" the
+epoch itself.

@@ -467,6 +467,61 @@ documents the whole capture side (it was undocumented before).
 - **A real `.evtx` parser**: `psenc` gets the command line out without one, which is what
   the challenges actually need. A full parser is a lot of binary XML for little gain.
 
+## 5sexies. Feature batches A/B/C (2026-10-29, same session as 5quinquies)
+
+After the write-up audit he asked for new features "to cover more of what I meet in
+CTFs", plus the Volatility page. I proposed three batches and he answered **"Tout, dans
+cet ordre"** - so A, then B, then C, one commit per feature, each with tests and a
+fixture carrying a fake `CYBN{...}` flag.
+
+### Done
+
+| Feature | What it does | Commit |
+|---|---|---|
+| Volatility page | interactive vol2+vol3 cheat sheet in the web UI, commands filled in with his file name / profile, using his aliases (`vol`, `vol2`) | `c7adae1` |
+| `ctfc office` | VBA macros out of OLE2 (.doc) and OOXML (.docm), MS-OVBA decompression, then Code Lens | `43d9c01` |
+| `ctfc pdf` | actions, JavaScript, embedded files, **earlier revisions** (the redaction failure), 5 stream filters | `4fa0a84` |
+| `ctfc stego` | our own LSB extraction for PNG/BMP (bit plane x channels x direction x bit order) | `6a98ef7` |
+| `ctfc git` | blobs in the history but not in the current tree, plus truly unreachable ones | `80daea8` |
+| `ctfc sqlite` | rows carved out of freelist pages and in-page free space | `58463ed` |
+| `ctfc jwt` | alg=none, HMAC secret from the word list, jwk/jku/kid tricks, + a web tab | `89b10fd` |
+| `ctfc time` | a number read as a date across Unix / FILETIME / WebKit / Mac / DOS | (lot C) |
+| `ctfc zip` | ZipCrypto vs WinZip AES (different attacks!), CRC32 recovery of 1-3 byte files, header mismatches | (lot C) |
+| `ctfc hive` | regf parser, the keys that matter, and the boot key from `Control\Lsa` class names | (lot C) |
+
+### Still open from lot C
+
+1. **PE triage** (`ctfc pe`): sections with per-section entropy, imports, suspicious
+   API list, overlay data after the last section, Rich header. Partly covered today by
+   the `diec` tool suggestion.
+2. **A real `.evtx` parser**: Security 4688 command lines and PowerShell 4104 script
+   blocks. Binary XML is a chunk of work; `psenc` already gets the command line out of
+   an `.evtx` without it (see 5quinquies), which is what the challenges actually need.
+3. **Protobuf in `auto` chains**: the wire format is self-describing enough to dump
+   field numbers and types with no `.proto`.
+
+### Decisions worth keeping
+
+- **`ctfc hive` stops before the NT hashes on purpose.** Decrypting them needs the boot
+  key plus RC4/AES over the SAM's F and V structures, and there is no genuine SAM here
+  to verify against. It prints the `samdump2` / `secretsdump.py` command instead. If you
+  ever get a real SAM+SYSTEM pair, that is the moment to write it - not before.
+- **`ctfc git`: "unreachable" was the wrong question.** The commit that added a removed
+  secret is still an ancestor of the branch, so `git fsck` says nothing. The right
+  question is "in the history but not in any branch's current tree".
+- **`ctfc sqlite`: Debian's SQLite defaults `secure_delete` to ON**, so a database made
+  on this machine really is wiped. A browser's or a phone app's is not. The fixture sets
+  the pragma OFF, and the report explains the difference when a freelist carves to
+  nothing.
+- **ZipCrypto and WinZip AES need opposite attacks**, and AE-2 zeroes the CRC field -
+  which is exactly why the short-file CRC trick cannot work on an AES archive.
+- The test that guards `detect`'s "Apply" targets now **reads the tab list out of
+  index.html** instead of hard-coding it, so it cannot drift as tabs are added.
+- Every format reader raises its own error (`CfbError`, `OfficeError`, `PdfError`,
+  `StegoError`, `GitError`, `SqliteError`, `JwtError`, `HiveError`, `ZipError`) and they
+  are **all registered on the Flask app**, so the web UI gets a 400 with the reason
+  instead of a 500.
+
 ## 6bis. The improvement ideas (all five done)
 
 Order proposed, cheapest and most useful first. Each one ends with tests, a demo command and a
@@ -541,6 +596,18 @@ ctfc pcap tests/fixtures/audit_radius.pcap          # recovers the RADIUS PAP pa
 ctfc pcap tests/fixtures/audit_usb_keyboard.pcap    # reads what was typed on the USB keyboard
 ctfc pcap tests/fixtures/audit_mail_imap.pcap       # the e-mail body (ZIP password) + the attachment
 ctfc auto tests/fixtures/audit_evtx_dropper.evtx    # PowerShell -enc hidden as UTF-16LE in the log
+ctfc office tests/fixtures/audit_macro.doc         # VBA macro -> Code Lens -> the flag
+ctfc office tests/fixtures/audit_macro.docm        # the same, inside a .docm (+ remote template)
+ctfc pdf tests/fixtures/audit_malicious.pdf        # three flags: revision, embedded file, JS
+ctfc pdf tests/fixtures/audit_malicious.pdf --extract /tmp/pdfout && ctfc scan /tmp/pdfout
+ctfc stego tests/fixtures/audit_lsb.png --show-code   # LSB in the red channel
+ctfc sqlite tests/fixtures/audit_notes.sqlite      # the deleted rows
+ctfc zip tests/fixtures/audit_zipcrypto.zip        # ZipCrypto + the CRC32 of a short file
+ctfc git <a folder with a .git>                    # the secret that was committed then removed
+ctfc jwt <token> --show-code                       # alg=none / weak HMAC secret
+ctfc time 133476575820000000                       # Windows FILETIME
+ctfc hive <a SYSTEM hive>                          # the boot key
+ctfc hive <NTUSER.DAT> --key 'Microsoft\Windows\CurrentVersion\Run'
 ctfc radius hex:<User-Password> --authenticator hex:<16 bytes>   # the paste-two-blobs path
 ctfc tools tests/fixtures/audit_zipcrypto.zip       # prints the ready-to-run bkcrack command
 ctfc scan tests/fixtures --min-interest 0.9
