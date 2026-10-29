@@ -724,6 +724,37 @@ def print_pe(console: Console, report) -> None:
         console.print(f"[cyan]*[/] {safe(note)}")
 
 
+def print_evtx(console: Console, report, show_all: bool = False) -> None:
+    """`ctfc evtx`: the records worth reading, then all of them with --all."""
+    console.print(f"[cyan]*[/] {report.chunks} chunk(s), {len(report.records)} record(s)")
+    shown = report.records if show_all else report.interesting
+    if shown:
+        table = Table(
+            title="every record" if show_all else "records holding something",
+            expand=True,
+            show_lines=True,
+        )
+        table.add_column("#", justify="right", width=7)
+        table.add_column("when", width=22)
+        table.add_column("what is in it", ratio=5)
+        for record in shown:
+            lines = []
+            if record.flags:
+                lines.append("[bold green]" + safe(", ".join(record.flags), 90) + "[/]")
+            if record.secrets:
+                lines.append("[bold]" + safe("; ".join(record.secrets), 90) + "[/]")
+            if record.command:
+                lines.append("[yellow]decoded command:[/] " + safe(record.command, 300))
+            lines.append("[dim]" + safe(record.text, 200) + "[/]")
+            table.add_row(str(record.number), record.when, "\n".join(lines))
+        console.print(table)
+    elif not show_all:
+        console.print("[yellow]No record holds a flag, a credential or an encoded command.[/]")
+        console.print("Use --all to list every record and read them yourself.")
+    for note in report.notes:
+        console.print(f"[cyan]*[/] {safe(note)}")
+
+
 def print_radius(console: Console, found, had_secret: bool) -> None:
     """`ctfc radius`: the shared secret(s) that decrypted the PAP password."""
     if not found:

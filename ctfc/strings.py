@@ -213,6 +213,14 @@ EN: dict[str, str] = {
     ),
     "arg_repo": "the repository folder (or the .git folder itself)",
     "opt_git_extract": "write every recovered blob into this folder (then: ctfc scan)",
+    "cmd_evtx": "read a Windows event log: records, timestamps, and what they carry",
+    "cmd_evtx_ex": (
+        "examples: ctfc evtx Security.evtx  |  ctfc evtx System.evtx --all. "
+        "Reads the records and their strings, not the binary XML: use `evtx_dump` for "
+        "the full XML."
+    ),
+    "arg_evtx": "the event log (.evtx) - a path, or -",
+    "opt_evtx_all": "list every record, not only the ones holding something",
     "cmd_pe": "triage a Windows executable: sections, imports, packing, overlay",
     "cmd_pe_ex": (
         "examples: ctfc pe sample.exe  |  ctfc pe dropper.exe --extract ./out && ctfc scan ./out. "

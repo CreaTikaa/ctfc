@@ -146,6 +146,10 @@ def build_parser() -> argparse.ArgumentParser:
     p = add("sqlite")
     p.add_argument("input", help=t("arg_database"))
 
+    p = add("evtx")
+    p.add_argument("input", help=t("arg_evtx"))
+    p.add_argument("--all", action="store_true", help=t("opt_evtx_all"))
+
     p = add("pe")
     p.add_argument("input", help=t("arg_executable"))
     p.add_argument("--extract", help=t("opt_pe_extract"))
@@ -830,6 +834,24 @@ def cmd_jwt(args: argparse.Namespace, config: Config, console: Console) -> int:
     return 0 if report.findings else 1
 
 
+def cmd_evtx(args: argparse.Namespace, config: Config, console: Console) -> int:
+    """Read a Windows event log: records, timestamps, and what they carry."""
+    from ctfc.core import evtx
+
+    inp = parse_input(args.input, decode_bare=False)
+    report = evtx.analyse(inp.data, flagset=flagset_from(config))
+    summary = [
+        f"#{record.number} {record.when}: {record.text[:60]}" for record in report.interesting[:4]
+    ]
+    remember(args, config, inp.data, args.input, summary=summary)
+    if args.json:
+        print(json.dumps({"input": input_to_dict(inp), **report.to_dict()}, indent=2))
+        return 0 if report.records else 1
+    render.print_input_notes(console, inp)
+    render.print_evtx(console, report, show_all=args.all)
+    return 0 if report.records else 1
+
+
 def cmd_pe(args: argparse.Namespace, config: Config, console: Console) -> int:
     """Triage a Windows executable: sections, imports, packing, overlay."""
     from ctfc.core import pe as pe_module
@@ -1304,6 +1326,7 @@ def main(argv: list[str] | None = None) -> int:
         "zip": cmd_zip,
         "hive": cmd_hive,
         "pe": cmd_pe,
+        "evtx": cmd_evtx,
         "pcap": cmd_pcap,
         "radius": cmd_radius,
         "recipe": cmd_recipe,

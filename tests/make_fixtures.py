@@ -1324,6 +1324,50 @@ def write_audit_fixtures() -> None:
     header = struct.pack("<IHHiIII", 0xA1B2C3D4, 2, 4, 0, 0, 65535, 1)
     write("audit_radius.pcap", header + pcap_packet(frame, 1700000500))
 
+    # 15. A Windows event log with real chunk and record framing: a logon, a
+    #     PowerShell -EncodedCommand carrying the flag, and a service that logged
+    #     a password. Written from the format description, not by Windows.
+    def evtx_record(number: int, timestamp: int, strings: list[str]) -> bytes:
+        body = b"".join(text.encode("utf-16-le") + b"\x00\x00" for text in strings)
+        size = 24 + len(body) + 4  # header, body, and the trailing size
+        return (
+            b"\x2a\x2a\x00\x00"
+            + struct.pack("<I", size)
+            + struct.pack("<Q", number)
+            + struct.pack("<Q", timestamp)
+            + body
+            + struct.pack("<I", size)
+        )
+
+    evtx_script = "Write-Host 'CYBN{fixture_evtx_record}'"
+    evtx_encoded = base64.b64encode(evtx_script.encode("utf-16-le")).decode()
+    base_time = 133476575820000000  # a FILETIME in December 2023
+    evtx_records = b"".join(
+        [
+            evtx_record(
+                1,
+                base_time,
+                ["Microsoft-Windows-Security-Auditing", "alice", "C:\\Windows\\System32\\cmd.exe"],
+            ),
+            evtx_record(
+                2,
+                base_time + 10_000_000,
+                ["Microsoft-Windows-PowerShell", f"powershell.exe -NoProfile -enc {evtx_encoded}"],
+            ),
+            evtx_record(
+                3, base_time + 20_000_000, ["Service Control Manager", "db_password = sup3rs3cret"]
+            ),
+        ]
+    )
+    evtx_chunk = bytearray(65536)
+    evtx_chunk[0:8] = b"ElfChnk\x00"
+    evtx_chunk[512 : 512 + len(evtx_records)] = evtx_records
+    evtx_header = bytearray(4096)
+    evtx_header[0:8] = b"ElfFile\x00"
+    evtx_header[24:32] = struct.pack("<Q", 4)  # the next record number
+    evtx_header[42:44] = struct.pack("<H", 1)  # one chunk
+    write("audit_security.evtx", bytes(evtx_header) + bytes(evtx_chunk))
+
     # 14. A SQLite database with deleted rows still recoverable. `secure_delete`
     #     is OFF, as it is in a browser's or a phone app's database - which is
     #     what a challenge hands you. Note that Debian's own SQLite defaults it
