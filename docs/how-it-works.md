@@ -874,3 +874,85 @@ embedded CyberChef inside the ctfc wheel when `make vendor` was run - plus an
 the "day of the CTF" page (`docs/day-of-the-ctf.md`). The wheels match the
 machine that built them (pycryptodome has compiled code):
 `BUNDLE_PLATFORM=win_amd64 make bundle` adds the binary wheels of another one.
+
+## 14. Captures (`ctfc/core/pcap.py` and friends)
+
+A forensics flag is very often *inside* a capture. `ctfc pcap <file>` reads one
+with the standard library only - both formats are simple enough to parse by hand
+- and then hands every payload it finds to the usual decoding chains, so the
+flag is printed rather than merely extracted.
+
+```
+classic pcap: a 24-byte global header, then (16-byte header + bytes) per packet
+pcapng:       a chain of blocks (type, length, body, length again)
+```
+
+What happens next depends on the capture's **link type**, which is the field
+that says what the frames are. This matters more than it sounds: a capture of a
+USB bus is not broken Ethernet, it is a different thing entirely.
+
+### Network captures
+
+Ethernet -> IP(v4/v6) -> TCP/UDP is walked by hand. TCP streams are reassembled
+by sequence number (lowest wins, gaps are reported), which is what makes an HTTP
+body readable again when it was split across packets. Then:
+
+- **HTTP**: request lines and response bodies, with `Content-Length`, chunked
+  transfer-encoding and `Content-Encoding: gzip/deflate` undone. A POST body is
+  usually the exfiltration.
+- **Mail** (`ctfc/core/mail.py`): IMAP, SMTP and POP3 carry whole RFC 822
+  messages. Finding where one starts and stops is the fiddly part, because each
+  protocol frames it differently - the IMAP `{N}` literal states the exact size,
+  SMTP `DATA` and POP3 `RETR` end at a lone dot on its own line. The MIME tree is
+  then parsed with the standard library's `email` package and every part decoded
+  out of base64 / quoted-printable. **Bodies are kept as well as attachments**:
+  the password of an attached ZIP is routinely written in the HTML next to it.
+  An attachment's file name comes from the sample, so `--extract` reduces it to a
+  plain basename before writing it.
+- **DNS**: a tunnel carries the payload in the subdomain labels. Tools differ, so
+  the queries are read generally and the likely variants all offered (one label
+  per query, several labels, a leading sequence counter dropped).
+- **RADIUS** (`ctfc/core/radius.py`): an Access-Request hides the PAP password
+  with RFC 2865 section 5.2 - the password XORed with a chain of
+  `MD5(secret + previous block)`. That is not a cipher, so the only unknown is
+  the shared secret, and in practice it is a weak well-known word
+  (`testing123` is the FreeRADIUS default). ctfc tries the common ones and then
+  its embedded password list, so a capture alone yields the password. `ctfc
+  radius` does the same from the two blobs if you only have those.
+- Anything else is handed over as a raw stream, with a note saying so.
+
+### USB captures (`ctfc/core/usb.py`)
+
+Link types 189, 220 (usbmon, Linux) and 249 (USBPcap, Windows) hold no network
+traffic at all, so the walk above is skipped. A standard "boot protocol" keyboard
+sends an 8-byte report whenever the set of held keys changes:
+
+```
+byte 0   modifiers as bit flags (0x02 = left shift, 0x20 = right shift, ...)
+byte 1   reserved, always 0
+byte 2-7 up to six HID usage codes of the keys currently held
+```
+
+A keycode is **not** ASCII: `0x04` is "a", `0x1E` is "1", `0x28` is Enter.
+Releasing every key sends eight zero bytes, which is why a capture is half
+zeros. The text comes back by walking the reports in order through the HID usage
+table (page 0x07), the shift flag choosing between the two characters printed on
+the key. Two details matter in practice: **Backspace is applied as a real
+deletion**, because authors type a wrong character on purpose, and reports are
+grouped per device, so a keyboard plus a mouse - or two keyboards - do not
+interleave into nonsense. The pseudo-header in front of each report is stripped
+first (48 or 64 fixed bytes for usbmon; USBPcap's header states its own length).
+
+### A command line hidden in a binary (`psenc`)
+
+Windows writes its event logs and registry values in **UTF-16LE**, so a dropper's
+`powershell.exe -enc <base64>` recorded in an `.evtx` is invisible to an ASCII
+strings pass, and the `utf16le` decoder cannot help either - it needs the whole
+input to be UTF-16LE, not an island of it inside binary noise. The `psenc`
+decoder searches three views of the data (the raw bytes, and UTF-16LE at both
+byte alignments) for any abbreviation of `-EncodedCommand` - PowerShell accepts
+`-e` through `-encodedcommand` - then base64-decodes what follows and reads it as
+UTF-16LE source. A match is kept only when the result is readable **ASCII**:
+random bytes also decode as UTF-16LE, and land on printable Unicode letters often
+enough that `str.isprintable()` alone would let them through. Being a normal
+registry entry, it works inside `auto`'s chains, in recipes and in codegen.

@@ -411,6 +411,62 @@ B `5253c9a`, H `3b89781`, C `1015e52`. All verified against the real tools (open
 cryptsetup, zip). `core/repair.py` has content validators (7z start-header CRC32,
 xz/png/zip/elf/luks), so a pasted header names ONE format instead of a list.
 
+## 5quinquies. Second audit: against *published* CTF write-ups (2026-10-29)
+
+After the user's own challenges were all covered, he asked to check ctfc against public
+forensics write-ups ("HTB, Tales of Eldoria, 0xFun, etc.") and add whatever was missing.
+The write-ups reviewed were HTB **Cyber Apocalypse 2025 "Tales from Eldoria"** (all five
+forensics challenges) plus the recurring USB-keystroke genre (HTB Cyber Apocalypse 2021
+"Key Mission", irisCTF 2025 "deldeldel", UMDCTF 2022, and the HackTricks page on it).
+
+### Tales from Eldoria, challenge by challenge
+
+| Challenge | Artefact | ctfc |
+|---|---|---|
+| A new Hire | base64 in a `client.py` | already fine (`auto` / `lens`) |
+| Cave Expedition | `.evtx` logs + encoded PowerShell + double XOR | script half already had a fixture (`writeup_cave_*`); **the `.evtx` half was the gap** -> `psenc` |
+| ToolPie | pcap -> HTTP POST -> bz2 -> marshal -> AES-CBC | already fine (`pcap` + `auto` + the layout solver); the marshal/.pyc step stays out (hard rule 3) |
+| Silent Trap | pcap of **IMAP**, ZIP attachment, password in the HTML body, RC4 C2 | RC4 was fine, **mail extraction was the gap** -> `core/mail.py` |
+| Stealth Invasion | Windows memory dump + Volatility 3 | **deliberately out of scope** (CLAUDE.md section 2); ctfc identifies and points at the tool |
+
+### What was added (3 commits, all pushed)
+
+1. **USB keystrokes** (`core/usb.py`): the clearest gap of all - ctfc produced *nothing*
+   for a USB capture, because a usbmon frame is not Ethernet so the IP/TCP walk found no
+   packets at all. Decodes HID boot-protocol reports (8 bytes: modifiers, reserved, six
+   usage codes) through the usage table, strips the usbmon 48/64-byte or USBPcap
+   self-declaring pseudo-header, applies Backspace as a real deletion, toggles Caps Lock,
+   and groups per device. Link types 189/220/249 now take that path in `pcap.analyse()`.
+   Fixture `audit_usb_keyboard.pcap` (types a flag with a corrected typo) -> 0.97.
+2. **Mail** (`core/mail.py`): IMAP `{N}` literal / SMTP `DATA` / POP3 dot framing, then
+   the stdlib `email` package for the MIME tree, decoding every part. **Bodies are kept
+   too** - that is where the ZIP password lives. `--extract` reduces an attachment's name
+   to a plain basename (the name comes from the sample). Fixture `audit_mail_imap.pcap`.
+3. **`psenc` decoder** (`core/encodings.py`): finds `powershell -enc <base64>` in the raw
+   bytes *and* in UTF-16LE at both alignments, which is what makes it work on an `.evtx`.
+   Keeps a match only if the decoded script is readable **ASCII** (random bytes decode as
+   UTF-16LE and hit printable Unicode often enough to fool `str.isprintable()`). Being a
+   registry entry it works in `auto`, recipes and codegen for free. Fixture
+   `audit_evtx_dropper.evtx` -> `psenc -> extract_base64` -> flag at 0.97. **Note:** this
+   changed the expected chain of the old `powershell_encoded.txt` fixture from
+   `extract_base64 -> utf16le` to the single `psenc` step, in `tests/test_auto.py`.
+
+Also this session: the **web RADIUS tab** he asked for (`/api/radius` + `#options-radius`,
+reusing the generic candidate cards), and section 14 of `docs/how-it-works.md`, which
+documents the whole capture side (it was undocumented before).
+
+### Candidates NOT built, and why
+
+- **Volatility / memory dumps**: out of scope by CLAUDE.md section 2. `ctfc keys` and
+  `ctfc scan` already get something useful out of a dump; a profile-aware parser is a
+  different project. If he ever wants it, it belongs behind a tool-bridge entry.
+- **marshal / .pyc loading** (ToolPie step 3): hard rule 3 forbids `pickle.loads` and
+  friends on samples. A static `.pyc` *header* reader would be fine; running marshal is not.
+- **Mouse-movement drawing** from a USB capture: doable (the reports are 3-5 bytes) but it
+  needs a plot to be useful, and it shows up far less often than keyboards.
+- **A real `.evtx` parser**: `psenc` gets the command line out without one, which is what
+  the challenges actually need. A full parser is a lot of binary XML for little gain.
+
 ## 6bis. The improvement ideas (all five done)
 
 Order proposed, cheapest and most useful first. Each one ends with tests, a demo command and a
@@ -482,6 +538,9 @@ ctfc hash 482c811da5d5b4bc6d497ffa98491e38
 ctfc pcap tests/fixtures/capture.pcap
 ctfc pcap tests/fixtures/capture.pcap --extract /tmp/objs && ctfc scan /tmp/objs
 ctfc pcap tests/fixtures/audit_radius.pcap          # recovers the RADIUS PAP password on its own
+ctfc pcap tests/fixtures/audit_usb_keyboard.pcap    # reads what was typed on the USB keyboard
+ctfc pcap tests/fixtures/audit_mail_imap.pcap       # the e-mail body (ZIP password) + the attachment
+ctfc auto tests/fixtures/audit_evtx_dropper.evtx    # PowerShell -enc hidden as UTF-16LE in the log
 ctfc radius hex:<User-Password> --authenticator hex:<16 bytes>   # the paste-two-blobs path
 ctfc tools tests/fixtures/audit_zipcrypto.zip       # prints the ready-to-run bkcrack command
 ctfc scan tests/fixtures --min-interest 0.9
