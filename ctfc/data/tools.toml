@@ -290,3 +290,17 @@ suggest_when = ["magic.doc"]
 offline_safe = true
 install = "pipx install oletools"
 notes = "OLE2 document: flags macros, encryption and other risk indicators at a glance"
+
+# --- Known-plaintext attack on a ZipCrypto archive. ctfc works out the three
+# arguments (which entry, the plaintext magic, its offset in the ciphertext) and
+# only fires when it could; bkcrack then recovers the keys. See core/repair.py.
+
+[[tool]]
+id = "bkcrack"
+name = "bkcrack"
+kind = "local"
+command_template = ["bkcrack", "-C", "{input}", "-c", "{zip_entry}", "-x", "{bkcrack_offset}", "{bkcrack_plaintext}"]
+suggest_when = ["zip.known_plaintext"]
+offline_safe = true
+install = "https://github.com/kimci86/bkcrack/releases"
+notes = "traditional ZipCrypto only (not WinZip AES). Once it prints the keys: bkcrack -C file.zip -c entry -k <keys> -d out.bin"

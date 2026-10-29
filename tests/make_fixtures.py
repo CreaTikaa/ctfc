@@ -33,6 +33,91 @@ def write(name: str, data: bytes | str) -> None:
     print(f"  {name:32} {path.stat().st_size} bytes")
 
 
+def zipcrypto_encrypt(data: bytes, password: bytes, check_byte: int) -> bytes:
+    """Encrypt one entry with the traditional PKWARE ("ZipCrypto") cipher.
+
+    A 96-bit keystream state is seeded from the password, a 12-byte random header
+    (whose last byte is a known check value) is prepended, and every byte is XORed
+    with one keystream byte while the state is stirred by the *plaintext* byte.
+    This is exactly the stream bkcrack attacks given a little known plaintext.
+    """
+    keys = [0x12345678, 0x23456789, 0x34567890]
+
+    def update(byte: int) -> None:
+        keys[0] = zlib.crc32(bytes([byte]), keys[0]) & 0xFFFFFFFF
+        keys[1] = (keys[1] + (keys[0] & 0xFF)) & 0xFFFFFFFF
+        keys[1] = (keys[1] * 134775813 + 1) & 0xFFFFFFFF
+        keys[2] = zlib.crc32(bytes([keys[1] >> 24]), keys[2]) & 0xFFFFFFFF
+
+    def stream_byte() -> int:
+        temp = (keys[2] | 2) & 0xFFFF
+        return ((temp * (temp ^ 1)) >> 8) & 0xFF
+
+    for byte in password:
+        update(byte)
+    header = bytearray(RNG.randbytes(11)) + bytes([check_byte])
+    out = bytearray()
+    for byte in bytes(header) + data:
+        out.append(byte ^ stream_byte())
+        update(byte)
+    return bytes(out)
+
+
+def zipcrypto_zip(entry_name: str, content: bytes, password: bytes) -> bytes:
+    """A single-entry ZIP encrypted with ZipCrypto, deflate-stored (method 8).
+
+    Written by hand because stdlib `zipfile` cannot produce ZipCrypto. The entry is
+    one uncompressed deflate block, so the content (a PNG here) is literally present
+    five bytes into the stream - the known-plaintext offset bkcrack needs.
+    """
+    raw = zlib.compressobj(0, zlib.DEFLATED, -zlib.MAX_WBITS)
+    deflated = raw.compress(content) + raw.flush()
+    crc = zlib.crc32(content) & 0xFFFFFFFF
+    encrypted = zipcrypto_encrypt(deflated, password, check_byte=crc >> 24)
+    name = entry_name.encode()
+    flag = 0x0001  # bit 0: the entry is encrypted
+    method = 8  # deflate
+    comp_size = len(encrypted)
+    local = struct.pack(
+        "<IHHHHHIIIHH",
+        0x04034B50,
+        20,
+        flag,
+        method,
+        0,
+        0,
+        crc,
+        comp_size,
+        len(content),
+        len(name),
+        0,
+    )
+    local += name + encrypted
+    central = struct.pack(
+        "<IHHHHHHIIIHHHHHII",
+        0x02014B50,
+        20,
+        20,
+        flag,
+        method,
+        0,
+        0,
+        crc,
+        comp_size,
+        len(content),
+        len(name),
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+    )
+    central += name
+    end = struct.pack("<IHHHHIIH", 0x06054B50, 0, 0, 1, 1, len(central), len(local), 0)
+    return local + central + end
+
+
 def evp_bytes_to_key(
     password: bytes, salt: bytes, key_len: int, iv_len: int
 ) -> tuple[bytes, bytes]:
@@ -982,6 +1067,12 @@ def write_audit_fixtures() -> None:
         "DefaultAccount:503:aad3b435b51404eeaad3b435b51404ee:31d6cfe0d16ae931b73c59d7e0c089c0:::\n"
         "samwiseg:1013:aad3b435b51404eeaad3b435b51404ee:dcd99365563e67eb8fbe8c9d83b0ca6c:::\n",
     )
+
+    # 6. ZipCrypto archive holding a PNG: the known-plaintext case for bkcrack.
+    #    The entry is deflate-stored, so the PNG magic is five bytes into the
+    #    ciphertext - which is exactly what ctfc works out for the bkcrack command.
+    png = gray_png()
+    write("audit_zipcrypto.zip", zipcrypto_zip("flag.png", png, b"s3cr3t"))
 
 
 def main() -> None:

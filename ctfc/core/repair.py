@@ -418,3 +418,90 @@ def _study_trailing(extra: bytes, base: int, report: RepairReport) -> None:
         report.carved.append(
             Carved(base, "unknown data", "bin", extra, "appended, with a pasted header")
         )
+
+
+# ---------------------------------------------------------------------------
+# ZipCrypto known-plaintext (the bkcrack setup)
+# ---------------------------------------------------------------------------
+#
+# A ZIP encrypted with the traditional PKWARE cipher ("ZipCrypto") is broken by a
+# known-plaintext attack (bkcrack) given >= 8 bytes of plaintext at a known offset
+# in the ciphertext stream. We never run the attack; we only work out the three
+# arguments bkcrack needs, which is the fiddly part:
+#
+#   - WHICH entry: the first encrypted one whose name says what it is (a .png...).
+#   - WHICH plaintext: that file type's own magic bytes (a PNG always starts the
+#     same way), so the plaintext is known without ever seeing the file.
+#   - AT WHICH offset in the ciphertext: a *stored* entry (method 0) is the raw
+#     file, so the magic is at offset 0. A *deflated* entry (method 8) of already
+#     compressed data (a PNG) becomes one uncompressed deflate block, whose 5-byte
+#     block header sits before the data, so the magic is at offset 5.
+#
+# AES-encrypted ZIPs (method 99, WinZip AES) are NOT vulnerable and are skipped.
+
+LOCAL_FILE_HEADER = b"PK\x03\x04"
+# The best-known opening bytes of a file type, longer than its bare magic when the
+# bytes that follow are just as predictable (a PNG's IHDR length and chunk name).
+PLAINTEXT_PREFIXES = {
+    "png": bytes.fromhex("89504e470d0a1a0a0000000d49484452"),  # signature + IHDR length + "IHDR"
+}
+MIN_PLAINTEXT = 8  # bkcrack needs at least this many known bytes
+
+
+@dataclass
+class ZipPlaintext:
+    """Everything bkcrack needs for one ZipCrypto entry (nothing is run here)."""
+
+    entry: str  # the inner file name, e.g. "flag.png"
+    offset: int  # byte offset of the known plaintext in the ciphertext stream
+    plaintext: bytes  # the known bytes themselves
+    method: int  # 0 = stored, 8 = deflated
+
+    @property
+    def plaintext_hex(self) -> str:
+        return self.plaintext.hex()
+
+
+def _ext_magics() -> dict[str, bytes]:
+    """extension -> opening bytes, from the signature table, for strong (>=8 byte) magics."""
+    magics: dict[str, bytes] = {}
+    for sig in load_signatures():
+        if sig.offset == 0 and not sig.weak and len(sig.magic) >= MIN_PLAINTEXT:
+            magics.setdefault(sig.ext, sig.magic)
+    magics.update(PLAINTEXT_PREFIXES)  # a longer, hand-picked prefix wins
+    return magics
+
+
+def zipcrypto_known_plaintext(data: bytes) -> ZipPlaintext | None:
+    """Find a ZipCrypto entry whose plaintext is guessable from its file extension.
+
+    Returns the bkcrack parameters for the first such entry, or None when the ZIP
+    has no encrypted entry we can guess a long-enough plaintext for.
+    """
+    if not data.startswith(LOCAL_FILE_HEADER):
+        return None
+    magics = _ext_magics()
+    position = 0
+    while True:
+        position = data.find(LOCAL_FILE_HEADER, position)
+        if position < 0 or position + 30 > len(data):
+            return None
+        flag = int.from_bytes(data[position + 6 : position + 8], "little")
+        method = int.from_bytes(data[position + 8 : position + 10], "little")
+        name_length = int.from_bytes(data[position + 26 : position + 28], "little")
+        name = data[position + 30 : position + 30 + name_length]
+        position += 4  # keep scanning for the next header even if this one is unusable
+        encrypted = bool(flag & 0x1)
+        if not encrypted or method not in (0, 8) or not name:
+            continue  # method 99 = WinZip AES: not a ZipCrypto target
+        ext = name.rsplit(b".", 1)[-1].decode("ascii", "replace").lower()
+        magic = magics.get(ext)
+        if magic is None or len(magic) < MIN_PLAINTEXT:
+            continue
+        offset = 5 if method == 8 else 0  # deflate stored-block header is 5 bytes
+        return ZipPlaintext(
+            entry=name.decode("utf-8", "replace"),
+            offset=offset,
+            plaintext=magic,
+            method=method,
+        )

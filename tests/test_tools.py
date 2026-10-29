@@ -3,6 +3,7 @@
 import fnmatch
 import shutil
 import subprocess
+from pathlib import Path
 
 import pytest
 
@@ -27,6 +28,7 @@ def known_rule_ids() -> set[str]:
         "entropy.mixed",
         "xor.simple",
         "xor.repeating",
+        "zip.known_plaintext",
         "aes.ecb",
         "block8.ecb",
         "length.key16",
@@ -292,3 +294,23 @@ def test_john_extractors_fire_on_their_file_magic(no_embedded_copy):
         found = suggest([Signal(rule, 0.95)], {"input": "f.bin"}, limit=10)
         ids = {item.tool.id for item in found}
         assert tool_id in ids, f"{rule} should suggest {tool_id}, got {ids}"
+
+
+def test_bkcrack_command_is_deduced_for_a_zipcrypto_png(no_embedded_copy):
+    """gather() reads the ZIP and fills bkcrack's entry, offset and plaintext itself."""
+    data = Path("tests/fixtures/audit_zipcrypto.zip").read_bytes()
+    signals, values = gather(data, "audit_zipcrypto.zip")
+    assert any(s.rule == "zip.known_plaintext" for s in signals)
+    found = suggest(signals, values, limit=10)
+    bk = next(item for item in found if item.tool.id == "bkcrack")
+    assert bk.command == [
+        "bkcrack",
+        "-C",
+        "audit_zipcrypto.zip",
+        "-c",
+        "flag.png",
+        "-x",
+        "5",
+        "89504e470d0a1a0a0000000d49484452",
+    ]
+    assert bk.placeholders == []

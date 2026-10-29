@@ -161,6 +161,9 @@ PLACEHOLDER_HINTS = {
     "{john_format}": "the john format name",
     "{modulus}": "the RSA modulus",
     "{password}": "the passphrase (ctfc sym --passwords may find it first)",
+    "{zip_entry}": "the encrypted entry inside the ZIP",
+    "{bkcrack_offset}": "the offset of the known plaintext in the ciphertext",
+    "{bkcrack_plaintext}": "the known plaintext bytes, as hex",
 }
 
 
@@ -305,6 +308,25 @@ def gather(data: bytes, input_path: str | None, flagset=None) -> tuple[list[Sign
         total = min(0.95, sum(match.confidence for match in matches))
         names = ", ".join(f"{m.format.name} {m.confidence:.2f}" for m in matches[:3])
         signals.append(Signal(f"hash.{best.id}", total, f"looks like a hash ({names})"))
+
+    # A ZipCrypto archive whose encrypted entry we can guess the plaintext for:
+    # bkcrack can break it, and we can fill its three fiddly arguments ourselves.
+    from ctfc.core.repair import zipcrypto_known_plaintext
+
+    plan = zipcrypto_known_plaintext(data)
+    if plan is not None:
+        values["zip_entry"] = plan.entry
+        values["bkcrack_offset"] = plan.offset
+        values["bkcrack_plaintext"] = plan.plaintext_hex
+        how = "stored" if plan.method == 0 else "deflated"
+        signals.append(
+            Signal(
+                "zip.known_plaintext",
+                0.9,
+                f"encrypted entry {plan.entry!r} ({how}): its {len(plan.plaintext)}-byte "
+                f"magic is known plaintext at offset {plan.offset}",
+            )
+        )
 
     candidates = auto_decode(data, flagset=flagset, top_n=1)
     if candidates and candidates[0].cyberchef:
