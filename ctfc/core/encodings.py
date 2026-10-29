@@ -589,6 +589,22 @@ def powershell_enc_decode(data: bytes) -> bytes:
     return script
 
 
+def protobuf_ok(data: bytes) -> bool:
+    """Is this a protobuf message? Strict, because the format decodes by accident."""
+    from ctfc.core.protobuf import looks_like_protobuf
+
+    return looks_like_protobuf(data)
+
+
+def protobuf_decode(data: bytes) -> bytes:
+    from ctfc.core.protobuf import ProtobufError, decode_to_text
+
+    try:
+        return decode_to_text(data)
+    except ProtobufError as exc:
+        raise DecodeError(str(exc)) from exc
+
+
 def zero_width_chars(data: bytes) -> list[str]:
     """Return the zero-width characters of the text, in order."""
     try:
@@ -910,6 +926,14 @@ DECODERS: list[Decoder] = [
         python="data = rot47(data)",
         helper=ROT47_HELPER,
         cyberchef="ROT47(47)",
+    ),
+    Decoder(
+        name="protobuf",
+        label="protobuf message (decoded without a .proto, like protoc --decode_raw)",
+        decode=protobuf_decode,
+        applicable=protobuf_ok,
+        helper="# see ctfc/core/protobuf.py, or run: protoc --decode_raw < message.bin",
+        python="from ctfc.core.protobuf import decode_to_text\ndata = decode_to_text(data)",
     ),
     Decoder(
         name="psenc",

@@ -1324,6 +1324,36 @@ def write_audit_fixtures() -> None:
     header = struct.pack("<IHHiIII", 0xA1B2C3D4, 2, 4, 0, 0, 65535, 1)
     write("audit_radius.pcap", header + pcap_packet(frame, 1700000500))
 
+    # 16. A protobuf message with no .proto: a varint, a string holding the flag,
+    #     a nested message and a fixed32 - decodable from the wire format alone.
+    def pb_varint(number: int) -> bytes:
+        out = bytearray()
+        while True:
+            seven = number & 0x7F
+            number >>= 7
+            out.append(seven | 0x80 if number else seven)
+            if not number:
+                return bytes(out)
+
+    def pb_tag(field_number: int, wire_type: int) -> bytes:
+        return pb_varint((field_number << 3) | wire_type)
+
+    pb_flag = b"CYBN{fixture_protobuf}"
+    pb_inner = pb_tag(1, 0) + pb_varint(2024) + pb_tag(2, 0) + pb_varint(7)
+    write(
+        "audit_message.pb",
+        pb_tag(1, 0)
+        + pb_varint(42)
+        + pb_tag(2, 2)
+        + pb_varint(len(pb_flag))
+        + pb_flag
+        + pb_tag(3, 2)
+        + pb_varint(len(pb_inner))
+        + pb_inner
+        + pb_tag(4, 5)
+        + (1234).to_bytes(4, "little"),
+    )
+
     # 15. A Windows event log with real chunk and record framing: a logon, a
     #     PowerShell -EncodedCommand carrying the flag, and a service that logged
     #     a password. Written from the format description, not by Windows.
