@@ -1142,3 +1142,41 @@ Three practical details the module handles:
   also reveals the length. Lengths that land inside the same block produce the
   *same* digest and differ only in the glue, and the report says so, because
   "they are all identical" otherwise looks like a bug.
+
+## 18. The fuzz harness (`tests/fuzz_formats.py`)
+
+A dozen modules read bytes that came from a challenge, which is to say from a
+stranger. Each is written to fail politely, and the harness is what turns that
+intention into a checked property:
+
+> given any bytes at all, a reader either returns a report or raises **its own**
+> error - never `IndexError`, `struct.error`, `zlib.error`, a `MemoryError` from
+> a length field that claimed four gigabytes, and never a hang.
+
+The fixtures are the seed corpus, because they already have the right shapes.
+Each round picks one, mutates it with a seeded RNG, and calls one reader under a
+ten-second alarm. The mutations are the ones that actually break parsers: flip a
+few bytes, cut the file short, keep only the magic number, set a 32-bit field to
+`0xffffffff`, zero a range, duplicate a chunk, swap two chunks, splice in noise.
+Every failure prints the reader, the fixture, the mutation and the seed, which is
+enough to reproduce it on its own.
+
+`make test` runs a short fixed-seed sweep (30 rounds per reader, about two
+seconds); `make fuzz` runs the long one, and `SEED=7 make fuzz` a different one.
+
+It paid for itself immediately. Three real bugs on the first sweeps:
+
+- **`office`** let `CfbError`, `zlib.error`, `ValueError` and
+  `UnicodeDecodeError` escape from a damaged `.doc` or `.docm` - a 500 in the web
+  UI instead of "this document is damaged". They are now caught and re-raised as
+  `OfficeError`, with the original reason kept.
+- **`stego`** read past the end of the pixels when IHDR promised more rows than
+  the IDAT stream actually decoded to. It now analyses the rows that *are* there
+  and says so, which is also the more useful answer for a truncated PNG.
+- **`pcap`** zero-filled holes in a TCP stream using the sequence numbers, so one
+  flipped byte could claim a 4 GB hole: a 1.4 KB capture allocated four gigabytes
+  and then crawled through them. The gap is now capped, and the hole reported.
+
+The lesson is the one the harness was written for: "it is written defensively" is
+a claim about intent, and only mutation finds the three places where the intent
+did not hold.

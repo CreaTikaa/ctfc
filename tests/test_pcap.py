@@ -367,3 +367,30 @@ def test_constant_labels_are_dropped_at_both_ends():
     assert _drop_constant_labels(rows) == [["s001", "aa"], ["s002", "bb"], ["s003", "cc"]]
     assert _first_label_is_a_counter([["s001", "aa"], ["s002", "bb"], ["s003", "cc"]])
     assert not _first_label_is_a_counter([["MFRG"], ["GZDF"], ["MZTW"]])
+
+
+def test_a_wild_sequence_number_does_not_allocate_gigabytes():
+    """One flipped byte in a sequence number used to claim a 4 GB hole.
+
+    Found by tests/fuzz_formats.py (seed 1000783). Reassembly zero-fills a hole
+    so the bytes after it stay at the right offset; the cap is what stops a
+    corrupt capture from turning that into a memory bomb and a hang.
+    """
+    from ctfc.core.pcap import MAX_OBJECT, Packet, reassemble_tcp
+
+    def packet(number: int, sequence: int, payload: bytes) -> Packet:
+        return Packet(
+            number=number,
+            protocol="tcp",
+            source="10.0.0.1:1234",
+            destination="10.0.0.2:80",
+            sequence=sequence,
+            payload=payload,
+        )
+
+    streams = reassemble_tcp(
+        [packet(1, 1000, b"GET / HTTP/1.1\r\n\r\n"), packet(2, 1000 + 4_000_000_000, b"tail")]
+    )
+    assert len(streams) == 1
+    assert len(streams[0].data) <= MAX_OBJECT
+    assert streams[0].gaps  # the hole is reported, not glued over silently

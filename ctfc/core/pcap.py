@@ -325,6 +325,13 @@ def reassemble_tcp(packets: list[Packet]) -> list[Stream]:
         for offset in sorted(chunks):
             if offset > len(out):
                 gaps = True
+                # A hole is zero-filled so the bytes after it still land at the
+                # right place - but a corrupt (or spoofed) sequence number can
+                # claim a hole of gigabytes. Stop rather than allocate it: that
+                # one flipped byte would otherwise cost 4 GB of zeros and turn
+                # every later scan of the stream into a hang.
+                if offset > MAX_OBJECT:
+                    break
                 out.extend(b"\x00" * (offset - len(out)))
             piece = chunks[offset]
             out[offset : offset + len(piece)] = piece

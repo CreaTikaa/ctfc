@@ -188,6 +188,23 @@ def load_png(data: bytes) -> Image:
             "palette image: the bits live in the PLTE entries, not the pixels - "
             "the palette was expanded, so LSB results here are about the colours used"
         )
+    # A truncated or damaged IDAT decodes to fewer rows than IHDR promises. That
+    # is worth salvaging rather than refusing: the rows that did come out may
+    # still carry the message. What must not happen is trusting the header and
+    # reading past the end of the pixels.
+    row_samples = width * channels
+    rows = len(pixels) // row_samples if row_samples else 0
+    if rows < 1:
+        raise StegoError(
+            f"the IDAT stream decoded to {len(pixels)} bytes, not even one row of "
+            f"{row_samples}: the image data is damaged"
+        )
+    if rows < height:
+        notes.append(
+            f"the pixel data covers only {rows} of the {height} rows the header "
+            "declares (truncated or damaged file): the rows that are there were analysed"
+        )
+        height = rows
     return Image(
         width,
         height,

@@ -3,11 +3,12 @@
 
 PY := .venv/bin/python
 
-.PHONY: help venv test lint fmt serve fixtures vendor bundle
+.PHONY: help venv test fuzz lint fmt serve fixtures vendor bundle
 
 help:
 	@echo "make venv      create .venv and install ctfc + dev tools"
 	@echo "make test      run the test suite"
+	@echo "make fuzz      throw broken files at every format reader (long sweep)"
 	@echo "make lint      check the code with ruff"
 	@echo "make fmt       auto-format the code with ruff"
 	@echo "make fixtures  regenerate tests/fixtures/"
@@ -22,6 +23,14 @@ venv:
 
 test:
 	$(PY) -m pytest -q
+
+# A short fixed-seed sweep already runs inside `make test`; this is the long one.
+# SEED=7 make fuzz runs a different one.
+SEED ?= 1
+ROUNDS ?= 800
+
+fuzz:
+	$(PY) tests/fuzz_formats.py --rounds $(ROUNDS) --seed $(SEED)
 
 lint:
 	$(PY) -m ruff check .

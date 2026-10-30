@@ -25,6 +25,7 @@ from __future__ import annotations
 import io
 import re
 import zipfile
+import zlib
 from dataclasses import dataclass, field
 
 from ctfc.core import cfb
@@ -235,6 +236,22 @@ def _indicators(source: str) -> list[str]:
     return found
 
 
+# What `ZipFile.read()` throws at a corrupt entry: zipfile's own error, the OS's,
+# and zlib's when the deflate stream itself is broken. A damaged document is a
+# normal thing to be handed in forensics, so none of these may escape.
+# ValueError and UnicodeDecodeError come from zipfile itself on a corrupt central
+# directory (a negative seek, a file name that is not UTF-8).
+ZIP_READ_ERRORS = (
+    zipfile.BadZipFile,
+    OSError,
+    RuntimeError,
+    zlib.error,
+    EOFError,
+    ValueError,
+    UnicodeDecodeError,
+)
+
+
 def _externals(archive: zipfile.ZipFile) -> list[str]:
     """External relationship targets: a remote template or remote object."""
     targets: list[str] = []
@@ -243,7 +260,7 @@ def _externals(archive: zipfile.ZipFile) -> list[str]:
             continue
         try:
             body = archive.read(item)
-        except (zipfile.BadZipFile, OSError, RuntimeError):
+        except ZIP_READ_ERRORS:
             continue
         for pattern in (EXTERNAL_TARGET, EXTERNAL_TARGET_ALT):
             for match in pattern.finditer(body):
@@ -258,7 +275,12 @@ def analyse(data: bytes) -> OfficeReport:
     report = OfficeReport()
     if cfb.is_cfb(data):
         report.container = "ole2"
-        container = cfb.read(data)
+        try:
+            container = cfb.read(data)
+        except cfb.CfbError as exc:
+            # Keep the compound-file reason, but under this module's own error:
+            # the caller (CLI or web) then has one exception type to handle.
+            raise OfficeError(f"not a readable OLE2 document: {exc}") from exc
         report.streams = sorted(container.streams)
         report.macros = extract_macros(container)
         if any(name.lower() == "objectpool" for name in container.names):
@@ -270,15 +292,18 @@ def analyse(data: bytes) -> OfficeReport:
         report.container = "ooxml"
         try:
             archive = zipfile.ZipFile(io.BytesIO(data))
-        except (zipfile.BadZipFile, OSError) as exc:
+        except ZIP_READ_ERRORS as exc:
             raise OfficeError(f"not a readable OOXML file: {exc}") from exc
-        report.streams = sorted(item.filename for item in archive.infolist())
+        try:
+            report.streams = sorted(item.filename for item in archive.infolist())
+        except ZIP_READ_ERRORS as exc:
+            raise OfficeError(f"the OOXML central directory is damaged: {exc}") from exc
         report.externals = _externals(archive)
         project = [name for name in report.streams if name.lower().endswith("vbaproject.bin")]
         for name in project:
             try:
                 inner = cfb.read(archive.read(name))
-            except (cfb.CfbError, zipfile.BadZipFile, OSError, RuntimeError) as exc:
+            except (cfb.CfbError, *ZIP_READ_ERRORS) as exc:
                 report.notes.append(f"{name} could not be read: {exc}")
                 continue
             report.macros += [
