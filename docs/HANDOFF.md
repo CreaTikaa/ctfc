@@ -1,7 +1,8 @@
 # Handoff notes (for the next agent)
 
-Last update: 2026-10-28, **M8 done: every milestone of CLAUDE.md is built.** What is left is
-listed in section 5ter (open points) - ask the user before starting anything new.
+Last update: 2026-10-30. Every milestone of CLAUDE.md is built, both audits are closed, the
+A/B/C batches are done, and **lot D and the first half of lot E** of `docs/ideas.md` are done
+(section 5septies). What is left is in `docs/ideas.md`, ordered by value against effort.
 Read `CLAUDE.md` first, then this file.
 
 ## 1. Working agreement with the user
@@ -32,9 +33,10 @@ Read `CLAUDE.md` first, then this file.
 | M6 pipeline + CyberChef + tools | `69ae63c`..`78bf9b7` | recipes, verified CyberChef deep links, embedded CyberChef (`make vendor`), tool bridge, web Pipeline tab + Suggested tools strip (section 5) |
 | M7 classical + key hunting | `180633d`..`bcdd550` | classical.py, keyhunt.py, `ctfc classical`, `ctfc keys`, web Keys tab (section 5bis) |
 | M8 sessions + report + bundle | `5e35985`..this one | write-up lessons (`lens --against`), sessions, `ctfc report`, cheat sheet, `make bundle` (section 5ter) |
+| lot D + E (ideas.md 1 and 2.5) | `6b6424c`..`2d897c9` | `ctfc prng`, `ctfc extend`, `make fuzz`, `ctfc rsa --also`, `ctfc sig` (section 5septies) |
 
-643 tests pass, 1 skipped (`.venv/bin/python -m pytest -q`, ~40 s), `ruff check .` and `ruff format --check .`
-clean.
+1181 tests pass, 1 skipped (`.venv/bin/python -m pytest -q`, ~52 s), `ruff check .` and
+`ruff format --check .` clean. `make fuzz` (the long sweep) is clean on seeds 1, 3, 11 and 42.
 
 **Plan approval: the user waived it twice on 2026-10-27.** For M4: "tu peux directement commencer
 avec ton plan, pas besoin de me le présenter". For M5 and the improvement ideas that follow:
@@ -209,6 +211,24 @@ Known limitations / open points:
 - `tests/fixtures/*` is excluded from ruff in `pyproject.toml`: the Code Lens samples are data,
   deliberately written in obfuscated dropper style, and must stay byte-for-byte as they are.
 
+### Modules added in lot D and E (2026-10-30)
+
+- `core/prng.py`: MT19937 tempering/untempering, the recurrence written over the *sequence* of
+  state words (so the capture can start anywhere in a twist cycle), forwards and backwards, plus
+  `java.util.Random`. `parse_numbers()` is shared by the CLI, the web route and `detect`.
+- `core/hashext.py`: MD5 / SHA-1 / SHA-256 / SHA-512 compression functions and the padding rule,
+  an `Algorithm` table (block size, word size, endianness, length field), `forge()` and
+  `forge_range()`. `TRUNCATED` holds the digests that *look* extendable and are not.
+- `core/rsa_multi.py`: `Message`, `common_modulus()`, `hastad()`, `franklin_reiter()` with a small
+  polynomial-GCD-modulo-n implementation, and `solve_multi()` which picks the attack from the
+  shape of the material.
+- `core/signatures.py`: a `Curve` with add/multiply (double-and-add), `data/curves.toml`,
+  signature parsing (key=value lines, CSV, JSON, DER), `find_reuse()`, `recover()` with the four
+  sign variants, and `parse_public_point()` (PEM, SEC1, compressed, `x,y`).
+- `tests/fuzz_formats.py` + `tests/test_fuzz_formats.py`: the harness and the short sweep that
+  runs in `make test`. `READERS` is the table to extend when a new format reader is added -
+  **add the reader there in the same commit**, or it is silently untested.
+
 ## 5. M6 (done): recipes, CyberChef, external tools
 
 Commits `69ae63c` (core + CLI), `5bfad6d` (tests + fixes), `e377b5e` (web), and the
@@ -330,7 +350,19 @@ N: <heading per tool>`, command, findings, output, "To redo it by hand", CyberCh
 followed by a note; retries deduplicated; `fence()` outlasts backticks in the output.
 
 Cheat sheet: `ctfc/data/cheatsheet.md` (packaged; `docs/cheatsheet.md` points to it),
-`ctfc cheatsheet`, web tab with a tiny textContent-only Markdown renderer.
+`ctfc prng tests/fixtures/prng_mt19937.txt --show-code     # clones Python's random
+ctfc prng tests/fixtures/prng_java_nextint.txt           # java.util.Random seed
+ctfc extend $(python -c "import hashlib;print(hashlib.sha256(b'secretuser=guest').hexdigest())") \
+  --data 'text:user=guest' --append 'text:&admin=1' --secret-length 1-16
+ctfc rsa --key tests/fixtures/rsa_common_a.pub.pem --decrypt tests/fixtures/rsa_common_a.bin \
+  --also tests/fixtures/rsa_common_b.pub.pem=tests/fixtures/rsa_common_b.bin   # common modulus
+ctfc rsa --key tests/fixtures/rsa_broadcast_1.pub.pem --decrypt tests/fixtures/rsa_broadcast_1.bin \
+  --also tests/fixtures/rsa_broadcast_2.pub.pem=tests/fixtures/rsa_broadcast_2.bin \
+  --also tests/fixtures/rsa_broadcast_3.pub.pem=tests/fixtures/rsa_broadcast_3.bin   # Hastad
+ctfc sig tests/fixtures/ecdsa_nonce_reuse.txt --curve secp256k1 \
+  --pubkey "$(cat tests/fixtures/ecdsa_nonce_reuse.pub)" --show-code
+make fuzz            # the long format-reader sweep; SEED=7 make fuzz for another one
+ctfc cheatsheet`, web tab with a tiny textContent-only Markdown renderer.
 `tests/test_cheatsheet.py` checks every `ctfc <cmd> --option` it mentions exists.
 
 Bundle: `make bundle` -> `dist/ctfc-bundle/` (wheels incl. CyberChef inside the ctfc
@@ -521,6 +553,76 @@ fixture carrying a fake `CYBN{...}` flag.
   `StegoError`, `GitError`, `SqliteError`, `JwtError`, `HiveError`, `ZipError`) and they
   are **all registered on the Flask app**, so the web UI gets a 400 with the reason
   instead of a 500.
+
+## 5septies. Lots D and E (2026-10-30): ideas.md section 1, then 2.5
+
+He said: *"Tu peux repartir de la ou tu t'étais arreter. Je te laisse lire ton historique, tes
+commits et ideas.md pour tout appliquer"*, plus: the crypto-forensics base stays the base, but
+features that make ctfc a **general CTF helper** are welcome too. A plan was posted (lots D, E, F)
+and work started without waiting, as he has twice allowed.
+
+### Done this session
+
+| Commit | Feature | What it does |
+|---|---|---|
+| `6b6424c` | `ctfc prng` | MT19937 cloned from 624 consecutive 32-bit outputs (untemper is exact), predicting **forwards and backwards**; `java.util.Random` seed from two `nextInt()`. New PRNG web tab, and a `detect` guess so a column of big integers is recognised as generator output |
+| `c4082e0` | `ctfc extend` | Hash length extension on MD5/SHA-1/SHA-256/SHA-512, with the four compression functions written out (hashlib cannot resume). Unknown secret length -> one candidate per length. Extend web tab. `ctfc hash` now says "extend it, do not crack it" for a plain MD/SHA digest |
+| `beeb792` | `make fuzz` | `tests/fuzz_formats.py`: seeded mutations of the fixtures against 19 reader entry points under a 10 s alarm. A short sweep runs in `make test` |
+| `2d897c9` | `ctfc rsa --also`, `ctfc sig` | Common modulus, Hastad broadcast, Franklin-Reiter (picked from the shape of the material); ECDSA/DSA private key from two signatures sharing an `r`. Carries its own curve arithmetic + `data/curves.toml` |
+
+**The fuzzer found three real bugs** on its first sweeps, all fixed in `beeb792`:
+
+- `office` let `CfbError`, `zlib.error`, `ValueError` and `UnicodeDecodeError` escape from a
+  damaged `.doc`/`.docm` - a 500 in the web UI instead of a reason. Wrapped in `OfficeError`.
+- `stego` read past the end of the pixels when IHDR promised more rows than the IDAT decoded to.
+  It now analyses the rows that *are* there and says so (better answer for a truncated PNG).
+- `pcap` zero-filled TCP holes straight from the sequence numbers, so **one flipped byte claimed a
+  4 GB hole**: a 1.4 KB capture allocated 4 GB and then crawled through it. Capped, hole reported.
+  Regression test in `tests/test_pcap.py`.
+
+### Decisions worth keeping
+
+- **`ctfc prng` refuses the truncated cases on purpose.** `random.random()` shows 27 + 26 bits of
+  two words, PHP's `mt_rand()` drops the low bit, `getrandbits(k<32)` keeps the top k. Untempering
+  needs all 32 bits, so those need a GF(2) solve over the 19937-bit state, which is ~200 s of pure
+  Python per solve. The tool names the call that *would* give full words instead. If that solve is
+  ever wanted, it is a self-contained addition - do not try to bolt it onto `untemper`.
+- **Backwards prediction is the half that wins challenges** (the tokens handed out *before* the
+  capture). Two equations give the unknown word, and they share a bit, which is a free check that
+  the input really is one uninterrupted MT19937 run.
+- **SHA-224/384 are not length-extendable** and `ctfc extend` refuses them with the reason: they
+  print only part of the final state. Same for SHA-3/BLAKE2 (sponges/trees).
+- **In `extend`, short secret lengths share a digest.** The glue pads to a whole block, so every
+  length landing in the same block hashes identically and only the *message* differs. The report
+  says so, because otherwise it reads like a bug.
+- **`ctfc sig` carries its own EC arithmetic** because pycryptodome 4.2 has no secp256k1 - the one
+  curve a CTF is most likely to use. The curve constants are checked from their definitions in the
+  tests (G on the curve, n*G = infinity) and the scalar multiplication is compared against
+  pycryptodome on P-256. **P-521's constants were wrong on the first write** and the test caught
+  it: keep that test.
+- **Ground truth comes from outside where possible**: the `java.util.Random` fixture was produced
+  by a real JVM (`openjdk` is installed), the compression functions are compared with `hashlib`,
+  every forgery is verified the way the target server would, and the DSA test takes its group from
+  pycryptodome's generator rather than invented parameters.
+- **`--also KEY=CT`** also accepts `<e>=<ciphertext>` (a bare number means "same modulus, this
+  exponent"), which is the common-modulus shape when the user has one PEM and two exponents.
+
+### Lot F, not started (the next thing to do)
+
+Proposed to him in the same plan, in this order:
+
+1. **`ctfc archive`**: 7z / RAR / tar / CAB - entries, which encryption, the matching `*2john`
+   hand-off; and on top of the tar reader, **Docker image analysis** (`manifest.json`, layer order,
+   `history`, deleted files via `.wh.*` whiteouts). That last one is one of his real challenges
+   ("Docker Layers", see `examples/*.zip` -> the second write-up). 7z's header is itself compressed,
+   which is the only awkward part.
+2. **`.msg` Outlook + MSI + OLE2 embedded objects (`ObjectPool`)** through `core/cfb.py`, which
+   already reads compound files - mostly report-writing, little parsing.
+3. **Scoring calibration** (`docs/ideas.md` 3.5) and **CRC32 recovery beyond three bytes** by
+   solving over GF(2) instead of searching (ideas 2.1).
+
+Everything else stays as written in `docs/ideas.md` (2.4 Windows artefacts LNK/Prefetch/AmCache is
+the other high-value one; 3.x is the long tail).
 
 ## 6bis. The improvement ideas (all five done)
 

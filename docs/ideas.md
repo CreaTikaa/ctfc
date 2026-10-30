@@ -1,8 +1,10 @@
 # Ideas for later
 
-Everything in `CLAUDE.md`'s milestones is built, both audits are closed, and the
-A/B/C feature batches are done (`HANDOFF.md` §5sexies). This is the list of what
-could come next.
+Everything in `CLAUDE.md`'s milestones is built, both audits are closed, the
+A/B/C feature batches are done (`HANDOFF.md` §5sexies), and **section 1 plus
+section 2.5 of this file are now done too** (`HANDOFF.md` §5septies):
+`ctfc prng`, `ctfc extend`, `make fuzz`, `ctfc rsa --also`, `ctfc sig`. This is
+the list of what could come next.
 
 It is ordered by **value against effort**, not by how interesting it is to build.
 Each entry says what it unlocks, roughly what it costs, and - where it matters -
@@ -12,9 +14,12 @@ its parameters* rather than ask for them.
 
 ---
 
-## 1. Do these first
+## 1. Done (2026-10-30) - kept for the reasoning
 
-### 1.1 Mersenne Twister state recovery
+The three entries below are built. What they say about *why* still holds, and the
+limits named in 1.1 are still the limits.
+
+### 1.1 ~~Mersenne Twister state recovery~~ **done** (`ctfc prng`, commit `6b6424c`)
 **Unlocks:** a whole family of challenges. Any target that leaks 624 consecutive
 32-bit outputs of Python's `random`, PHP's `mt_rand` or a JS polyfill has its
 entire future *and past* output recoverable - tokens, shuffles, "random" keys.
@@ -29,7 +34,7 @@ which are two outputs combined.
 **Why it is first:** highest ratio of "challenges solved" to "lines written" of
 anything left, and it fits the existing shape exactly.
 
-### 1.2 Hash length extension
+### 1.2 ~~Hash length extension~~ **done** (`ctfc extend`, commit `c4082e0`)
 **Unlocks:** the classic `MAC = md5(secret || message)` forgery. Given the digest
 and the length of the secret, append anything and produce a valid digest without
 ever knowing the secret.
@@ -42,7 +47,7 @@ compression loops by hand (hashlib will not resume from a state). Each is
 candidate per plausible length - that *is* the deduce-the-parameters behaviour.
 Output the forged digest and the exact padded message to send.
 
-### 1.3 A fuzzing harness over the format readers
+### 1.3 ~~A fuzzing harness over the format readers~~ **done** (`make fuzz`, commit `beeb792`: it found three real bugs, see `HANDOFF.md` §5septies)
 **Unlocks:** confidence. There are now about a dozen readers chewing on untrusted
 bytes - `cfb`, `office`, `pdf`, `stego`, `zipinfo`, `gitrepo`, `sqlitedb`, `hive`,
 `pe`, `evtx`, `protobuf`, `pcap`, `usb`, `mail`. They are written defensively and
@@ -58,7 +63,7 @@ written if it is written down.
 
 ---
 
-## 2. Clear value, more work
+## 2. Clear value, more work (2.5 is done; the rest is open)
 
 ### 2.1 Finish what was deliberately left unfinished
 Three places stop short *on purpose*, each because there was nothing real to
@@ -102,16 +107,11 @@ decode through `core/timestamps.py`, which exists now. A `ctfc winartifact
 <file>` that sniffs which one it is would cover a lot of forensics ground for one
 module's worth of work.
 
-### 2.5 RSA attacks that need more than one message
-`core/rsa_attacks.py` covers the single-key weaknesses. The multi-message ones
-are a different family and all self-contained:
-
-- **common modulus**: same `n`, two coprime `e` - extended Euclid.
-- **Håstad broadcast**: the same message under `e` different moduli - CRT then
-  an integer `e`-th root.
-- **Franklin-Reiter**: two messages with a known affine relation - polynomial GCD.
-- **ECDSA/DSA nonce reuse**: two signatures sharing `k` give the private key
-  outright. Very common, and arguably belongs in 1.x for how cheap it is.
+### 2.5 ~~RSA attacks that need more than one message~~ **done** (commit `2d897c9`)
+All four are built: common modulus, Håstad broadcast and Franklin-Reiter in
+`core/rsa_multi.py` behind `ctfc rsa --also <key>=<ct>`, and ECDSA/DSA nonce
+reuse in `core/signatures.py` behind `ctfc sig`. The nonce-reuse one did turn out
+to be the cheapest and most valuable of the four, as suspected here.
 
 ---
 
