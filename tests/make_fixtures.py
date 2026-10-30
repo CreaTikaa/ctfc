@@ -1638,6 +1638,63 @@ def write_audit_fixtures() -> None:
     write("audit_usb_keyboard.pcap", usb_header + b"".join(records))
 
 
+def write_multi_message_fixtures() -> None:
+    """The RSA mistakes that need two messages, plus an ECDSA nonce reuse.
+
+    All deterministic: the primes come from the seeded RNG, and the ECDSA nonce
+    and private key are drawn from a `random.Random` with a fixed seed, so
+    `make fixtures` twice produces no diff.
+    """
+    # 1. Common modulus: the same n, two coprime exponents, one message.
+    p = getPrime(512, randfunc=RNG.randbytes)
+    q = getPrime(512, randfunc=RNG.randbytes)
+    n = p * q
+    message = bytes_to_long(b"CYBN{fixture_common_modulus}")
+    for exponent, name in ((3, "a"), (65537, "b")):
+        write(f"rsa_common_{name}.pub.pem", RSA.construct((n, exponent)).export_key())
+        write(f"rsa_common_{name}.bin", long_to_bytes(pow(message, exponent, n)))
+
+    # 2. Hastad broadcast: the same short message to three recipients, e = 3.
+    broadcast = bytes_to_long(b"CYBN{fixture_hastad}")
+    for index in range(1, 4):
+        first = getPrime(512, randfunc=RNG.randbytes)
+        second = getPrime(512, randfunc=RNG.randbytes)
+        modulus = first * second
+        assert broadcast**3 < modulus, "a broadcast needs m^e to fit under each modulus"
+        write(f"rsa_broadcast_{index}.pub.pem", RSA.construct((modulus, 3)).export_key())
+        write(f"rsa_broadcast_{index}.bin", long_to_bytes(pow(broadcast, 3, modulus)))
+
+    # 3. Franklin-Reiter: two messages with m2 = 2*m1 + 1234567, same n and e.
+    p = getPrime(512, randfunc=RNG.randbytes)
+    q = getPrime(512, randfunc=RNG.randbytes)
+    n = p * q
+    first_message = bytes_to_long(b"CYBN{fixture_franklin_reiter}")
+    second_message = (2 * first_message + 1234567) % n
+    write("rsa_related.pub.pem", RSA.construct((n, 3)).export_key())
+    write("rsa_related_1.bin", long_to_bytes(pow(first_message, 3, n)))
+    write("rsa_related_2.bin", long_to_bytes(pow(second_message, 3, n)))
+
+    # 4. ECDSA on secp256k1, signing twice with the same nonce.
+    from ctfc.core import signatures as sigs
+
+    curve = sigs.find_curve("secp256k1")
+    draw = random.Random(20251030)
+    private = draw.randrange(1, curve.n)
+    nonce = draw.randrange(1, curve.n)
+    public = curve.multiply(private)
+    lines = ["# two ECDSA signatures over secp256k1, made with the same nonce"]
+    for text in (b"transfer 10 to alice", b"transfer 10 to bob"):
+        digest = sigs.hash_to_int(hashlib.sha256(text).digest(), curve.n)
+        r = curve.multiply(nonce)[0] % curve.n
+        s = (pow(nonce, -1, curve.n) * (digest + r * private)) % curve.n
+        lines.append(f"r=0x{r:x} s=0x{s:x} h=0x{digest:x}")
+    write("ecdsa_nonce_reuse.txt", "\n".join(lines) + "\n")
+    point = b"\x04" + public[0].to_bytes(32, "big") + public[1].to_bytes(32, "big")
+    write("ecdsa_nonce_reuse.pub", point.hex() + "\n")
+    # The answer, so the test does not have to recompute it:
+    write("ecdsa_nonce_reuse.key", f"{private:x}\n")
+
+
 def write_prng_fixtures() -> None:
     """Captures of a weak random generator's output, as a challenge hands them over.
 
@@ -1836,6 +1893,9 @@ def main() -> None:
 
     # --- weak random generators (ideas.md 1.1) ---
     write_prng_fixtures()
+
+    # --- the attacks that need more than one message (ideas.md 2.5) ---
+    write_multi_message_fixtures()
 
 
 if __name__ == "__main__":

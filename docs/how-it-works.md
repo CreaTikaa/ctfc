@@ -1180,3 +1180,63 @@ It paid for itself immediately. Three real bugs on the first sweeps:
 The lesson is the one the harness was written for: "it is written defensively" is
 a claim about intent, and only mutation finds the three places where the intent
 did not hold.
+
+## 19. RSA with several messages (`ctfc/core/rsa_multi.py`)
+
+`rsa_attacks.py` breaks a weak key. These three break a *use* of RSA, with the
+keys perfectly sound:
+
+- **Common modulus**: one `n`, two coprime exponents. Bezout gives
+  `a*e1 + b*e2 = 1`, so `c1^a * c2^b = m^(a*e1+b*e2) = m` mod n. A negative
+  coefficient means "use the modular inverse of that ciphertext". No factoring,
+  no private key - which is why two users must never share a modulus.
+- **Hastad broadcast**: the same short message to `e` recipients under the same
+  small `e`. The CRT rebuilds `m^e` modulo the product of the moduli, which is
+  larger than `m^e` itself, so the *integer* `e`-th root is the message. If the
+  root is not exact, the message was padded, and the report says that rather
+  than printing noise. If two moduli share a factor, that factor breaks both
+  keys outright, so it points at `ctfc rsa --other` instead.
+- **Franklin-Reiter**: two messages with a known affine relation
+  `m2 = a*m1 + b`, same `n` and `e`. Then `m1` is a root of `x^e - c1` and of
+  `(a*x + b)^e - c2`, so their polynomial GCD modulo `n` is `x - m1`. The module
+  carries just enough polynomial arithmetic for that (multiply, remainder,
+  monic, GCD). A leading coefficient that is not invertible modulo `n` is not a
+  failure but a gift: it shares a factor with `n`.
+
+Which one runs is decided by the shape of the material, not by a flag: one
+modulus with different exponents is a common modulus, `e` moduli with one
+exponent is a broadcast, and a `--relation a,b` asks for Franklin-Reiter.
+
+## 20. Reused nonces (`ctfc/core/signatures.py`)
+
+ECDSA and DSA sign with a secret `k`:
+
+    r = (k*G).x mod n          s = k^-1 * (h + r*d) mod n
+
+The private key is protected by `k` and by nothing else. Sign twice with the
+same `k` and two equations in two unknowns remain:
+
+    k = (h1 - h2) / (s1 - s2) mod n        d = (s1*k - h1) / r mod n
+
+The detection is free: the same `k` gives the same `r`, so two signatures with
+an identical `r` announce the bug in public - no key needed to notice. That is
+why the module starts by grouping signatures by `r`.
+
+Three details that decide whether the recovered key is right:
+
+- **Sign variants.** A signer that normalises `s` to the lower half of the range
+  (Bitcoin's "low-s") silently negates it, and a verifier accepts both. All four
+  sign combinations are tried; negating *both* gives the same key with the
+  opposite `k`, so there are two distinct answers, not four.
+- **Hash reduction.** Both standards keep the **leftmost** bits of the digest,
+  truncated to the bit length of the order. SHA-256 under P-192 is not
+  `int(digest)`.
+- **Verification is real.** `d*G` is computed with the curve arithmetic in the
+  module and compared with the public key, so "verified" means verified. The
+  arithmetic is plain double-and-add over a short Weierstrass curve, which also
+  means secp256k1 works - pycryptodome does not know that curve.
+
+`ctfc/data/curves.toml` holds secp256k1 and the five NIST curves. The test suite
+checks, for each, that `G` is on the curve and that `n*G` is the point at
+infinity, and compares the scalar multiplication against pycryptodome on P-256 -
+so a typo in those constants cannot survive.

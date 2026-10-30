@@ -615,6 +615,39 @@ def print_jwt(console: Console, report, show_code: bool = False) -> None:
         console.print(Syntax(report.python, "python", theme="ansi_dark", word_wrap=True))
 
 
+def print_signatures(console: Console, report, show_code: bool = False) -> None:
+    """`ctfc sig`: the reused nonce, then the private key it gives away."""
+    facts = Table(title="signatures", show_header=False, expand=False)
+    facts.add_column("name", style="cyan")
+    facts.add_column("value")
+    facts.add_row("algorithm", report.algorithm)
+    facts.add_row("group", f"{report.curve} ({report.order_bits} bits)")
+    facts.add_row("signatures read", str(report.signatures))
+    facts.add_row("pairs sharing r", str(len(report.reused)))
+    console.print(facts)
+
+    for first, second in report.reused[:5]:
+        console.print(f"[yellow]*[/] same r in {safe(first, 40)} and {safe(second, 40)}")
+
+    if report.recoveries:
+        table = Table(title="recovered key(s)", expand=True, show_lines=True)
+        table.add_column("", width=8)
+        table.add_column("from", width=10, overflow="fold")
+        # The key is the answer: never let a column width cut it short.
+        table.add_column("private key (hex)", ratio=3, overflow="fold")
+        for item in report.recoveries:
+            mark = "[bold green]verified[/]" if item.verified else ""
+            table.add_row(mark, safe(item.variant, 40), f"{item.private_key:x}")
+        console.print(table)
+        best = report.recoveries[0]
+        console.print(f"[bold]nonce k[/] {best.nonce:x}")
+        for reason in best.reasons:
+            console.print(f"[cyan]*[/] {safe(reason, 160)}")
+    print_notes(console, report.notes)
+    if show_code and report.python:
+        console.print(Syntax(report.python, "python", theme="ansi_dark", word_wrap=True))
+
+
 def print_extend(console: Console, found: list, notes: list[str], show_code: bool = False) -> None:
     """`ctfc extend`: one forgery per candidate secret length, the verified one first."""
     table = Table(title=f"{len(found)} forgery/forgeries", expand=True)

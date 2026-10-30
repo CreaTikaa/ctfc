@@ -40,6 +40,8 @@ mirror the encryptor, do not guess.
 | a hash (`$2y$`, 32 hex, `$krb5tgs$`...) | `ctfc hash <hash>` -> hashcat / john command |
 | a digest that *signs* a message (MAC, token, cookie) | `ctfc extend <digest> --data ... --append ...` - forge, do not crack |
 | PEM / RSA numbers | `ctfc rsa --key k.pem --decrypt ct.bin --attack` |
+| the *same message* under several keys | `ctfc rsa --key a.pem --decrypt a.bin --also b.pem=b.bin` (common modulus, Hastad) |
+| two signatures (ECDSA/DSA) | `ctfc sig sigs.txt --curve secp256k1` - the same r means the key is already yours |
 | a pcap / pcapng | `ctfc pcap cap.pcap --extract out/` then `ctfc scan out/` |
 | zero-width characters | `ctfc auto` (both bit mappings) or a StegCloak decoder |
 | a column of big integers (tokens, "random" ids) | `ctfc prng <file>` - 624 of them clone MT19937 |

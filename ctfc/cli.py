@@ -112,7 +112,17 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--d", help=t("opt_rsa_d"))
     p.add_argument("--p", help=t("opt_rsa_p"))
     p.add_argument("--q", help=t("opt_rsa_q"))
+    p.add_argument("--also", action="append", default=[], help=t("opt_rsa_also"))
+    p.add_argument("--relation", help=t("opt_rsa_relation"))
     p.add_argument("--seconds", type=float, default=20.0, help=t("opt_seconds"))
+
+    p = add("sig")
+    p.add_argument("input", help=t("arg_signatures"))
+    p.add_argument("--curve", help=t("opt_sig_curve"))
+    p.add_argument("--order", help=t("opt_sig_order"))
+    p.add_argument("--pubkey", help=t("opt_sig_pubkey"))
+    p.add_argument("--dsa-public", help=t("opt_sig_dsa_public"))
+    p.add_argument("--hash", default="sha256", help=t("opt_sig_hash"))
 
     p = add("hash")
     p.add_argument("hash", help=t("arg_hash"))
@@ -1099,6 +1109,12 @@ def cmd_rsa(args: argparse.Namespace, config: Config, console: Console) -> int:
         return 0 if same else 1
 
     ciphertext = parse_input(args.decrypt).data if args.decrypt else None
+
+    # Several ciphertexts of the same message: a different family of attacks
+    # (common modulus, Hastad broadcast, Franklin-Reiter). See core/rsa_multi.py.
+    if args.also:
+        return _rsa_multi(args, config, console, key, ciphertext)
+
     budget = Budget(max_attempts=50_000_000, max_seconds=args.seconds)
     report = solve_rsa(
         key,
@@ -1115,6 +1131,84 @@ def cmd_rsa(args: argparse.Namespace, config: Config, console: Console) -> int:
         return 0 if report.candidates else 1
     render.print_rsa(console, report, show_code=args.show_code)
     return 0 if report.candidates or not ciphertext else 1
+
+
+def cmd_sig(args: argparse.Namespace, config: Config, console: Console) -> int:
+    """Recover a signing key from two signatures that reused the same nonce."""
+    from ctfc.core import signatures as sigs
+
+    curve = sigs.find_curve(args.curve) if args.curve else None
+    order = parse_number(args.order) if args.order else None
+    if curve is None and order is None:
+        raise sigs.SignatureError(
+            "give --curve (secp256k1, p-256, p-384, p-521, p-224, p-192) or --order "
+            "<q> for DSA: every scalar is reduced by the group order"
+        )
+    text = parse_input(args.input, decode_bare=False).data.decode("utf-8", "replace")
+    found = sigs.parse_signatures(
+        text, order=order if order is not None else curve.n, algorithm=args.hash
+    )
+    point = sigs.parse_public_point(args.pubkey, curve) if (args.pubkey and curve) else None
+    dsa_public = None
+    if args.dsa_public:
+        parts = [part for part in re.split(r"[,;\s]+", args.dsa_public) if part]
+        if len(parts) != 3:
+            raise sigs.SignatureError("--dsa-public takes p,g,y (three numbers)")
+        dsa_public = tuple(parse_number(part) for part in parts)  # type: ignore[assignment]
+    report = sigs.solve(found, curve=curve, order=order, public_point=point, dsa_public=dsa_public)
+    if args.json:
+        print(json.dumps(report.to_dict(), indent=2))
+        return 0 if report.recoveries else 1
+    render.print_signatures(console, report, args.show_code)
+    return 0 if report.recoveries else 1
+
+
+def _rsa_multi(
+    args: argparse.Namespace,
+    config: Config,
+    console: Console,
+    key,
+    ciphertext: bytes | None,
+) -> int:
+    """`ctfc rsa --also <key>=<ct>`: the attacks that need a second ciphertext."""
+    from ctfc.core import rsa_multi
+
+    if ciphertext is None:
+        raise rsa_multi.MultiError(
+            "--also needs the first ciphertext too: add --decrypt <ciphertext>"
+        )
+    messages = [rsa_multi.Message(key.n, key.e, ciphertext, label=args.decrypt or "first")]
+    for spec in args.also:
+        key_part, _, ct_part = spec.partition("=")
+        if not ct_part:
+            raise rsa_multi.MultiError(
+                f"--also takes <key>=<ciphertext> (or <e>=<ciphertext> for the same "
+                f"modulus); got {spec!r}"
+            )
+        data = parse_input(ct_part).data
+        exponent = parse_number(key_part) if re.fullmatch(r"\d+|0x[0-9a-fA-F]+", key_part) else None
+        if exponent is not None:
+            # A bare number means "same modulus, this exponent": the common-modulus shape.
+            messages.append(rsa_multi.Message(key.n, exponent, data, label=ct_part))
+        else:
+            other = parse_key(parse_input(key_part, decode_bare=False).data)
+            messages.append(rsa_multi.Message(other.n, other.e, data, label=ct_part))
+
+    relation = None
+    if args.relation:
+        parts = [part for part in re.split(r"[,;\s]+", args.relation) if part]
+        if len(parts) != 2:
+            raise rsa_multi.MultiError("--relation takes a,b for m2 = a*m1 + b")
+        relation = (parse_number(parts[0]), parse_number(parts[1]))
+
+    report = rsa_multi.solve_multi(messages, relation=relation, flagset=flagset_from(config))
+    remember(args, config, ciphertext, args.decrypt or "", report.candidates, report.notes[:4])
+    if args.json:
+        print(json.dumps(report.to_dict(), indent=2))
+        return 0 if report.candidates else 1
+    render.print_notes(console, report.tried + report.notes)
+    render.print_candidates(console, report.candidates, args.show_code, title="Recovered message")
+    return 0 if report.candidates else 1
 
 
 def cmd_hash(args: argparse.Namespace, config: Config, console: Console) -> int:
@@ -1399,6 +1493,7 @@ def main(argv: list[str] | None = None) -> int:
         "time": cmd_time,
         "prng": cmd_prng,
         "extend": cmd_extend,
+        "sig": cmd_sig,
         "zip": cmd_zip,
         "hive": cmd_hive,
         "pe": cmd_pe,

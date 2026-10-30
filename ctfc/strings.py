@@ -253,6 +253,28 @@ EN: dict[str, str] = {
         "only the readings that land between 1990 and 2100 are shown."
     ),
     "arg_time": "the number (decimal, 0x hex) or the raw field as hex:<8 or 4 bytes>",
+    "opt_rsa_also": (
+        "another ciphertext of the same message, as <key file>=<ciphertext> (or "
+        "<e>=<ciphertext> for the same modulus). Repeatable: picks the attack that fits "
+        "(common modulus, Hastad broadcast)"
+    ),
+    "opt_rsa_relation": "a,b when the two messages are related by m2 = a*m1 + b (Franklin-Reiter)",
+    "cmd_sig": "recover a signing key from two signatures that reused the same nonce",
+    "cmd_sig_ex": (
+        "examples: ctfc sig signatures.txt --curve secp256k1  |  "
+        "ctfc sig sigs.json --curve p-256 --pubkey key.pem  |  "
+        "ctfc sig sigs.txt --order <q> --dsa-public p,g,y. "
+        "Two signatures with the same r shared a nonce, and that gives the private key "
+        "outright - no search. Input: 'r=.. s=.. h=..' lines, 'r,s,h' lines, or JSON."
+    ),
+    "arg_signatures": "the signatures: a file, -, or text:r=..,s=..,h=..",
+    "opt_sig_curve": "the curve: secp256k1, p-256, p-384, p-521, p-224, p-192",
+    "opt_sig_order": "the group order instead of a curve name (DSA's q, or an odd curve)",
+    "opt_sig_pubkey": (
+        "the public key, to pick the right sign variant (PEM, 04||X||Y hex, or x,y)"
+    ),
+    "opt_sig_dsa_public": "for DSA: p,g,y, to check the recovered key",
+    "opt_sig_hash": "hash used on the messages, when the input gives messages instead of h",
     "cmd_extend": "hash length extension: forge H(secret || data || anything) without the secret",
     "cmd_extend_ex": (
         "example: ctfc extend 5f4dcc3b5aa765d61d8327deb882cf99 --data 'user=guest' "

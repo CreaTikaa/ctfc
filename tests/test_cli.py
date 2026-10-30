@@ -472,3 +472,68 @@ def test_extend_refuses_sha224_with_a_reason():
     result = run_ctfc("extend", hashlib.sha224(b"x").hexdigest(), "--append", "text:x")
     assert result.returncode == 2
     assert "sha224" in result.stderr.decode()
+
+
+def test_rsa_also_recovers_a_common_modulus_message():
+    import json
+
+    result = run_ctfc(
+        "rsa",
+        "--key",
+        "tests/fixtures/rsa_common_a.pub.pem",
+        "--decrypt",
+        "tests/fixtures/rsa_common_a.bin",
+        "--also",
+        "tests/fixtures/rsa_common_b.pub.pem=tests/fixtures/rsa_common_b.bin",
+        "--json",
+    )
+    assert result.returncode == 0, result.stderr.decode()
+    report = json.loads(result.stdout)
+    assert "common modulus" in report["tried"][0]
+    assert "CYBN{fixture_common_modulus}" in report["candidates"][0]["data_text"]
+
+
+def test_rsa_also_recovers_a_broadcast_message():
+    import json
+
+    result = run_ctfc(
+        "rsa",
+        "--key",
+        "tests/fixtures/rsa_broadcast_1.pub.pem",
+        "--decrypt",
+        "tests/fixtures/rsa_broadcast_1.bin",
+        "--also",
+        "tests/fixtures/rsa_broadcast_2.pub.pem=tests/fixtures/rsa_broadcast_2.bin",
+        "--also",
+        "tests/fixtures/rsa_broadcast_3.pub.pem=tests/fixtures/rsa_broadcast_3.bin",
+        "--json",
+    )
+    assert result.returncode == 0, result.stderr.decode()
+    report = json.loads(result.stdout)
+    assert "CYBN{fixture_hastad}" in report["candidates"][0]["data_text"]
+
+
+def test_sig_recovers_the_private_key_from_the_fixture():
+    import json
+
+    public = (ROOT / "tests/fixtures/ecdsa_nonce_reuse.pub").read_text().strip()
+    expected = (ROOT / "tests/fixtures/ecdsa_nonce_reuse.key").read_text().strip()
+    result = run_ctfc(
+        "sig",
+        "tests/fixtures/ecdsa_nonce_reuse.txt",
+        "--curve",
+        "secp256k1",
+        "--pubkey",
+        public,
+        "--json",
+    )
+    assert result.returncode == 0, result.stderr.decode()
+    report = json.loads(result.stdout)
+    assert report["recoveries"][0]["verified"]
+    assert report["recoveries"][0]["private_key"] == expected
+
+
+def test_sig_without_a_curve_explains_what_is_missing():
+    result = run_ctfc("sig", "tests/fixtures/ecdsa_nonce_reuse.txt")
+    assert result.returncode == 2
+    assert "--curve" in result.stderr.decode()
