@@ -38,6 +38,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
 from ctfc.core.errors import FormatError
+from ctfc.core.flags import FlagSet, find_flags
 from ctfc.core.scoring import shannon_entropy
 
 MZ = b"MZ"
@@ -194,6 +195,10 @@ class PeReport:
     overlay_offset: int = 0
     notable: list[str] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
+    # .NET only: the metadata heaps, which is where a C# program's strings are.
+    dotnet_identifiers: list[str] = field(default_factory=list)
+    dotnet_literals: list[str] = field(default_factory=list)
+    flags: list[str] = field(default_factory=list)
 
     @property
     def import_count(self) -> int:
@@ -228,6 +233,9 @@ class PeReport:
             "overlay_offset": self.overlay_offset,
             "notable": list(self.notable),
             "notes": list(self.notes),
+            "dotnet_identifiers": list(self.dotnet_identifiers),
+            "dotnet_literals": list(self.dotnet_literals),
+            "flags": list(self.flags),
         }
 
 
@@ -426,7 +434,131 @@ class Pe:
         return len(self.data), b""
 
 
-def analyse(data: bytes) -> PeReport:
+# --- .NET metadata ---------------------------------------------------------
+# A .NET assembly's strings are not in the native data section: they live in
+# the metadata heaps, which is why `strings` on a C# binary shows nothing but
+# namespace names. Two heaps matter.
+METADATA_SIGNATURE = 0x424A5342  # "BSJB"
+HEAP_STRINGS = "#Strings"  # identifiers: class, method and field names
+HEAP_USER_STRINGS = "#US"  # the string *literals* the code uses - keys live here
+MAX_DOTNET_STRINGS = 4000
+MIN_DOTNET_STRING = 3
+
+
+def _compressed_uint(data: bytes, offset: int) -> tuple[int, int]:
+    """The ECMA-335 compressed integer: one, two or four bytes, big-endian-ish.
+
+    The top bits of the first byte say how long it is: 0 means one byte, 10 two,
+    110 four. The #US heap prefixes every literal with one of these, which is
+    the only thing standing between you and every string constant in the file.
+    """
+    if offset >= len(data):
+        raise PeError("a compressed integer runs past the end of the heap")
+    first = data[offset]
+    if first & 0x80 == 0:
+        return first, offset + 1
+    if first & 0xC0 == 0x80:
+        if offset + 2 > len(data):
+            raise PeError("a two-byte compressed integer does not fit")
+        return ((first & 0x3F) << 8) | data[offset + 1], offset + 2
+    if first & 0xE0 == 0xC0:
+        if offset + 4 > len(data):
+            raise PeError("a four-byte compressed integer does not fit")
+        return (
+            ((first & 0x1F) << 24)
+            | (data[offset + 1] << 16)
+            | (data[offset + 2] << 8)
+            | data[offset + 3]
+        ), offset + 4
+    raise PeError(f"byte {first:#02x} is not a valid compressed integer prefix")
+
+
+def dotnet_heaps(pe: Pe) -> dict[str, bytes]:
+    """The metadata heaps of a .NET assembly, by name.
+
+    The CLR directory points at a 72-byte CLI header, whose `MetaData` field
+    points at a root beginning with "BSJB". After the runtime version string
+    comes a count and then one small header per stream (`#Strings`, `#US`,
+    `#Blob`, `#GUID`, `#~`), each an offset and size relative to the root.
+    """
+    rva, _size = pe.directory(DIR_CLR)
+    if not rva:
+        return {}
+    cli = pe.offset_of(rva)
+    if cli is None or cli + 16 > len(pe.data):
+        return {}
+    metadata_rva = _u32(pe.data, cli + 8)
+    root = pe.offset_of(metadata_rva)
+    if root is None or root + 20 > len(pe.data):
+        return {}
+    if _u32(pe.data, root) != METADATA_SIGNATURE:
+        return {}
+    version_length = _u32(pe.data, root + 12)
+    if version_length > 256:
+        return {}
+    # The root is: signature, two version numbers, reserved, the length of the
+    # version string, the string itself (already padded to four bytes), then a
+    # flags word and the number of streams.
+    position = root + 16 + version_length
+    if position + 4 > len(pe.data):
+        return {}
+    count = _u16(pe.data, position + 2)
+    position += 4
+    heaps: dict[str, bytes] = {}
+    for _ in range(min(count, 16)):
+        if position + 8 > len(pe.data):
+            break
+        offset = _u32(pe.data, position)
+        size = _u32(pe.data, position + 4)
+        end = pe.data.find(b"\x00", position + 8)
+        if end < 0:
+            break
+        name = pe.data[position + 8 : end].decode("ascii", "replace")
+        # Each name is padded to a multiple of four bytes, NUL included.
+        position = position + 8 + (end - (position + 8) + 1 + 3) // 4 * 4
+        start = root + offset
+        if 0 < size < len(pe.data) and start + size <= len(pe.data):
+            heaps[name] = pe.data[start : start + size]
+    return heaps
+
+
+def dotnet_strings(heaps: dict[str, bytes]) -> tuple[list[str], list[str]]:
+    """(identifiers, literals) out of the #Strings and #US heaps.
+
+    `#Strings` is NUL-separated UTF-8 and holds the names of everything - types,
+    methods, fields. `#US` holds the literals the code uses, each as a
+    compressed length followed by UTF-16LE, and that is where a hard-coded key,
+    URL or password in a C# program actually is.
+    """
+    identifiers: list[str] = []
+    for piece in heaps.get(HEAP_STRINGS, b"").split(b"\x00"):
+        if len(piece) >= MIN_DOTNET_STRING:
+            identifiers.append(piece.decode("utf-8", "replace"))
+        if len(identifiers) >= MAX_DOTNET_STRINGS:
+            break
+
+    literals: list[str] = []
+    user = heaps.get(HEAP_USER_STRINGS, b"")
+    position = 1 if user[:1] == b"\x00" else 0  # the heap starts with an empty entry
+    while position < len(user) and len(literals) < MAX_DOTNET_STRINGS:
+        try:
+            length, position = _compressed_uint(user, position)
+        except PeError:
+            break
+        if length == 0:
+            continue
+        chunk = user[position : position + length]
+        position += length
+        # The last byte of a #US entry is a flag, not text: 1 means the string
+        # holds characters that cannot be represented in the code page.
+        text = chunk[: len(chunk) - 1 if len(chunk) % 2 else len(chunk)]
+        decoded = text.decode("utf-16-le", "replace").rstrip("\x00")
+        if len(decoded) >= MIN_DOTNET_STRING:
+            literals.append(decoded)
+    return identifiers, literals
+
+
+def analyse(data: bytes, flagset: FlagSet | None = None) -> PeReport:
     """Read the executable and report what it is and what it does."""
     from ctfc.core import timestamps
 
@@ -472,6 +604,25 @@ def analyse(data: bytes) -> PeReport:
             "decompiler reads it almost as source - dnSpy, ILSpy or `ilspycmd`. "
             "Disassembling the native stub is a waste of time"
         )
+        identifiers, literals = dotnet_strings(dotnet_heaps(pe))
+        report.dotnet_identifiers = identifiers
+        report.dotnet_literals = literals
+        if literals:
+            report.notes.append(
+                f"{len(literals)} string literal(s) read straight out of the #US "
+                "metadata heap: a hard-coded key, URL or password in a C# program is "
+                "in that list, and `strings` never shows it"
+            )
+        elif identifiers:
+            report.notes.append(
+                f"{len(identifiers)} metadata identifier(s) (type and method names) but "
+                "no string literals: the strings may be built at runtime, or obfuscated"
+            )
+        for text in literals + identifiers:
+            for hit in find_flags(text.encode("utf-8", "replace"), flagset):
+                if hit.text not in report.flags:
+                    report.flags.append(hit.text)
+
         if pe.machine not in MACHINES:
             # Every .NET SDK assembly on this machine reports 0xfd1d here. The
             # code is IL, so the field does not have to name a real CPU.

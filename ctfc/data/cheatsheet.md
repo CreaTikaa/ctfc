@@ -47,6 +47,8 @@ mirror the encryptor, do not guess.
 | a tar / 7z / rar / cab | `ctfc archive <file>` - the listing, the encryption, the contents |
 | a CRC32 of a short file (a ZIP prints them) | `ctfc crc <crc32>` - the content itself, with no password |
 | a .lnk / .pf / jump list | `ctfc winartifact <file>` - what ran, when, from which disk |
+| an ELF / .class / .jar / .dex | `ctfc exe <file>` - the strings that matter, and what is appended |
+| a .NET assembly | `ctfc pe <file>` - the #US heap holds every C# string literal |
 | an Amcache.hve / NTUSER.DAT | `ctfc hive <file>` - UserAssist, RecentDocs, every executable seen |
 | an Outlook .msg | `ctfc msg <file> --extract att/` - headers, body, attachments |
 | an .msi installer | `ctfc msi <file>` - the string pool, the embedded cabinet, what it runs |

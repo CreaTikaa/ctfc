@@ -72,7 +72,11 @@ SIG_HINTS = {
     "kdb": "keepass2john <file> > h; hashcat -m 13400 h wordlist",
     "pcap": "open in Wireshark; tshark -r <file> -qz conv,tcp",
     "pcapng": "open in Wireshark; tshark -r <file> -qz conv,tcp",
-    "elf": "strings -n 8 <file>; diec <file>; look for crypto constants below",
+    "elf": "ctfc exe <file>   (segments, libraries, imported symbols, anything "
+    "appended); then objdump -d / diec <file>",
+    "class": "ctfc exe <file>   (the constant pool: every string the class uses)",
+    "jar": "ctfc exe <file>   (sweeps every class's constant pool); cfr / jadx to decompile",
+    "dex": "ctfc exe <file>   (the whole string table); jadx <file> to decompile",
     "exe": "diec <file>; strings -el <file> (UTF-16 strings)",
     "luks": "with a RAM dump of the machine: ctfc keys <dump> --against <this> (the header "
     "confirms the master key); without one: luks2john + hashcat -m 14600",

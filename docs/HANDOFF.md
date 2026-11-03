@@ -723,6 +723,11 @@ pytest tests/test_scoring_calibration.py -q -s     # the score distribution, pri
 ctfc winartifact tests/fixtures/winartifact_dropper.lnk        # the .lnk that is a dropper
 ctfc winartifact tests/fixtures/winartifact_powershell.pf      # when it ran, what it loaded
 ctfc winartifact tests/fixtures/winartifact_jumplist.automaticDestinations-ms
+ctfc exe tests/fixtures/executable_dropper.elf --extract /tmp/ov   # RWX + appended zip
+ctfc exe tests/fixtures/executable_secret.jar      # every class's constant pool
+ctfc exe tests/fixtures/executable_app.dex         # the whole DEX string table
+ctfc exe /bin/ls                                   # a real ELF, no false overlay
+ctfc pe /usr/share/dotnet/sdk/*/System.Resources.Extensions.dll   # the #US literals
 ctfc git <a folder with a .git>                    # the secret that was committed then removed
 ctfc jwt <token> --show-code                       # alg=none / weak HMAC secret
 ctfc time 133476575820000000                       # Windows FILETIME

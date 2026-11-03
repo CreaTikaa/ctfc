@@ -142,6 +142,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--save-macros", help=t("opt_office_save"))
     p.add_argument("--extract", help=t("opt_office_extract"))
 
+    p = add("exe")
+    p.add_argument("input", help=t("arg_exe"))
+    p.add_argument("--extract", help=t("opt_exe_extract"))
+
     p = add("winartifact")
     p.add_argument("input", help=t("arg_winartifact"))
 
@@ -917,7 +921,7 @@ def cmd_pe(args: argparse.Namespace, config: Config, console: Console) -> int:
     from ctfc.core import pe as pe_module
 
     inp = parse_input(args.input, decode_bare=False)
-    report = pe_module.analyse(inp.data)
+    report = pe_module.analyse(inp.data, flagset=flagset_from(config))
     saved = []
     if args.extract and report.overlay:
         folder = Path(args.extract)
@@ -981,6 +985,32 @@ def cmd_zip(args: argparse.Namespace, config: Config, console: Console) -> int:
         return 0
     render.print_input_notes(console, inp)
     render.print_zip(console, report)
+    return 0
+
+
+def cmd_exe(args: argparse.Namespace, config: Config, console: Console) -> int:
+    """Triage an ELF, a Java class or JAR, or an Android DEX."""
+    from ctfc.core import executable
+
+    inp = parse_input(args.input, decode_bare=False)
+    report = executable.analyse(inp.data, flagset=flagset_from(config))
+    saved: list[str] = []
+    if args.extract and report.elf is not None and report.elf.overlay_bytes:
+        folder = Path(args.extract)
+        folder.mkdir(parents=True, exist_ok=True)
+        target = folder / "overlay.bin"
+        target.write_bytes(report.elf.overlay_bytes)
+        saved.append(str(target))
+        console.print(f"[green]saved the appended data[/] to {target}")
+        console.print(f"[green]$[/] ctfc detect {target}")
+    remember(args, config, inp.data, args.input, summary=report.notes[:4])
+    if args.json:
+        print(
+            json.dumps({"input": input_to_dict(inp), **report.to_dict(), "saved": saved}, indent=2)
+        )
+        return 0
+    render.print_input_notes(console, inp)
+    render.print_executable(console, report)
     return 0
 
 
@@ -1677,6 +1707,7 @@ def main(argv: list[str] | None = None) -> int:
         "extend": cmd_extend,
         "sig": cmd_sig,
         "archive": cmd_archive,
+        "exe": cmd_exe,
         "winartifact": cmd_winartifact,
         "crc": cmd_crc,
         "msg": cmd_msg,

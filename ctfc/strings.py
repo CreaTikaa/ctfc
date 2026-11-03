@@ -238,6 +238,17 @@ EN: dict[str, str] = {
     "arg_hive": "the hive file (SAM, SYSTEM, SOFTWARE, NTUSER.DAT) - a path, or -",
     "opt_hive_key": "read one key by path instead of the usual report",
     "opt_hive_list": "print every key path in the hive",
+    "cmd_exe": "triage an ELF, a Java class or JAR, or an Android DEX",
+    "cmd_exe_ex": (
+        "examples: ctfc exe ./challenge  |  ctfc exe app.jar  |  ctfc exe classes.dex  |  "
+        "ctfc exe ./packed --extract ./out. "
+        "For an ELF: the segments, the libraries, the imported symbols, a writable+"
+        "executable segment, UPX, and anything appended after the last section. For "
+        "Java and Android: every string in the constant pool or string table, which is "
+        "where a key, a URL or a password actually is. `ctfc pe` reads Windows binaries."
+    ),
+    "arg_exe": "the executable (ELF, .class, .jar, .dex) - a path, or -",
+    "opt_exe_extract": "write what is appended after the last section into this folder",
     "cmd_winartifact": "read a Windows artefact: .lnk, prefetch, jump list, AmCache",
     "cmd_winartifact_ex": (
         "examples: ctfc winartifact invoice.pdf.lnk  |  "

@@ -831,6 +831,15 @@ def print_pe(console: Console, report) -> None:
             notable.add_row(safe(name, 60), safe(meaning, 120))
         console.print(notable)
 
+    if report.dotnet_literals:
+        console.print(
+            Panel(
+                safe_block("\n".join(report.dotnet_literals), 4000),
+                title=f"{len(report.dotnet_literals)} .NET string literal(s) (#US heap)",
+            )
+        )
+    for flag in report.flags:
+        console.print(f"[bold green]flag:[/] {escape(flag)}")
     for note in report.notes:
         console.print(f"[cyan]*[/] {safe(note)}")
 
@@ -1405,4 +1414,127 @@ def print_jumplist(console: Console, report) -> None:
     console.print(table)
     if report.order:
         console.print(f"[dim]DestList order:[/] {safe(', '.join(report.order[:10]), 300)}")
+    print_notes(console, report.notes)
+
+
+def print_executable(console: Console, report) -> None:
+    """`ctfc exe`: an ELF, a Java class or JAR, or an Android DEX."""
+    if report.elf is not None:
+        print_elf(console, report.elf)
+    for item in report.classes[:20]:
+        print_class(console, item)
+    if len(report.classes) > 20:
+        console.print(f"[dim]... and {len(report.classes) - 20} more class file(s)[/]")
+    if report.dex is not None:
+        print_dex(console, report.dex)
+    for flag in report.flags:
+        console.print(f"[bold green]flag:[/] {escape(flag)}")
+    print_notes(console, report.notes)
+    for command in report.commands:
+        console.print(f"[green]$[/] {escape(command)}")
+
+
+def print_elf(console: Console, report) -> None:
+    """An ELF: what it is, what it needs, and what is odd about it."""
+    facts = Table(title="ELF", show_header=False, expand=False)
+    facts.add_column("name", style="cyan")
+    facts.add_column("value")
+    facts.add_row("format", f"ELF{report.bits}, {report.endian} endian")
+    facts.add_row("kind", report.kind)
+    facts.add_row("machine", report.machine)
+    facts.add_row("entry point", f"{report.entry:#x}")
+    if report.interpreter:
+        facts.add_row("interpreter", report.interpreter)
+    if report.soname:
+        facts.add_row("soname", report.soname)
+    if report.needed:
+        facts.add_row("needs", safe(", ".join(report.needed), 200))
+    if report.runpath:
+        facts.add_row("runpath", report.runpath)
+    facts.add_row("symbols", f"{len(report.symbols)} dynamic")
+    console.print(facts)
+
+    if report.segments:
+        table = Table(title="segments", expand=True)
+        table.add_column("type", width=10)
+        table.add_column("flags", width=6)
+        table.add_column("offset", justify="right", width=12)
+        table.add_column("in file", justify="right", width=12)
+        table.add_column("in memory", justify="right", width=12)
+        kinds = {1: "LOAD", 2: "DYNAMIC", 3: "INTERP", 4: "NOTE", 6: "PHDR", 7: "TLS"}
+        for segment in report.segments:
+            flags = segment.permissions
+            table.add_row(
+                kinds.get(segment.kind, f"{segment.kind:#x}"),
+                ("[red]" + flags + "[/]") if {"W", "X"} <= set(flags) else flags,
+                f"{segment.offset:#x}",
+                str(segment.file_size),
+                str(segment.memory_size),
+            )
+        console.print(table)
+
+    if report.sections:
+        table = Table(title="sections", expand=True)
+        table.add_column("name", width=20)
+        table.add_column("flags", width=5)
+        table.add_column("address", justify="right", width=12)
+        table.add_column("size", justify="right", width=12)
+        table.add_column("entropy", justify="right", width=8)
+        for section in report.sections:
+            if not section.name:
+                continue
+            table.add_row(
+                safe(section.name, 20),
+                section.permissions,
+                f"{section.address:#x}",
+                str(section.size),
+                f"{section.entropy:.2f}" if section.entropy else "",
+            )
+        console.print(table)
+
+    if report.notable:
+        notable = Table(title="what its imported symbols say it does", expand=True)
+        notable.add_column("symbol", ratio=2)
+        notable.add_column("meaning", ratio=3)
+        for line in report.notable:
+            name, _, meaning = line.partition(": ")
+            notable.add_row(safe(name, 50), safe(meaning, 120))
+        console.print(notable)
+    print_notes(console, report.notes)
+
+
+def print_class(console: Console, report) -> None:
+    """A Java class: its name, and every literal in its constant pool."""
+    title = f"{report.name or '(unnamed)'} ({report.version})"
+    facts = Table(title=title, show_header=False, expand=False)
+    facts.add_column("name", style="cyan")
+    facts.add_column("value")
+    if report.superclass:
+        facts.add_row("extends", report.superclass)
+    facts.add_row("literals", str(len(report.strings)))
+    facts.add_row("types referenced", str(len(report.classes)))
+    console.print(facts)
+    if report.strings:
+        console.print(Panel(safe_block("\n".join(report.strings), 4000), title="string literals"))
+    for line in report.notable:
+        console.print(f"[yellow]![/] {safe(line, 140)}")
+    print_notes(console, report.notes)
+
+
+def print_dex(console: Console, report) -> None:
+    """An Android DEX: its string table, which holds everything."""
+    facts = Table(title=f"Android DEX (version {report.version})", show_header=False)
+    facts.add_column("name", style="cyan")
+    facts.add_column("value")
+    facts.add_row("strings", str(len(report.strings)))
+    facts.add_row("classes", str(len(report.classes)))
+    if report.checksum_ok is not None:
+        facts.add_row("header checksum", "matches" if report.checksum_ok else "[red]stale[/]")
+    console.print(facts)
+    if report.classes:
+        console.print(f"[bold]classes:[/] {safe(', '.join(report.classes[:40]), 400)}")
+    if report.strings:
+        console.print(Panel(safe_block("\n".join(report.strings), 4000), title="strings"))
+    for line in report.notable:
+        console.print(f"[yellow]![/] {safe(line, 140)}")
     print_notes(console, report.notes)

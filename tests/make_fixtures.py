@@ -2722,6 +2722,344 @@ def write_winartifact_fixtures() -> None:
     )
 
 
+# ---------------------------------------------------------------------------
+# The executables that are not PEs (ideas.md 3.1 and 3.2): an ELF, a Java class
+# and a JAR, an Android DEX.
+#
+# The Java ones are written by hand *and* checked against the JDK: the test
+# compares our constant pool against `javap -v` on a class the JDK compiles from
+# source. The ELF reader is checked against the system's own binaries (/bin/ls
+# and friends) and `readelf`; the fixture here exists so the parsing has a
+# deterministic, self-contained case and the fuzzer has a seed.
+# ---------------------------------------------------------------------------
+
+
+def elf64_binary(
+    needed: list[str] | None = None,
+    runpath: str = "",
+    rwx_segment: bool = True,
+    overlay: bytes = b"",
+    secret: bytes = b"",
+) -> bytes:
+    """A small but structurally real ELF64 executable.
+
+    Enough of one to exercise the triage: a loadable segment (writable *and*
+    executable, which is the packer signal), an interpreter, a dynamic table
+    naming its libraries, a `.dynstr`/`.dynsym` pair, and optionally bytes
+    appended after everything, which is the case no normal tool mentions.
+    """
+    needed = needed or ["libc.so.6", "libcrypto.so.3"]
+    interpreter = b"/lib64/ld-linux-x86-64.so.2\x00"
+
+    # --- the string table the dynamic entries point into
+    dynstr = b"\x00"
+    offsets = {}
+    for name in [*needed, runpath] if runpath else needed:
+        offsets[name] = len(dynstr)
+        dynstr += name.encode() + b"\x00"
+    symbols = ["EVP_DecryptInit_ex", "PKCS5_PBKDF2_HMAC", "getenv", "mprotect"]
+    symbol_offsets = {}
+    for name in symbols:
+        symbol_offsets[name] = len(dynstr)
+        dynstr += name.encode() + b"\x00"
+
+    dynsym = bytes(24)  # the first entry is always empty
+    for name in symbols:
+        dynsym += struct.pack("<IBBHQQ", symbol_offsets[name], 0x12, 0, 0, 0, 0)
+
+    dynamic = b""
+    for name in needed:
+        dynamic += struct.pack("<QQ", 1, offsets[name])  # DT_NEEDED
+    if runpath:
+        dynamic += struct.pack("<QQ", 29, offsets[runpath])  # DT_RUNPATH
+    dynamic += struct.pack("<QQ", 0, 0)  # DT_NULL
+
+    # --- the section name table
+    names = [
+        "",
+        ".interp",
+        ".text",
+        ".dynstr",
+        ".dynsym",
+        ".dynamic",
+        ".data",
+        ".shstrtab",
+    ]
+    shstrtab = b""
+    name_offsets = {}
+    for name in names:
+        name_offsets[name] = len(shstrtab)
+        shstrtab += name.encode() + b"\x00"
+
+    # --- lay the file out: header, program headers, then the section contents
+    header_size = 64
+    ph_entry = 56
+    ph_count = 3
+    body_start = header_size + ph_entry * ph_count
+    blocks: list[tuple[str, bytes, int, int]] = []  # (name, data, type, flags)
+    text = b"\x48\x31\xc0\xc3" * 32 + secret
+    blocks.append((".interp", interpreter, 1, 0x2))
+    blocks.append((".text", text, 1, 0x2 | 0x4))
+    blocks.append((".dynstr", dynstr, 3, 0x2))
+    blocks.append((".dynsym", dynsym, 11, 0x2))
+    blocks.append((".dynamic", dynamic, 6, 0x2 | 0x1))
+    blocks.append((".data", b"CYBN_data\x00" + bytes(16), 1, 0x2 | 0x1))
+    blocks.append((".shstrtab", shstrtab, 3, 0))
+
+    offset = body_start
+    placed = []
+    for name, payload, kind, flags in blocks:
+        placed.append((name, payload, kind, flags, offset))
+        offset += len(payload)
+    sh_offset = offset
+    sh_count = len(placed) + 1  # plus the empty section 0
+
+    sections = bytes(64)  # section 0 is all zeros, by definition
+    dynstr_index = [name for name, *_rest in placed].index(".dynstr") + 1
+    for name, payload, kind, flags, at in placed:
+        # A symbol or dynamic section has to say which string table names it
+        # (sh_link) and how big its entries are (sh_entsize), or readelf
+        # complains - and a tool that complains about the fixture is a tool
+        # that cannot be used to check it.
+        link = dynstr_index if name in (".dynsym", ".dynamic") else 0
+        entry_size = {".dynsym": 24, ".dynamic": 16}.get(name, 0)
+        sections += struct.pack(
+            "<IIQQQQIIQQ",
+            name_offsets[name],
+            kind,
+            flags,
+            0x400000 + at,  # address
+            at,
+            len(payload),
+            link,
+            0,
+            1,
+            entry_size,
+        )
+
+    interp_at = next(at for name, _p, _k, _f, at in placed if name == ".interp")
+    dynamic_at = next(at for name, _p, _k, _f, at in placed if name == ".dynamic")
+    dynamic_size = next(len(p) for name, p, _k, _f, _at in placed if name == ".dynamic")
+    program_headers = b""
+    # PT_PHDR-less and simple on purpose: one LOAD, the interpreter, the dynamic table.
+    program_headers += struct.pack(
+        "<IIQQQQQQ",
+        1,  # PT_LOAD
+        0x5 | (0x2 if rwx_segment else 0),  # R-X, or RWX when asked
+        0,
+        0x400000,
+        0x400000,
+        sh_offset,
+        sh_offset,
+        0x1000,
+    )
+    program_headers += struct.pack(
+        "<IIQQQQQQ",
+        3,
+        0x4,
+        interp_at,
+        0x400000 + interp_at,
+        0,
+        len(interpreter),
+        len(interpreter),
+        1,
+    )
+    program_headers += struct.pack(
+        "<IIQQQQQQ",
+        2,  # PT_DYNAMIC
+        0x6,
+        dynamic_at,
+        0x400000 + dynamic_at,
+        0,
+        dynamic_size,
+        dynamic_size,
+        8,
+    )
+
+    header = bytearray(64)
+    header[0:4] = b"\x7fELF"
+    header[4] = 2  # 64-bit
+    header[5] = 1  # little endian
+    header[6] = 1  # version
+    header[7] = 0  # System V ABI
+    struct.pack_into(
+        "<HHIQQQIHHHHHH",
+        header,
+        16,
+        2,  # ET_EXEC
+        0x3E,  # x86-64
+        1,
+        0x400000 + body_start,  # entry point
+        header_size,  # program header offset
+        sh_offset,
+        0,  # flags
+        header_size,
+        ph_entry,
+        ph_count,
+        64,  # section header entry size
+        sh_count,
+        sh_count - 1,
+    )  # the string table is the last section
+    body = b"".join(payload for _n, payload, _k, _f, _at in placed)
+    return bytes(header) + program_headers + body + sections + overlay
+
+
+def java_constant(tag: int, payload: bytes) -> bytes:
+    return bytes([tag]) + payload
+
+
+def java_utf8(text: str) -> bytes:
+    raw = text.encode("utf-8")
+    return java_constant(1, struct.pack(">H", len(raw)) + raw)
+
+
+def java_class(name: str, literals: list[str], classes: list[str]) -> bytes:
+    """A Java class file holding the given literals in its constant pool.
+
+    Written by hand, but the test checks a *JDK-compiled* class against `javap`
+    as well, so the reader is not only ever tested against our own writer.
+    """
+    pool = b""
+    index = 1
+    utf8_index: dict[str, int] = {}
+
+    def add_utf8(text: str) -> int:
+        nonlocal pool, index
+        if text in utf8_index:
+            return utf8_index[text]
+        pool += java_utf8(text)
+        utf8_index[text] = index
+        index += 1
+        return utf8_index[text]
+
+    this_name = add_utf8(name)
+    object_name = add_utf8("java/lang/Object")
+    class_indexes = []
+    for other in classes:
+        class_indexes.append(add_utf8(other))
+    literal_indexes = [add_utf8(text) for text in literals]
+    code_name = add_utf8("Code")
+
+    # The Class and String constants that point at those UTF-8 entries.
+    this_class = index
+    pool += java_constant(7, struct.pack(">H", this_name))
+    index += 1
+    super_class = index
+    pool += java_constant(7, struct.pack(">H", object_name))
+    index += 1
+    for target in class_indexes:
+        pool += java_constant(7, struct.pack(">H", target))
+        index += 1
+    for target in literal_indexes:
+        pool += java_constant(8, struct.pack(">H", target))
+        index += 1
+
+    header = struct.pack(">IHH", 0xCAFEBABE, 0, 61) + struct.pack(">H", index)
+    body = struct.pack(
+        ">HHHHHHH",
+        0x0021,  # public super
+        this_class,
+        super_class,
+        0,  # interfaces
+        0,  # fields
+        0,  # methods
+        0,  # attributes
+    )
+    assert code_name  # kept in the pool: a real class always has it
+    return header + pool + body
+
+
+def java_jar(classes: list[tuple[str, bytes]], main_class: str) -> bytes:
+    """A JAR: a ZIP of class files plus a manifest naming the entry point."""
+    buffer = io.BytesIO()
+    manifest = f"Manifest-Version: 1.0\r\nMain-Class: {main_class}\r\n\r\n"
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+        info = zipfile.ZipInfo("META-INF/MANIFEST.MF", date_time=(2026, 1, 1, 0, 0, 0))
+        archive.writestr(info, manifest)
+        for name, payload in classes:
+            info = zipfile.ZipInfo(name, date_time=(2026, 1, 1, 0, 0, 0))
+            archive.writestr(info, payload)
+    return buffer.getvalue()
+
+
+def dex_file(strings: list[str], types: list[str]) -> bytes:
+    """A minimal Android DEX holding a string table and a type table.
+
+    The header's checksum (adler32 of everything after it) and signature (SHA-1
+    of everything after the signature field) are computed properly, so the
+    integrity checks a real tool makes do pass.
+    """
+    every = strings + types
+    data = b""
+    offsets = []
+    for text in every:
+        offsets.append(len(data))
+        raw = text.encode("utf-8")
+        data += bytes([len(text)]) + raw + b"\x00"  # ULEB128 for lengths under 128
+
+    header_size = 112
+    string_ids_off = header_size
+    type_ids_off = string_ids_off + 4 * len(every)
+    data_off = type_ids_off + 4 * len(types)
+    string_ids = b"".join(struct.pack("<I", data_off + offset) for offset in offsets)
+    # A type id is an *index into the string table*, which is why the class
+    # names come out of the strings the reader already has.
+    type_ids = b"".join(struct.pack("<I", len(strings) + i) for i in range(len(types)))
+
+    total = data_off + len(data)
+    header = bytearray(header_size)
+    header[0:8] = b"dex\n035\x00"
+    struct.pack_into("<I", header, 32, total)
+    struct.pack_into("<I", header, 36, header_size)
+    struct.pack_into("<I", header, 40, 0x12345678)
+    struct.pack_into("<II", header, 56, len(every), string_ids_off)
+    struct.pack_into("<II", header, 64, len(types), type_ids_off)
+    struct.pack_into("<II", header, 104, len(data), data_off)
+    body = bytes(header) + string_ids + type_ids + data
+    signature = hashlib.sha1(body[32:]).digest()  # noqa: S324 - the format says SHA-1
+    body = body[:12] + signature + body[32:]
+    checksum = zlib.adler32(body[12:]) & 0xFFFFFFFF
+    return body[:8] + struct.pack("<I", checksum) + body[12:]
+
+
+def write_executable_fixtures() -> None:
+    """An ELF, a Java class, a JAR and a DEX."""
+    write(
+        "executable_dropper.elf",
+        elf64_binary(
+            needed=["libc.so.6", "libcrypto.so.3"],
+            runpath="/tmp/lib",
+            rwx_segment=True,
+            overlay=small_zip("payload.txt", b"CYBN{elf_overlay}"),
+            secret=b"CYBN_elf_text\x00",
+        ),
+    )
+    first = java_class(
+        "Secret",
+        ["AES/CBC/PKCS5Padding", "0123456789abcdef", "CYBN{java_literal}"],
+        ["javax/crypto/Cipher", "javax/crypto/spec/SecretKeySpec", "java/util/Base64"],
+    )
+    write("executable_secret.class", first)
+    second = java_class("Helper", ["http://10.0.0.5/stage2"], ["java/net/URL"])
+    write(
+        "executable_secret.jar",
+        java_jar([("Secret.class", first), ("Helper.class", second)], "Secret"),
+    )
+    write(
+        "executable_app.dex",
+        dex_file(
+            [
+                "AES/CBC/NoPadding",
+                "CYBN{dex_string_table}",
+                "doFinal",
+                "javax/crypto/Cipher",
+                "http://10.0.0.9/c2",
+            ],
+            ["Lcom/example/Main;", "Ljava/lang/String;"],
+        ),
+    )
+
+
 def main() -> None:
     FIXTURES.mkdir(exist_ok=True)
     print(f"writing fixtures to {FIXTURES}")
@@ -2912,6 +3250,9 @@ def main() -> None:
 
     # --- Windows artefacts: what was run, and when (ideas.md 2.4) ---
     write_winartifact_fixtures()
+
+    # --- the executables that are not PEs (ideas.md 3.1) ---
+    write_executable_fixtures()
 
 
 if __name__ == "__main__":

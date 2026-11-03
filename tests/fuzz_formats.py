@@ -53,6 +53,7 @@ from ctfc.core import (  # noqa: E402
     dockerimg,
     embedded,
     evtx,
+    executable,
     hive,
     lnk,
     luks,
@@ -165,6 +166,16 @@ READERS: tuple[Reader, ...] = (
     Reader("msg", msg.analyse, (msg.MsgError,), ("*.msg", "*.doc")),
     # Windows artefacts.
     Reader("lnk", lnk.analyse, (lnk.LnkError,), ("*.lnk",)),
+    # The executables that are not PEs.
+    Reader(
+        "executable",
+        lambda data: executable.analyse(data),
+        (executable.ExecutableError,),
+        ("executable_*", "*.elf", "*.class", "*.jar", "*.dex"),
+    ),
+    Reader("elf", executable.read_elf, (executable.ExecutableError,), ("*.elf",)),
+    Reader("javaclass", executable.read_class, (executable.ExecutableError,), ("*.class",)),
+    Reader("dex", executable.read_dex, (executable.ExecutableError,), ("*.dex",)),
     Reader(
         "winartifact",
         winartifact.analyse,

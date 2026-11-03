@@ -1626,3 +1626,89 @@ generic flag pattern `[A-Za-z0-9_]{2,15}\{...\}` perfectly, and Windows is full
 of GUIDs in braces: volume paths, CLSIDs, jump list names, PE resources. They
 are now rejected in `flags.py`, which stops a prefetch file from proudly
 reporting a volume GUID as the flag.
+
+## 26. The executables that are not PEs (`ctfc/core/executable.py`)
+
+`ctfc pe` covers Windows; `ctfc exe` covers the other three, and each is read
+for one specific thing.
+
+### ELF
+
+`readelf` is installed everywhere and prints more than this does. What `ctfc exe`
+adds is the *triage reading* - the five things that make a binary unusual:
+
+- a loadable segment that is **writable and executable**, which is either a
+  packer or self-modifying code;
+- **no section headers at all**, which is what a packer leaves behind (the
+  program only needs the segments, so the section table is dead weight);
+- a section whose entropy is above 7.2, which is packed data rather than code;
+- a `RUNPATH` the loader searches first, which is a hijacking path if it is
+  writable;
+- **bytes after the last section or segment**, which no normal tool mentions.
+
+That last one needed care. The section header table itself normally sits at the
+very end of an ELF, after all the section data, so the "end of the file" is the
+maximum of every section end, every segment end **and** the two header tables -
+otherwise every binary on the system looks like it has an appended payload. The
+test asserts exactly that on `/bin/ls`, `/bin/bash` and `/usr/bin/python3`.
+
+The dynamic table gives the libraries (`DT_NEEDED`), the soname and the runpath;
+`.dynsym` plus `.dynstr` give the imported symbols, which survive stripping and
+are the only guide left in a stripped binary. Symbols like `EVP_DecryptInit_ex`,
+`PKCS5_PBKDF2_HMAC`, `mprotect` or `system` are named with what they imply.
+
+### Java: the constant pool is the answer
+
+A `.class` file holds **every string the class uses in one block, in clear**: the
+key, the URL, the password, the flag. There is no need to decompile anything to
+read them.
+
+The pool is a list of tagged entries with two traps, both from 1995: it is
+**1-indexed**, and a `long` or a `double` takes **two slots** - so a parser that
+counts entries one at a time drifts out of alignment the moment one appears.
+`CONSTANT_Utf8` entries hold the text; a `CONSTANT_String` entry is a *pointer*
+to one, which is how the literals get told apart from the type and method names.
+A class name takes two hops as well: `this_class` points at a `Class` constant,
+which points at the UTF-8 entry with the name.
+
+The text is Java's "modified UTF-8", where a NUL is encoded as `c0 80` -
+something Python's decoder rejects, so that substitution is undone first. It
+matters because an obfuscator will happily put a NUL in a string, and the whole
+class would otherwise fail to decode.
+
+A `.jar` is a ZIP of class files, so it is swept rather than parsed: every
+class's pool in one list, plus the manifest's `Main-Class`. The test compares
+our pool against `javap -v` on a class the **JDK itself compiles**, so the
+reader is checked against Oracle's parser and not only against our own writer.
+
+### Android DEX
+
+Same idea, better format for it. A DEX begins with a table of **every string in
+the program** as an array of file offsets, each pointing at a ULEB128 character
+count followed by MUTF-8 bytes. Following that array takes twenty lines and
+gives what `strings` cannot. The type table is a list of indexes *into the
+string table*, so the class names come out of strings already read.
+
+The header's own `checksum` is an adler32 of everything after it, which is a
+free integrity check: a DEX edited after being built usually has a stale one,
+and the report says so.
+
+### .NET string literals (`ctfc pe`)
+
+`ctfc pe` used to say "it is a .NET assembly, use dnSpy" and stop. A C# program's
+strings are not in the data section - they are in the **metadata heaps**, which
+is why `strings` on a C# binary shows namespace names and nothing else.
+
+The CLR data directory points at a 72-byte CLI header, whose `MetaData` field
+points at a root beginning with `BSJB`. After the runtime version string come a
+flags word, a stream count, and one small header per stream. Two streams matter:
+`#Strings`, which is NUL-separated UTF-8 and holds every *name* (types, methods,
+fields), and **`#US`**, which holds the string *literals* the code uses - each a
+compressed integer length followed by UTF-16LE. That is where a hard-coded key,
+URL or password in a C# program actually is, and it is now printed, searched for
+flags, and in the JSON.
+
+The compressed integer is ECMA-335's: the top bits of the first byte say whether
+it is one, two or four bytes long. Getting that wrong shifts the whole heap by
+one and produces mojibake, which is a good self-check - the literals either all
+read or all do not.
