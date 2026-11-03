@@ -241,3 +241,25 @@ def test_every_score_carries_a_reason():
         number, reasons = score(data, default_flagset())
         assert 0.0 <= number <= 1.0
         assert reasons, f"no reason given for {data[:20]!r}"
+
+
+def test_a_weak_magic_number_does_not_outrank_text():
+    """`00 00 01 00` is an ICO header and also the start of a lot of noise.
+
+    A weak (two- to four-byte) signature used to be worth 0.6, which is exactly
+    `auto.XOR_MIN_SCORE`, so a junk XOR result beginning with four such bytes
+    outranked a readable decoding. It must now sit below that bar.
+    """
+    noise = bytes([0, 0, 1, 0]) + RNG.randbytes(60)
+    weak = value_of(noise)
+    _report("a weak magic number on noise", {"ICO header + noise": weak})
+    assert weak < XOR_MIN_SCORE
+    assert weak > SYM_MIN_SCORE  # still worth saying "this may be a file"
+    assert weak < value_of(ENGLISH)
+
+
+def test_a_strong_magic_number_still_answers_the_question():
+    png = (FIXTURES / "png_with_zip.png").read_bytes()[:400]
+    value = value_of(png)
+    _report("a strong magic number", {"PNG header": value})
+    assert value >= READS_FINE

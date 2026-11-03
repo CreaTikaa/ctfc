@@ -1712,3 +1712,67 @@ The compressed integer is ECMA-335's: the top bits of the first byte say whether
 it is one, two or four bytes long. Getting that wrong shifts the whole heap by
 one and produces mojibake, which is a good self-check - the literals either all
 read or all do not.
+
+## 27. The encoding long tail (`ctfc/core/encodings.py`, `ctfc/core/classical.py`)
+
+`docs/ideas.md` 3.3 asked the honest question about the long tail of encodings
+and classical ciphers: is dcode.fr not simply the better answer? The rule that
+came out of it: **anything whose decoding is deterministic belongs here**,
+because `auto` can then just try it and let the scoring decide. Anything that
+needs a key square typed in by hand stays with dcode.
+
+Added as decoders, so they chain inside `auto` like base64 does:
+
+- **Base45** (RFC 9285), what a QR-coded certificate is written in. Three
+  characters carry two bytes as a base-45 number with the **least significant
+  digit first**, which is the thing that catches everyone out. The one real trap
+  is that a **space is a valid base45 character** (index 36), so the usual
+  "squeeze the whitespace out" step corrupts the value - RFC 9285's own example,
+  `%69 VD92EX0`, has one in the middle. The published test vectors are in the
+  test file.
+- **basE91**, denser than base64: each character *pair* carries 13 or 14 bits
+  depending on whether its low 13 bits exceed 88, so it is a bit queue rather
+  than a table.
+- **Z85** (ZeroMQ), base85 over an alphabet that is safe in source code, with no
+  padding form at all - a length that is not a multiple of five is simply not
+  Z85.
+- **uuencode**, which announces itself with `begin 644 name` and whose line
+  length is encoded as `32 + n` (hence every full line starting with `M`).
+- **Morse**, **Bacon** (both the original 24-letter table and the modern
+  26-letter one), **Polybius**, **tap code** and **A1Z26**. These are ciphers in
+  name only: none has a key.
+
+The one lesson from adding them: with an alphabet that small, **`applicable` is
+the whole design**. The first version accepted three Morse symbols, four digits
+for A1Z26 and two Bacon groups - and `auto` promptly "decoded" four stray digits
+inside a base64 blob as the A1Z26 text `EE HB`. The minimum amount of material
+is now explicit (`MIN_MORSE_SYMBOLS`, `MIN_SQUARE_PAIRS`, `MIN_BACON_GROUPS`,
+`MIN_A1Z26_NUMBERS`), and still far below any real challenge.
+
+That false positive also exposed a scoring bug worth keeping in mind: a **weak**
+magic number used to be worth 0.6, which is exactly `auto.XOR_MIN_SCORE`. Since
+`00 00 01 00` is an ICO header *and* the start of a great deal of noise, a junk
+XOR result that happened to begin with four such bytes outranked a readable
+decoding. Weak signatures are now 0.45 - above "this is noise", below "this
+reads".
+
+### Beaufort
+
+The one keyed cipher added. Beaufort computes `key letter - text letter`, where
+Vigenère *adds* the key - so the cipher is **its own inverse**, which is why the
+Hagelin machines needed no encrypt/decrypt switch, and why there is nothing to
+try twice here.
+
+Solving it reuses the Vigenère machinery with two changes, both of which were
+found by it getting the answer wrong first:
+
+- the key length is re-ranked **by the index of coincidence alone**.
+  `vigenere_key_lengths` ranks its guesses by how well each column solves as a
+  *Caesar* shift, and a Beaufort column is a *reflected* alphabet, so that solve
+  does not fit and the right length gets pushed down the list. The IoC itself is
+  unaffected by the reflection, which is why it is the measurement to trust here;
+- a key length that is a multiple of the real one fits equally well, so
+  `lemonlemon` turns up beside `lemon`. The existing `reduce_key` takes the
+  **majority letter at each position** across the repeats, which matters:
+  truncating to the first period inherits whatever stray letter a short text put
+  in that copy, and gives `lemoe`.

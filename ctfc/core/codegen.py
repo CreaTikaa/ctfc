@@ -16,7 +16,7 @@ from ctfc.core.encodings import DECODERS_BY_NAME
 
 INLINE_LIMIT = 512  # inputs bigger than this are read from a file in the snippet
 # Steps written by core/classical.py (milestone M7).
-CLASSICAL_OPERATIONS = ("caesar", "affine", "atbash", "vigenere", "railfence")
+CLASSICAL_OPERATIONS = ("caesar", "affine", "atbash", "vigenere", "beaufort", "railfence")
 
 
 @dataclass(frozen=True)

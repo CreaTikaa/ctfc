@@ -39,6 +39,16 @@ FRENCH_FREQ = [
     7.10, 5.80, 2.52, 1.36, 6.69, 7.95, 7.24, 6.31, 1.84, 0.05, 0.43, 0.13, 0.33,
 ]  # fmt: skip
 
+# A file type recognised by its magic bytes. The strong value is for a long,
+# distinctive signature (%PDF-, \x89PNG): finding one *is* the answer to
+# "what is this?". The weak one is for a two- to four-byte signature, which
+# random bytes hit by accident - `00 00 01 00` is an ICO header and also the
+# start of a great deal of noise. It used to be 0.6, which is exactly
+# `auto.XOR_MIN_SCORE`, so a junk XOR result that happened to begin with four
+# such bytes outranked readable text.
+STRONG_MAGIC = 0.85
+WEAK_MAGIC = 0.45
+
 # Text scoring this well counts as readable: `_text_score` tops out near 0.88
 # for plain English, so this is "as good as prose gets", not "nearly perfect".
 READABLE_SURROUND = 0.85
@@ -174,7 +184,7 @@ def score(
     signature = match_signature(data)
     if signature is not None:
         reasons.append(f"{signature.name} magic bytes at offset {signature.offset}")
-        best = max(best, 0.6 if signature.weak else 0.85)
+        best = max(best, WEAK_MAGIC if signature.weak else STRONG_MAGIC)
 
     stats = text_stats(data)
     text_score = _text_score(stats)

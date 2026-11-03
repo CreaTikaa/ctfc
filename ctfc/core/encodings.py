@@ -746,7 +746,736 @@ def zero_width_bits(data, low_is_one):
 # The registry: order = order of trial in `auto` (cheap and common first)
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# The encoding long tail (ideas.md 3.3): the ones `auto` can try on its own.
+#
+# The rule for being in here rather than linked off to dcode.fr is that the
+# decoding has to be *deterministic* - no key, no interactive choice - so that
+# `auto` can simply try it and let the scoring decide whether it worked.
+# ---------------------------------------------------------------------------
+
+# Base45 (RFC 9285): what an EU digital covid certificate is written in, and
+# generally what is used when the result has to survive a QR code.
+B45_ALPHABET = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ $%*+-./:"
+# basE91: denser than base64, because it packs 13 or 14 bits per character pair.
+B91_ALPHABET = (
+    string.ascii_uppercase
+    + string.ascii_lowercase
+    + string.digits
+    + "!#$%&()*+,./:;<=>?@[]^_`{|}~"
+    + chr(34)
+)
+# Z85 (ZeroMQ): base85 with an alphabet chosen to be safe inside source code.
+Z85_ALPHABET = (
+    string.digits + string.ascii_lowercase + string.ascii_uppercase + ".-:+=^!/*?&<>()[]{}@%$#"
+)
+UU_BEGIN = re.compile(rb"^begin[ \t]+[0-7]{3,4}[ \t]+\S", re.MULTILINE)
+
+
+def base45_ok(data: bytes) -> bool:
+    text = as_text(data)
+    if text is None:
+        return False
+    # A space is a *valid base45 character* (index 36), so only line endings and
+    # tabs may be stripped - squeezing the whitespace out would corrupt the
+    # value. RFC 9285's own example, "%69 VD92EX0", has one in the middle.
+    stripped = text.strip("\r\n\t")
+    # Three characters carry two bytes, so the length is 3n or 3n+2 - never 3n+1.
+    return (
+        len(stripped) >= 4
+        and len(stripped) % 3 != 1
+        and set(stripped) <= set(B45_ALPHABET)
+        and any(char.isdigit() for char in stripped)
+    )
+
+
+def base45_decode(data: bytes) -> bytes:
+    """Base45 (RFC 9285): three characters carry two bytes, least digit first.
+
+    Each group is a base-45 number written with its *least* significant digit
+    first, which is the thing that catches everyone out. A final group of two
+    characters carries a single byte.
+    """
+    text = data.decode("ascii").strip("\r\n\t")
+    out = bytearray()
+    for start in range(0, len(text), 3):
+        chunk = text[start : start + 3]
+        value = 0
+        for position, char in enumerate(chunk):
+            index = B45_ALPHABET.find(char)
+            if index < 0:
+                raise DecodeError(f"invalid base45 character {char!r}")
+            value += index * 45**position
+        if len(chunk) == 3:
+            if value > 0xFFFF:
+                raise DecodeError("a base45 group is larger than two bytes")
+            out += value.to_bytes(2, "big")
+        elif len(chunk) == 2:
+            if value > 0xFF:
+                raise DecodeError("the last base45 group is larger than one byte")
+            out.append(value)
+        else:
+            raise DecodeError("a base45 string cannot end with a single character")
+    if not out:
+        raise DecodeError("empty base45 value")
+    return bytes(out)
+
+
+def base45_encode(data: bytes) -> str:
+    """The inverse, used by the tests: a round trip is the cheapest check there is."""
+    out = ""
+    for start in range(0, len(data), 2):
+        chunk = data[start : start + 2]
+        value = int.from_bytes(chunk, "big")
+        for _ in range(3 if len(chunk) == 2 else 2):
+            value, rest = divmod(value, 45)
+            out += B45_ALPHABET[rest]
+    return out
+
+
+def base91_ok(data: bytes) -> bool:
+    text = as_text(data)
+    if text is None or len(text) < 8 or set(text) > set(B91_ALPHABET):
+        return False
+    # Almost any word is valid basE91, so ask for the shape of real output: both
+    # letter cases and some of the punctuation only basE91 uses.
+    return any(char.isupper() for char in text) and any(
+        char in "!#$%&()*+,./:;<=>?@[]^_`{|}~" for char in text
+    )
+
+
+def base91_decode(data: bytes) -> bytes:
+    """basE91: a bit queue, filled 13 or 14 bits at a time.
+
+    Each pair of characters is a number below 91*91. When its low 13 bits are
+    above 88 the pair carried 13 bits, otherwise 14 - which is what makes basE91
+    denser than base64, and why it cannot be done with a lookup table.
+    """
+    decoded = bytearray()
+    accumulator = 0
+    bits = 0
+    value = -1
+    for char in data.decode("ascii"):
+        index = B91_ALPHABET.find(char)
+        if index < 0:
+            continue  # whitespace and line breaks are not part of the encoding
+        if value < 0:
+            value = index
+            continue
+        value += index * 91
+        accumulator |= value << bits
+        bits += 13 if (value & 8191) > 88 else 14
+        while bits > 7:
+            decoded.append(accumulator & 255)
+            accumulator >>= 8
+            bits -= 8
+        value = -1
+    if value >= 0:
+        decoded.append((accumulator | value << bits) & 255)
+    if not decoded:
+        raise DecodeError("empty basE91 value")
+    return bytes(decoded)
+
+
+def base91_encode(data: bytes) -> str:
+    """The inverse, for the tests."""
+    out = ""
+    accumulator = 0
+    bits = 0
+    for byte in data:
+        accumulator |= byte << bits
+        bits += 8
+        if bits > 13:
+            value = accumulator & 8191
+            if value > 88:
+                accumulator >>= 13
+                bits -= 13
+            else:
+                value = accumulator & 16383
+                accumulator >>= 14
+                bits -= 14
+            out += B91_ALPHABET[value % 91] + B91_ALPHABET[value // 91]
+    if bits:
+        out += B91_ALPHABET[accumulator % 91]
+        if bits > 7 or accumulator > 90:
+            out += B91_ALPHABET[accumulator // 91]
+    return out
+
+
+def z85_ok(data: bytes) -> bool:
+    text = as_text(data)
+    if text is None:
+        return False
+    stripped = "".join(text.split())
+    # Five characters carry four bytes, and Z85 has no padding form at all.
+    return (
+        len(stripped) >= 5
+        and len(stripped) % 5 == 0
+        and set(stripped) <= set(Z85_ALPHABET)
+        and any(char.isdigit() for char in stripped)
+    )
+
+
+def z85_decode(data: bytes) -> bytes:
+    """Z85: base85 over ZeroMQ's alphabet, five characters to four bytes."""
+    text = "".join(data.decode("ascii").split())
+    if len(text) % 5:
+        raise DecodeError(f"a Z85 string is a multiple of five characters, not {len(text)}")
+    out = bytearray()
+    for start in range(0, len(text), 5):
+        value = 0
+        for char in text[start : start + 5]:
+            index = Z85_ALPHABET.find(char)
+            if index < 0:
+                raise DecodeError(f"invalid Z85 character {char!r}")
+            value = value * 85 + index
+        if value > 0xFFFFFFFF:
+            raise DecodeError("a Z85 group overflows four bytes")
+        out += value.to_bytes(4, "big")
+    return bytes(out)
+
+
+def z85_encode(data: bytes) -> str:
+    """The inverse, for the tests. Z85 only encodes whole groups of four bytes."""
+    if len(data) % 4:
+        raise DecodeError("Z85 encodes whole groups of four bytes")
+    out = ""
+    for start in range(0, len(data), 4):
+        value = int.from_bytes(data[start : start + 4], "big")
+        group = ""
+        for _ in range(5):
+            value, rest = divmod(value, 85)
+            group = Z85_ALPHABET[rest] + group
+        out += group
+    return out
+
+
+def uu_ok(data: bytes) -> bool:
+    """uuencode announces itself: a `begin <mode> <name>` line."""
+    return UU_BEGIN.search(data[:4096]) is not None
+
+
+def uu_decode(data: bytes) -> bytes:
+    """uuencode: a length character, then four characters per three bytes.
+
+    The length character is `32 + n`, which is why every full line of a
+    uuencoded block starts with `M` (32 + 45 = 77 = 'M'). A line holding `end`,
+    a backtick or a space ends the block.
+    """
+    out = bytearray()
+    started = False
+    for raw in data.split(b"\n"):
+        line = raw.rstrip(b"\r")
+        if not started:
+            started = bool(UU_BEGIN.match(line))
+            continue
+        if line.strip() in (b"end", b"`", b""):
+            break
+        try:
+            out += binascii.a2b_uu(line)
+        except binascii.Error:
+            # A short final line is common in the wild: keep what decoded rather
+            # than throw the whole block away.
+            break
+    if not out:
+        raise DecodeError("no uuencoded data after the begin line")
+    return bytes(out)
+
+
+B45_HELPER = """B45 = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ $%*+-./:"
+
+
+def base45_decode(data: bytes) -> bytes:
+    # Three characters carry two bytes, least significant digit first. A space
+    # is a valid base45 character, so only line endings may be stripped.
+    text = data.decode().strip("\r\n\t")
+    out = bytearray()
+    for start in range(0, len(text), 3):
+        chunk = text[start : start + 3]
+        value = sum(B45.index(char) * 45**i for i, char in enumerate(chunk))
+        out += value.to_bytes(2, "big") if len(chunk) == 3 else bytes([value])
+    return bytes(out)
+"""
+
+B91_HELPER = """import string
+
+B91 = (
+    string.ascii_uppercase + string.ascii_lowercase + string.digits
+    + "!#$%&()*+,./:;<=>?@[]^_`{|}~" + chr(34)
+)
+
+
+def base91_decode(data: bytes) -> bytes:
+    # A bit queue: each character pair carries 13 or 14 bits.
+    out, accumulator, bits, value = bytearray(), 0, 0, -1
+    for char in data.decode():
+        index = B91.find(char)
+        if index < 0:
+            continue
+        if value < 0:
+            value = index
+            continue
+        value += index * 91
+        accumulator |= value << bits
+        bits += 13 if (value & 8191) > 88 else 14
+        while bits > 7:
+            out.append(accumulator & 255)
+            accumulator >>= 8
+            bits -= 8
+        value = -1
+    if value >= 0:
+        out.append((accumulator | value << bits) & 255)
+    return bytes(out)
+"""
+
+Z85_HELPER = """import string
+
+Z85 = (
+    string.digits + string.ascii_lowercase + string.ascii_uppercase
+    + ".-:+=^!/*?&<>()[]{}@%$#"
+)
+
+
+def z85_decode(data: bytes) -> bytes:
+    # Five characters carry four bytes; there is no padding form.
+    text = "".join(data.decode().split())
+    out = bytearray()
+    for start in range(0, len(text), 5):
+        value = 0
+        for char in text[start : start + 5]:
+            value = value * 85 + Z85.index(char)
+        out += value.to_bytes(4, "big")
+    return bytes(out)
+"""
+
+UU_HELPER = """import binascii
+
+
+def uu_decode(data: bytes) -> bytes:
+    # One length character (32 + n), then four characters per three bytes.
+    out = bytearray()
+    started = False
+    for line in data.split(b"\\n"):
+        line = line.rstrip(b"\\r")
+        if not started:
+            started = line.startswith(b"begin ")
+            continue
+        if line.strip() in (b"end", b"`", b""):
+            break
+        out += binascii.a2b_uu(line)
+    return bytes(out)
+"""
+
+
+# ---------------------------------------------------------------------------
+# The classical *encodings*: Morse, Bacon, tap code, A1Z26, Polybius.
+#
+# These are ciphers in name only - none of them has a key, so each is a decoding
+# `auto` can simply try, which is what earns them a place here instead of a link
+# to dcode.fr. What they do need is a tight `applicable`: each recognises its own
+# very small character set, so a wrong one is never even attempted.
+# ---------------------------------------------------------------------------
+
+MORSE_TABLE = {
+    ".-": "A", "-...": "B", "-.-.": "C", "-..": "D", ".": "E", "..-.": "F",
+    "--.": "G", "....": "H", "..": "I", ".---": "J", "-.-": "K", ".-..": "L",
+    "--": "M", "-.": "N", "---": "O", ".--.": "P", "--.-": "Q", ".-.": "R",
+    "...": "S", "-": "T", "..-": "U", "...-": "V", ".--": "W", "-..-": "X",
+    "-.--": "Y", "--..": "Z",
+    "-----": "0", ".----": "1", "..---": "2", "...--": "3", "....-": "4",
+    ".....": "5", "-....": "6", "--...": "7", "---..": "8", "----.": "9",
+    ".-.-.-": ".", "--..--": ",", "..--..": "?", "-..-.": "/", "-....-": "-",
+    "-.--.": "(", "-.--.-": ")", ".----.": "'", "---...": ":", "-.-.-.": ";",
+    "-...-": "=", ".-.-.": "+", "..--.-": "_", ".--.-.": "@", "-.-.--": "!",
+}  # fmt: skip
+# Bacon in both forms. The original 24-letter cipher shares a code between I/J
+# and between U/V; the modern 26-letter one gives every letter its own.
+BACON24 = "ABCDEFGHIKLMNOPQRSTUWXYZ"  # I=J, U=V
+BACON26 = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+# Tap code and Polybius share one 5x5 square. Tap code merges C into K, the
+# usual Polybius square merges J into I - the only difference between them.
+TAP_SQUARE = "ABCDEFGHIJLMNOPQRSTUVWXYZ"  # K is tapped as C
+POLYBIUS_SQUARE = "ABCDEFGHIKLMNOPQRSTUVWXYZ"  # J is written as I
+# How much material each of these tiny alphabets needs before a decoding means
+# anything. They were all lower, and `auto` promptly "decoded" four stray digits
+# inside a base64 blob as the A1Z26 text "EE HB": with an alphabet this small,
+# a short run of the right characters happens by accident all the time.
+MIN_MORSE_SYMBOLS = 5
+MIN_SQUARE_PAIRS = 5
+MIN_BACON_GROUPS = 3
+MIN_A1Z26_NUMBERS = 6
+
+
+def morse_ok(data: bytes) -> bool:
+    text = as_text(data)
+    if text is None:
+        return False
+    stripped = text.strip()
+    if len(stripped) < 5 or set(stripped) > set(".-/| \t\r\n_"):
+        return False
+    # `_` and `|` are seen as dash and separator; demand at least a few symbols
+    # and at least one dash, or "..." alone would qualify as Morse.
+    symbols = [piece for piece in re.split(r"[\s/|]+", stripped.replace("_", "-")) if piece]
+    return len(symbols) >= MIN_MORSE_SYMBOLS and all(piece in MORSE_TABLE for piece in symbols)
+
+
+def morse_decode(data: bytes) -> bytes:
+    """Morse: letters separated by spaces, words by `/` (or a longer gap).
+
+    The separators are the whole difficulty of Morse in the wild: `/`, `|`, a
+    double space and a newline all mean "word break", and `_` is sometimes
+    written for a dash. All of them are accepted here.
+    """
+    text = as_text(data)
+    if text is None:
+        raise DecodeError("not text, so not Morse")
+    out = []
+    for word in re.split(r"\s*[/|]\s*|\s{2,}|\n", text.strip().replace("_", "-")):
+        letters = []
+        for piece in word.split():
+            letter = MORSE_TABLE.get(piece)
+            if letter is None:
+                raise DecodeError(f"{piece!r} is not a Morse symbol")
+            letters.append(letter)
+        if letters:
+            out.append("".join(letters))
+    if not out:
+        raise DecodeError("no Morse symbols found")
+    return " ".join(out).encode()
+
+
+def morse_encode(text: str) -> str:
+    """The inverse, for the tests."""
+    reverse = {value: key for key, value in MORSE_TABLE.items()}
+    words = []
+    for word in text.upper().split():
+        words.append(" ".join(reverse[char] for char in word if char in reverse))
+    return " / ".join(words)
+
+
+def _bacon_ok(data: bytes) -> bool:
+    text = as_text(data)
+    if text is None:
+        return False
+    letters = [char for char in text.upper() if char.isalnum()]
+    # Only two distinct symbols, in groups of five: that is Bacon and nothing else.
+    # The pair is usually A/B but 0/1 is just as common, so both are accepted.
+    return (
+        len(letters) >= 5 * MIN_BACON_GROUPS
+        and len(letters) % 5 == 0
+        and len(set(letters)) == 2
+        and set(letters) <= {"A", "B", "0", "1"}
+    )
+
+
+def _bacon_decode(data: bytes, alphabet: str) -> bytes:
+    text = as_text(data)
+    if text is None:
+        raise DecodeError("not text, so not Bacon")
+    letters = [char for char in text.upper() if char.isalnum()]
+    if len(letters) % 5:
+        raise DecodeError(f"{len(letters)} letters is not a whole number of Bacon groups")
+    low = min(set(letters))  # whichever symbol sorts first is the "A" of the pair
+    out = []
+    for start in range(0, len(letters), 5):
+        bits = "".join("0" if char == low else "1" for char in letters[start : start + 5])
+        index = int(bits, 2)
+        if index >= len(alphabet):
+            raise DecodeError(f"the group {bits} is outside a {len(alphabet)}-letter Bacon table")
+        out.append(alphabet[index])
+    return "".join(out).encode()
+
+
+def bacon24_ok(data: bytes) -> bool:
+    return _bacon_ok(data)
+
+
+def bacon24_decode(data: bytes) -> bytes:
+    """Bacon, the original 24-letter table: I and J share a code, U and V too."""
+    return _bacon_decode(data, BACON24)
+
+
+def bacon26_ok(data: bytes) -> bool:
+    return _bacon_ok(data)
+
+
+def bacon26_decode(data: bytes) -> bytes:
+    """Bacon, the modern 26-letter table: every letter has its own code."""
+    return _bacon_decode(data, BACON26)
+
+
+def bacon_encode(text: str, alphabet: str = BACON26) -> str:
+    """The inverse, for the tests."""
+    out = ""
+    for char in text.upper():
+        if char in alphabet:
+            out += format(alphabet.index(char), "05b").replace("0", "A").replace("1", "B")
+    return out
+
+
+def _square_pairs(text: str) -> list[tuple[int, int]] | None:
+    """Read a text as (row, column) pairs, in the two ways a square is written.
+
+    Either as digits - `11 15 42` - or as groups of taps - `. ... / ..... .`.
+    Both come back as the same list of 1-based pairs.
+    """
+    stripped = text.strip()
+    if stripped and set(stripped) <= set("12345 \t\r\n,.-/"):
+        digits = [char for char in stripped if char in "12345"]
+        if len(digits) >= 2 * MIN_SQUARE_PAIRS and len(digits) % 2 == 0:
+            return [(int(digits[i]), int(digits[i + 1])) for i in range(0, len(digits), 2)]
+    if stripped and set(stripped) <= set(". \t\r\n/|"):
+        groups = [len(piece) for piece in re.split(r"[\s/|]+", stripped) if piece]
+        if (
+            len(groups) >= 2 * MIN_SQUARE_PAIRS
+            and len(groups) % 2 == 0
+            and all(1 <= number <= 5 for number in groups)
+        ):
+            return [(groups[i], groups[i + 1]) for i in range(0, len(groups), 2)]
+    return None
+
+
+def tap_ok(data: bytes) -> bool:
+    text = as_text(data)
+    if text is None or "." not in text:
+        return False
+    return _square_pairs(text) is not None
+
+
+def tap_decode(data: bytes) -> bytes:
+    """Tap code: two groups of taps per letter, row then column, in a 5x5 square.
+
+    The prisoners' cipher. C is tapped as K, which is the only thing separating
+    it from a Polybius square.
+    """
+    text = as_text(data)
+    pairs = _square_pairs(text) if text is not None else None
+    if not pairs:
+        raise DecodeError("not a tap code: expected pairs of tap groups")
+    return _from_square(pairs, TAP_SQUARE)
+
+
+def polybius_ok(data: bytes) -> bool:
+    text = as_text(data)
+    if text is None or not any(char in "12345" for char in text):
+        return False
+    return _square_pairs(text) is not None
+
+
+def polybius_decode(data: bytes) -> bytes:
+    """A Polybius square: each letter is its row and column in a 5x5 grid.
+
+    The standard square merges J into I, which is why a decoded "JAIL" reads
+    "IAIL" - that is the cipher, not a bug.
+    """
+    text = as_text(data)
+    pairs = _square_pairs(text) if text is not None else None
+    if not pairs:
+        raise DecodeError("not a Polybius square: expected pairs of digits 1-5")
+    return _from_square(pairs, POLYBIUS_SQUARE)
+
+
+def _from_square(pairs: list[tuple[int, int]], square: str) -> bytes:
+    out = []
+    for row, column in pairs:
+        if not (1 <= row <= 5 and 1 <= column <= 5):
+            raise DecodeError(f"({row},{column}) is outside a 5x5 square")
+        out.append(square[(row - 1) * 5 + (column - 1)])
+    return "".join(out).encode()
+
+
+def square_encode(text: str, square: str = POLYBIUS_SQUARE) -> str:
+    """The inverse, for the tests: digits, row then column."""
+    out = ""
+    for char in text.upper():
+        if char in square:
+            index = square.index(char)
+            out += f"{index // 5 + 1}{index % 5 + 1}"
+    return out
+
+
+def a1z26_ok(data: bytes) -> bool:
+    text = as_text(data)
+    if text is None:
+        return False
+    stripped = text.strip()
+    if not stripped or set(stripped) > set("0123456789 \t\r\n,-.;:/|"):
+        return False
+    numbers = [piece for piece in re.split(r"[^0-9]+", stripped) if piece]
+    # Every number between 1 and 26 is the signal: as bytes those would all be
+    # control characters, so this reading is the only sensible one.
+    return len(numbers) >= MIN_A1Z26_NUMBERS and all(1 <= int(piece) <= 26 for piece in numbers)
+
+
+def a1z26_decode(data: bytes) -> bytes:
+    """A1Z26: the position of each letter in the alphabet, 1 to 26.
+
+    Word breaks are whatever separator is *not* the letter separator - a `/`, a
+    double space or a newline - so they are kept as spaces.
+    """
+    text = as_text(data)
+    if text is None:
+        raise DecodeError("not text, so not A1Z26")
+    out = []
+    for word in re.split(r"\s*[/|]\s*|\s{2,}|\n", text.strip()):
+        letters = []
+        for piece in re.split(r"[^0-9]+", word):
+            if not piece:
+                continue
+            value = int(piece)
+            if not 1 <= value <= 26:
+                raise DecodeError(f"{value} is not a letter position (1-26)")
+            letters.append(chr(ord("A") + value - 1))
+        if letters:
+            out.append("".join(letters))
+    if not out:
+        raise DecodeError("no numbers found")
+    return " ".join(out).encode()
+
+
+MORSE_HELPER = """MORSE = {
+    ".-": "A", "-...": "B", "-.-.": "C", "-..": "D", ".": "E", "..-.": "F",
+    "--.": "G", "....": "H", "..": "I", ".---": "J", "-.-": "K", ".-..": "L",
+    "--": "M", "-.": "N", "---": "O", ".--.": "P", "--.-": "Q", ".-.": "R",
+    "...": "S", "-": "T", "..-": "U", "...-": "V", ".--": "W", "-..-": "X",
+    "-.--": "Y", "--..": "Z", "-----": "0", ".----": "1", "..---": "2",
+    "...--": "3", "....-": "4", ".....": "5", "-....": "6", "--...": "7",
+    "---..": "8", "----.": "9",
+}
+
+
+def morse_decode(data: bytes) -> bytes:
+    import re
+    words = re.split(r"\\s*[/|]\\s*|\\s{2,}", data.decode().strip())
+    return " ".join(
+        "".join(MORSE[piece] for piece in word.split()) for word in words if word
+    ).encode()
+"""
+
+BACON_HELPER = """# The original 24-letter table is "ABCDEFGHIKLMNOPQRSTUWXYZ" (I=J, U=V).
+BACON = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+
+
+def bacon_decode(data: bytes) -> bytes:
+    letters = [c for c in data.decode().upper() if c.isalpha()]
+    low = min(set(letters))
+    out = ""
+    for start in range(0, len(letters), 5):
+        bits = "".join("0" if c == low else "1" for c in letters[start : start + 5])
+        out += BACON[int(bits, 2)]
+    return out.encode()
+"""
+
+SQUARE_HELPER = """SQUARE = "ABCDEFGHIKLMNOPQRSTUVWXYZ"  # Polybius: J is written as I
+# For tap code use "ABCDEFGHIJLMNOPQRSTUVWXYZ" instead: C is tapped as K.
+
+
+def square_decode(data: bytes) -> bytes:
+    digits = [c for c in data.decode() if c in "12345"]
+    out = ""
+    for i in range(0, len(digits), 2):
+        row, column = int(digits[i]), int(digits[i + 1])
+        out += SQUARE[(row - 1) * 5 + (column - 1)]
+    return out.encode()
+"""
+
+A1Z26_HELPER = """def a1z26_decode(data: bytes) -> bytes:
+    import re
+    words = re.split(r"\\s*[/|]\\s*|\\s{2,}", data.decode().strip())
+    return " ".join(
+        "".join(chr(64 + int(n)) for n in re.split(r"[^0-9]+", word) if n)
+        for word in words if word
+    ).encode()
+"""
+
+
 DECODERS: list[Decoder] = [
+    Decoder(
+        name="morse",
+        label="Morse code",
+        decode=morse_decode,
+        applicable=morse_ok,
+        imports=("re",),
+        python="data = morse_decode(data)",
+        helper=MORSE_HELPER,
+        cyberchef="From_Morse_Code('Space','Line feed')",
+    ),
+    Decoder(
+        name="bacon26",
+        label="Bacon's cipher (26-letter table)",
+        decode=bacon26_decode,
+        applicable=bacon26_ok,
+        python="data = bacon_decode(data)",
+        helper=BACON_HELPER,
+        cyberchef="Bacon_Cipher_Decode('Standard (I=J and U=V)','A/B',false)",
+    ),
+    Decoder(
+        name="bacon24",
+        label="Bacon's cipher (original 24-letter table: I=J, U=V)",
+        decode=bacon24_decode,
+        applicable=bacon24_ok,
+        python='data = bacon_decode(data)  # with BACON = "ABCDEFGHIKLMNOPQRSTUWXYZ"',
+        helper=BACON_HELPER,
+        cyberchef="Bacon_Cipher_Decode('Standard (I=J and U=V)','A/B',false)",
+    ),
+    Decoder(
+        name="polybius",
+        label="Polybius square (digit pairs in a 5x5 grid)",
+        decode=polybius_decode,
+        applicable=polybius_ok,
+        python="data = square_decode(data)",
+        helper=SQUARE_HELPER,
+    ),
+    Decoder(
+        name="tap",
+        label="tap code (tap groups in a 5x5 grid)",
+        decode=tap_decode,
+        applicable=tap_ok,
+        python='data = square_decode(data)  # with SQUARE = "ABCDEFGHIJLMNOPQRSTUVWXYZ"',
+        helper=SQUARE_HELPER,
+    ),
+    Decoder(
+        name="a1z26",
+        label="A1Z26 (letter positions in the alphabet)",
+        decode=a1z26_decode,
+        applicable=a1z26_ok,
+        imports=("re",),
+        python="data = a1z26_decode(data)",
+        helper=A1Z26_HELPER,
+        cyberchef="From_Decimal('Space',false)",
+    ),
+    Decoder(
+        name="base45",
+        label="Base45 (RFC 9285, as in a QR-coded certificate)",
+        decode=base45_decode,
+        applicable=base45_ok,
+        python="data = base45_decode(data)",
+        helper=B45_HELPER,
+    ),
+    Decoder(
+        name="base91",
+        label="basE91 (13 or 14 bits per character pair)",
+        decode=base91_decode,
+        applicable=base91_ok,
+        python="data = base91_decode(data)",
+        helper=B91_HELPER,
+    ),
+    Decoder(
+        name="z85",
+        label="Z85 (ZeroMQ's base85 alphabet)",
+        decode=z85_decode,
+        applicable=z85_ok,
+        python="data = z85_decode(data)",
+        helper=Z85_HELPER,
+    ),
+    Decoder(
+        name="uu",
+        label="uuencode (a `begin 644 name` block)",
+        decode=uu_decode,
+        applicable=uu_ok,
+        python="data = uu_decode(data)",
+        helper=UU_HELPER,
+    ),
     Decoder(
         name="hex",
         label="from hex",

@@ -728,6 +728,10 @@ ctfc exe tests/fixtures/executable_secret.jar      # every class's constant pool
 ctfc exe tests/fixtures/executable_app.dex         # the whole DEX string table
 ctfc exe /bin/ls                                   # a real ELF, no false overlay
 ctfc pe /usr/share/dotnet/sdk/*/System.Resources.Extensions.dll   # the #US literals
+ctfc auto tests/fixtures/longtail_base45.txt       # RFC 9285 base45 -> the flag
+ctfc auto tests/fixtures/longtail_morse.txt        # Morse, Bacon, A1Z26, tap, Polybius
+ctfc auto tests/fixtures/longtail_uu.txt           # a uuencoded block
+ctfc classical tests/fixtures/classical_beaufort.txt   # Beaufort, key found blind
 ctfc git <a folder with a .git>                    # the secret that was committed then removed
 ctfc jwt <token> --show-code                       # alg=none / weak HMAC secret
 ctfc time 133476575820000000                       # Windows FILETIME

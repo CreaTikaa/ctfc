@@ -25,6 +25,7 @@ mirror the encryptor, do not guess.
 | detect says | next |
 |---|---|
 | base64 / hex / base32 / charcodes text | `ctfc auto <file>` peels the layers |
+| Morse, Bacon, A1Z26, a 5x5 square, Base45/basE91/Z85, uuencode | `ctfc auto <file>` tries all of them: none has a key |
 | a known file type, or data after the end of one | `binwalk -e`, `ctfc scan <folder>` |
 | `Salted__` | `openssl enc` file: `ctfc sym <file> --passwords` or `--pass <pw>` |
 | `gAAAA...` | Fernet: `ctfc sym <file> --key <fernet key>` |
@@ -34,7 +35,7 @@ mirror the encryptor, do not guess.
 | entropy ~8, length not aligned | stream cipher (RC4, ChaCha20), CTR/GCM, XOR |
 | repeated 16-byte blocks | AES-ECB: the blocks leak the structure |
 | letters only, IoC high | Caesar / affine / Atbash: `ctfc classical <file>` |
-| letters only, IoC ~0.04 | Vigenère: `ctfc classical <file> --cipher vigenere` |
+| letters only, IoC ~0.04 | Vigenère: `ctfc classical <file> --cipher vigenere` (or `--cipher beaufort`: key *minus* text) |
 | natural letters, no words | transposition (rail fence): `ctfc classical <file>` |
 | `PLOA{` where `CYBN{` belongs | a shifted flag: `ctfc classical <file>` |
 | a hash (`$2y$`, 32 hex, `$krb5tgs$`...) | `ctfc hash <hash>` -> hashcat / john command |

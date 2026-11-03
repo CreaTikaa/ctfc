@@ -8,6 +8,7 @@ Never put real challenge flags here.
 from __future__ import annotations
 
 import base64
+import binascii
 import hashlib
 import hmac
 import io
@@ -3060,6 +3061,64 @@ def write_executable_fixtures() -> None:
     )
 
 
+# ---------------------------------------------------------------------------
+# The encoding long tail (ideas.md 3.3). Each fixture is produced by this
+# module's own encoder and read back by the decoder in `core/encodings.py`,
+# except base45, which is also checked against RFC 9285's published test
+# vectors in the tests - the strongest check available for these.
+# ---------------------------------------------------------------------------
+
+
+def write_longtail_fixtures() -> None:
+    """Base45 / basE91 / Z85 / uuencode, and the keyless classical encodings."""
+    from ctfc.core.encodings import (
+        bacon_encode,
+        base45_encode,
+        base91_encode,
+        morse_encode,
+        square_encode,
+        z85_encode,
+    )
+
+    message = b"CYBN{the_long_tail_of_encodings} and a sentence so the scoring has text."
+    write("longtail_base45.txt", base45_encode(message) + "\n")
+    write("longtail_base91.txt", base91_encode(message) + "\n")
+    # Z85 only encodes whole groups of four bytes, so the message is padded.
+    write("longtail_z85.txt", z85_encode(message + b" " * (-len(message) % 4)) + "\n")
+    uu = b"begin 644 flag.txt\n"
+    uu += b"".join(binascii.b2a_uu(message[at : at + 45]) for at in range(0, len(message), 45))
+    uu += b"`\nend\n"
+    write("longtail_uu.txt", uu)
+
+    # Morse, Bacon, Polybius, tap code and A1Z26 cannot carry braces, so the
+    # flag is written as one word - which is how a challenge hands it over too.
+    write("longtail_morse.txt", morse_encode("CYBNFLAG IN MORSE CODE") + "\n")
+    write("longtail_bacon.txt", bacon_encode("CYBNFLAGINBACON") + "\n")
+    write("longtail_polybius.txt", square_encode("CYBNFLAGINPOLYBIUS") + "\n")
+    taps = square_encode("CYBNFLAGINTAPCODE")
+    write("longtail_tap.txt", " ".join("." * int(digit) for digit in taps) + "\n")
+    write(
+        "longtail_a1z26.txt",
+        " / ".join(
+            "-".join(str(ord(char) - 64) for char in word)
+            for word in ("CYBNFLAG", "IN", "A", "ONE", "Z", "TWENTYSIX")
+        )
+        + "\n",
+    )
+
+    # A Beaufort cipher: the same function encrypts and decrypts, so this is
+    # `beaufort_decrypt` applied once to the plaintext.
+    from ctfc.core.classical import beaufort_decrypt
+
+    plain = (
+        b"It is a truth universally acknowledged that a single man in possession of a good "
+        b"fortune must be in want of a wife. However little known the views of such a man "
+        b"may be on his first entering a neighbourhood, this truth is so well fixed in the "
+        b"minds of the surrounding families. The flag is CYBN{beaufort_subtracts} here."
+    )
+    write("classical_beaufort.txt", beaufort_decrypt(plain, "lemon"))
+
+
 def main() -> None:
     FIXTURES.mkdir(exist_ok=True)
     print(f"writing fixtures to {FIXTURES}")
@@ -3253,6 +3312,9 @@ def main() -> None:
 
     # --- the executables that are not PEs (ideas.md 3.1) ---
     write_executable_fixtures()
+
+    # --- the encoding long tail (ideas.md 3.3) ---
+    write_longtail_fixtures()
 
 
 if __name__ == "__main__":

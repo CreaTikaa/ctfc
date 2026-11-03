@@ -37,7 +37,7 @@ from ctfc.core.types import Candidate
 
 # Values of `a` with an inverse modulo 26 (a must be coprime to 26).
 AFFINE_A = (1, 3, 5, 7, 9, 11, 15, 17, 19, 21, 23, 25)
-OPERATIONS = ("caesar", "affine", "atbash", "vigenere", "railfence")
+OPERATIONS = ("caesar", "affine", "atbash", "vigenere", "beaufort", "railfence")
 
 IOC_ENGLISH = 0.067
 IOC_RANDOM = 0.038
@@ -167,6 +167,8 @@ def apply(data: bytes, name: str, params: dict) -> bytes:
             return atbash(data)
         if name == "vigenere":
             return vigenere_decrypt(data, str(params["key"]))
+        if name == "beaufort":
+            return beaufort_decrypt(data, str(params["key"]))
         if name == "railfence":
             rails, offset = int(params["rails"]), int(params.get("offset", 0))
             if params.get("trim"):
@@ -193,7 +195,7 @@ def parse_key(cipher: str, text: str) -> dict:
         if cipher == "affine":
             a, b = (int(part) for part in text.replace(" ", "").split(","))
             return {"a": a, "b": b}
-        if cipher == "vigenere":
+        if cipher in ("vigenere", "beaufort"):
             return {"key": text}
         if cipher == "railfence":
             parts = [int(part) for part in text.replace(" ", "").split(",")]
@@ -203,7 +205,7 @@ def parse_key(cipher: str, text: str) -> dict:
     except ValueError as exc:
         raise ClassicalError(
             f"cannot read {text!r} as a {cipher} key: caesar 3, affine 5,8, "
-            "vigenere lemon, railfence 3 or 3,1"
+            "vigenere/beaufort lemon, railfence 3 or 3,1"
         ) from exc
     raise ClassicalError(f"unknown cipher {cipher!r}; known: {', '.join(OPERATIONS)}")
 
@@ -452,6 +454,27 @@ def rail_fence_decrypt(data, rails, offset=0):
 '''
 
 
+BEAUFORT_HELPER = '''def beaufort_decrypt(data: bytes, key: str) -> bytes:
+    """Beaufort: every letter becomes `key letter - text letter`.
+
+    The same function encrypts and decrypts - subtracting the text from the key
+    is its own inverse, which is why the Hagelin machines had no mode switch.
+    """
+    letters = [c for c in key.lower() if c.isalpha()]
+    out = bytearray()
+    position = 0
+    for byte in data:
+        if 65 <= byte <= 90 or 97 <= byte <= 122:
+            base = 65 if byte <= 90 else 97
+            shift = ord(letters[position % len(letters)]) - 97
+            out.append(base + (shift - (byte - base)) % 26)
+            position += 1
+        else:
+            out.append(byte)
+    return bytes(out)
+'''
+
+
 def step_code(step: Step) -> StepCode:
     """How to write a classical step in Python and in CyberChef (v11.5.0 argument lists)."""
     params = step.params
@@ -491,6 +514,15 @@ def step_code(step: Step) -> StepCode:
             python=f'data = vigenere_decrypt(data, "{key}")',
             helper=VIGENERE_HELPER,
             cyberchef=f"Vigenère_Decode('{key}')",
+        )
+    if step.name == "beaufort":
+        key = str(params["key"])
+        return StepCode(
+            label=f"beaufort(key={key!r})",
+            comment=f"Beaufort with the key {key!r} (key minus text: its own inverse)",
+            python=f'data = beaufort_decrypt(data, "{key}")',
+            helper=BEAUFORT_HELPER,
+            cyberchef=None,
         )
     if step.name == "railfence":
         rails, offset = int(params["rails"]), int(params.get("offset", 0))
@@ -659,6 +691,108 @@ def _vigenere_tries(data: bytes, flagset: FlagSet | None) -> list[_Try]:
     return tries
 
 
+def beaufort_decrypt(data: bytes, key: str) -> bytes:
+    """Beaufort: every letter is `key letter - text letter`, in both directions.
+
+    Vigenère *adds* the key; Beaufort *subtracts the text from the key*, which
+    makes the cipher its own inverse - encrypting twice gives the plaintext back.
+    That is also why it was built into the Hagelin machines: one setting, no
+    encrypt/decrypt switch to get wrong.
+
+    The practical consequence for us: the same function does both, so there is
+    nothing to try twice. Case and non-letters are left alone, and the key only
+    advances on letters, as CyberChef does it.
+    """
+    letters = [char for char in key.lower() if char.isalpha()]
+    if not letters:
+        raise ClassicalError("a Beaufort key needs at least one letter")
+    out = bytearray()
+    position = 0
+    for byte in data:
+        if 65 <= byte <= 90 or 97 <= byte <= 122:
+            upper = byte <= 90
+            base = 65 if upper else 97
+            shift = ord(letters[position % len(letters)]) - 97
+            out.append(base + (shift - (byte - base)) % 26)
+            position += 1
+        else:
+            out.append(byte)
+    return bytes(out)
+
+
+def _beaufort_tries(data: bytes, flagset: FlagSet | None) -> list[_Try]:
+    """Beaufort keys, found the same way as Vigenère ones but with its own sum.
+
+    The key-length detection is identical - a Beaufort column is still a single
+    alphabet, so the column index of coincidence still jumps at the right
+    length. Only the per-column solve changes: the best key letter for a column
+    is the one whose *subtraction* lands on natural frequencies, and because
+    Beaufort is self-inverse that is found by decrypting the column with each of
+    the 26 letters and keeping the best chi-squared.
+    """
+    letters = letters_of(data)
+    tries: list[_Try] = []
+    seen: set[str] = set()
+
+    def add(key: str, how: str) -> None:
+        if not key or key in seen:
+            return
+        seen.add(key)
+        tries.append(_Try(Step("beaufort", {"key": key}), beaufort_decrypt(data, key), how))
+        # A key length that is a multiple of the real one fits just as well and
+        # produces the same plaintext, so "lemonlemon" turns up beside "lemon".
+        # The shorter one is the answer, and it is offered too.
+        # `reduce_key` takes the majority letter at each position rather than
+        # the first repeat, which matters: the stray letter a short text puts in
+        # one copy of the key is outvoted by the other copies.
+        shorter = reduce_key(key)
+        if shorter and shorter != key:
+            add(shorter, how + f", reduced to the period {len(shorter)} it repeats")
+
+    # `vigenere_key_lengths` ranks its guesses by how well each column solves as
+    # a *Caesar* shift, which is the wrong question here: a Beaufort column is a
+    # reflected alphabet, so that solve does not fit and the right length can be
+    # pushed down the list. The index of coincidence itself is unaffected by the
+    # reflection, so the guesses are re-ranked by it alone.
+    guesses = sorted(
+        vigenere_key_lengths(letters, min_column=SOLVER_COLUMN_LETTERS),
+        key=lambda guess: -guess.ioc,
+    )[:5]
+    for guess in guesses:
+        if guess.length < 1:
+            continue
+        columns = [letters[start :: guess.length] for start in range(guess.length)]
+        for language, frequencies in (("English", ENGLISH_FREQ), ("French", FRENCH_FREQ)):
+            key = ""
+            for column in columns:
+                best_letter, best_chi2 = "a", None
+                for index in range(26):
+                    candidate = chr(97 + index)
+                    decoded = beaufort_decrypt(column.encode(), candidate).decode()
+                    counts = [decoded.count(chr(97 + position)) for position in range(26)]
+                    value = chi_squared(counts, frequencies)
+                    if best_chi2 is None or value < best_chi2:
+                        best_letter, best_chi2 = candidate, value
+                key += best_letter
+            add(
+                key,
+                f"key length {guess.length} (column IoC {guess.ioc:.3f}), "
+                f"{language} frequencies, Beaufort subtraction",
+            )
+    # A crib fixes key letters directly: with Beaufort the key letter is
+    # plaintext + ciphertext, not the difference.
+    for crib in find_cribs(data, flagset):
+        word, prefix = crib.word.lower(), crib.prefix.lower()
+        if len(word) != len(prefix):
+            continue
+        key = "".join(
+            chr(97 + (ord(cipher) - 97 + ord(plain) - 97) % 26)
+            for cipher, plain in zip(word, prefix, strict=True)
+        )
+        add(key, f"'{crib.word}{{' read as '{crib.prefix}{{', Beaufort key from the crib")
+    return tries
+
+
 def reduce_key(key: str) -> str | None:
     """A key that almost repeats a shorter one ("harbourhadjuur") -> that one.
 
@@ -774,6 +908,8 @@ def solve_classical(
         tries += _affine_tries(sample)
     if "vigenere" in families:
         tries += _vigenere_tries(sample, flagset)
+    if "beaufort" in families:
+        tries += _beaufort_tries(sample, flagset)
     if "railfence" in families and len(data) <= SAMPLE:
         tries += _railfence_tries(data)
 
@@ -813,7 +949,7 @@ def solve_classical(
     best = [
         item
         for item in best
-        if item[0].step.name != "vigenere"
+        if item[0].step.name not in ("vigenere", "beaufort")
         or key_period(item[0].step.params["key"]) == len(item[0].step.params["key"])
     ]
     best.sort(key=_rank)
@@ -843,5 +979,5 @@ def _step_of(candidate: Candidate) -> Step:
 
 def _simplicity(step: Step) -> int:
     """Tie-breaker: on equal scores, the simpler cipher / shorter key is more likely."""
-    order = {"caesar": 0, "atbash": 1, "affine": 2, "railfence": 3, "vigenere": 4}
+    order = {"caesar": 0, "atbash": 1, "affine": 2, "railfence": 3, "vigenere": 4, "beaufort": 5}
     return order.get(step.name, 9) * 100 + len(str(step.params.get("key", "")))
