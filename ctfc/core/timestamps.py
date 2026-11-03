@@ -143,3 +143,22 @@ def from_bytes(data: bytes) -> list[tuple[str, list[Reading]]]:
             if found:
                 results.append((f"{size} bytes, {order}-endian ({value})", found))
     return results
+
+
+def from_filetime(value: int) -> str:
+    """A Windows FILETIME as text, for the readers that already know it is one.
+
+    `readings()` is for a number of unknown provenance; this is for a field a
+    structure *declares* to be a FILETIME - a shortcut's write time, a prefetch
+    run time. A zero (or absurd) field is normal there and means "not recorded",
+    so it comes back empty rather than as 1601-01-01.
+    """
+    if value <= 0:
+        return ""
+    try:
+        when = FILETIME_EPOCH + timedelta(microseconds=value // 10)
+    except (OverflowError, OSError, ValueError):
+        return ""
+    if not _plausible(when):
+        return ""
+    return when.strftime("%Y-%m-%d %H:%M:%S UTC")

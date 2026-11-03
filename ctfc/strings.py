@@ -238,6 +238,17 @@ EN: dict[str, str] = {
     "arg_hive": "the hive file (SAM, SYSTEM, SOFTWARE, NTUSER.DAT) - a path, or -",
     "opt_hive_key": "read one key by path instead of the usual report",
     "opt_hive_list": "print every key path in the hive",
+    "cmd_winartifact": "read a Windows artefact: .lnk, prefetch, jump list, AmCache",
+    "cmd_winartifact_ex": (
+        "examples: ctfc winartifact invoice.pdf.lnk  |  "
+        "ctfc winartifact POWERSHELL.EXE-1A2B3C4D.pf  |  "
+        "ctfc winartifact 5f7b5f1e01b83767.automaticDestinations-ms. "
+        "A shortcut says where a file was, on which disk and on which machine - and, "
+        "when it is really a dropper, what it runs (its -enc payload is decoded). "
+        "A prefetch file says when a program ran and every file it loaded. A jump list "
+        "is one shortcut per recently-opened document."
+    ),
+    "arg_winartifact": "the artefact (.lnk, .pf, *.automaticDestinations-ms) - a path, or -",
     "cmd_crc": "work backwards from a CRC32: what file could have produced it",
     "cmd_crc_ex": (
         "examples: ctfc crc 0x1b851995  |  ctfc crc 1b851995 --length 6  |  "

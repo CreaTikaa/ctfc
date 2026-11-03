@@ -1302,3 +1302,107 @@ def print_crc(console: Console, report) -> None:
             )
         console.print(table)
     print_notes(console, report.notes)
+
+
+def print_winartifact(console: Console, report) -> None:
+    """`ctfc winartifact`: whichever Windows artefact it was."""
+    if report.lnk is not None:
+        print_lnk(console, report.lnk)
+    if report.prefetch is not None:
+        print_prefetch(console, report.prefetch)
+    if report.jumplist is not None:
+        print_jumplist(console, report.jumplist)
+    for flag in report.flags:
+        console.print(f"[bold green]flag:[/] {escape(flag)}")
+    print_notes(console, report.notes)
+    for command in report.commands:
+        console.print(f"[green]$[/] {escape(command)}")
+
+
+def print_lnk(console: Console, report) -> None:
+    """A shortcut: what it points at, what it runs, and who made it."""
+    facts = Table(title="Windows shortcut", show_header=False, expand=False)
+    facts.add_column("name", style="cyan")
+    facts.add_column("value")
+    for name, value in (
+        ("target", report.target),
+        ("arguments", report.arguments),
+        ("description", report.description),
+        ("working directory", report.working_directory),
+        ("icon", report.icon_location),
+        ("network path", report.network_path),
+        (
+            "volume",
+            f"{report.drive_type} serial {report.volume_serial} {report.volume_label}"
+            if report.volume_serial
+            else "",
+        ),
+        ("made on machine", report.machine_id),
+        ("target size", str(report.target_size) if report.target_size else ""),
+        ("created", report.created),
+        ("accessed", report.accessed),
+        ("written", report.written),
+        ("window", report.show_command),
+    ):
+        if value and value.strip():
+            facts.add_row(name, safe(value, 300))
+    console.print(facts)
+
+    if report.command:
+        console.print(Panel(safe_block(report.command, 2000), title="command line"))
+    for decoded in report.decoded_commands:
+        console.print(Panel(safe_block(decoded, 2000), title="decoded PowerShell command"))
+    for indicator in report.indicators:
+        console.print(f"[yellow]![/] {safe(indicator, 120)}")
+    if report.id_list_names:
+        console.print(f"[dim]shell item names:[/] {safe(', '.join(report.id_list_names), 300)}")
+    print_notes(console, report.notes)
+
+
+def print_prefetch(console: Console, report) -> None:
+    """A prefetch file: when it ran, and what it loaded."""
+    facts = Table(title="prefetch", show_header=False, expand=False)
+    facts.add_column("name", style="cyan")
+    facts.add_column("value")
+    facts.add_row("format", report.version_name)
+    if report.name:
+        facts.add_row("executable", report.name)
+    if report.hash_value:
+        facts.add_row("path hash", report.hash_value)
+    if report.run_count:
+        facts.add_row("times run", str(report.run_count))
+    for when in report.runs:
+        facts.add_row("ran at", when)
+    for volume in report.volumes:
+        facts.add_row("volume", safe(volume, 120))
+    console.print(facts)
+
+    if report.interesting:
+        table = Table(title="files it loaded that are not system DLLs", expand=True)
+        table.add_column("path", ratio=1)
+        for path in report.interesting[:60]:
+            table.add_row(safe(path, 200))
+        console.print(table)
+    if report.files:
+        console.print(f"[dim]{len(report.files)} loaded file(s) in all[/]")
+    print_notes(console, report.notes)
+
+
+def print_jumplist(console: Console, report) -> None:
+    """A jump list: the recent documents of one application."""
+    table = Table(title=f"{len(report.entries)} jump list entry/entries", expand=True)
+    table.add_column("stream", width=10)
+    table.add_column("path", ratio=3)
+    table.add_column("accessed", width=22)
+    table.add_column("machine", ratio=1)
+    for entry in report.entries:
+        table.add_row(
+            safe(entry.stream, 10),
+            safe(entry.path or ", ".join(entry.notes), 80),
+            entry.accessed,
+            safe(entry.machine_id, 20),
+        )
+    console.print(table)
+    if report.order:
+        console.print(f"[dim]DestList order:[/] {safe(', '.join(report.order[:10]), 300)}")
+    print_notes(console, report.notes)

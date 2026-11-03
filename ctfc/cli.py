@@ -142,6 +142,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--save-macros", help=t("opt_office_save"))
     p.add_argument("--extract", help=t("opt_office_extract"))
 
+    p = add("winartifact")
+    p.add_argument("input", help=t("arg_winartifact"))
+
     p = add("crc")
     p.add_argument("value", help=t("arg_crc"))
     p.add_argument("--length", type=int, default=None, help=t("opt_crc_length"))
@@ -981,6 +984,21 @@ def cmd_zip(args: argparse.Namespace, config: Config, console: Console) -> int:
     return 0
 
 
+def cmd_winartifact(args: argparse.Namespace, config: Config, console: Console) -> int:
+    """Read a Windows artefact: .lnk, prefetch, jump list, AmCache."""
+    from ctfc.core import winartifact
+
+    inp = parse_input(args.input, decode_bare=False)
+    report = winartifact.analyse(inp.data, args.input, flagset=flagset_from(config))
+    remember(args, config, inp.data, args.input, summary=report.notes[:4])
+    if args.json:
+        print(json.dumps({"input": input_to_dict(inp), **report.to_dict()}, indent=2))
+        return 0
+    render.print_input_notes(console, inp)
+    render.print_winartifact(console, report)
+    return 0
+
+
 def cmd_crc(args: argparse.Namespace, config: Config, console: Console) -> int:
     """Work backwards from a CRC32: what file could have produced it."""
     from ctfc.core import crc32
@@ -1659,6 +1677,7 @@ def main(argv: list[str] | None = None) -> int:
         "extend": cmd_extend,
         "sig": cmd_sig,
         "archive": cmd_archive,
+        "winartifact": cmd_winartifact,
         "crc": cmd_crc,
         "msg": cmd_msg,
         "msi": cmd_msi,

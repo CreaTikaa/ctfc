@@ -65,6 +65,9 @@ SIG_HINTS = {
     "tar": "ctfc archive <file>   (also finds data appended after the end-of-archive "
     "marker, and reads a `docker save` image's layers)",
     "cab": "ctfc archive <file>   (decodes stored and MSZIP folders); cabextract <file>",
+    "lnk": "ctfc winartifact <file>   (its command line, the machine that made it, "
+    "the disk the target was on)",
+    "pf": "ctfc winartifact <file>   (when the program ran, and every file it loaded)",
     "kdbx": "keepass2john <file> > h; hashcat -m 13400 h wordlist",
     "kdb": "keepass2john <file> > h; hashcat -m 13400 h wordlist",
     "pcap": "open in Wireshark; tshark -r <file> -qz conv,tcp",

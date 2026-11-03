@@ -52,14 +52,24 @@ class FlagSet:
     b64_prefixes: list[tuple[re.Pattern[str], str]] = field(default_factory=list)
 
 
+# A GUID in braces - `{01d9c0b2-0000-0000-0000-100000000000}` - matches the
+# generic flag shape perfectly, and Windows is full of them: volume paths,
+# registry CLSIDs, jump list names, PE resources. It is never a flag.
+GUID_RE = re.compile(r"^[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}$")
+
+
 def looks_like_flag(text: str) -> bool:
     """Sanity check for the generic XXX{...} pattern, which also matches random bytes.
 
-    A real flag is printable ASCII and mostly letters, digits and underscores.
+    A real flag is printable ASCII and mostly letters, digits and underscores -
+    and is not a GUID, which has exactly that shape and turns up by the hundred
+    in Windows artefacts.
     """
     if not text.isascii() or not text.isprintable():
         return False
     inside = text[text.index("{") + 1 : -1]
+    if GUID_RE.match(inside):
+        return False
     if len(inside) > 120 or any(ch not in FLAG_CHARS for ch in inside):
         return False
     wordy = sum(ch.isalnum() or ch == "_" for ch in inside)

@@ -54,6 +54,7 @@ from ctfc.core import (  # noqa: E402
     embedded,
     evtx,
     hive,
+    lnk,
     luks,
     mail,
     msg,
@@ -71,6 +72,7 @@ from ctfc.core import (  # noqa: E402
     stego,
     tarfmt,
     timestamps,
+    winartifact,
     zipinfo,
 )
 from ctfc.core.budget import Budget  # noqa: E402
@@ -161,6 +163,14 @@ READERS: tuple[Reader, ...] = (
     Reader("dockerimg", dockerimg.analyse, (dockerimg.DockerError,), ("archive_docker*.tar",)),
     # The compound files that are not documents.
     Reader("msg", msg.analyse, (msg.MsgError,), ("*.msg", "*.doc")),
+    # Windows artefacts.
+    Reader("lnk", lnk.analyse, (lnk.LnkError,), ("*.lnk",)),
+    Reader(
+        "winartifact",
+        winartifact.analyse,
+        (winartifact.ArtifactError, lnk.LnkError),
+        ("winartifact_*", "*.lnk", "*.pf", "*.automaticDestinations-ms"),
+    ),
     Reader("msi", msi.analyse, (msi.MsiError,), ("*.msi", "*.doc")),
     Reader(
         "embedded",

@@ -1538,3 +1538,91 @@ in a sentence was quietly docked a little and landed at 0.881, just under
 is not in the config. The penalty now applies only when the surround really is
 unreadable, which leaves the garbled-flag case it was written for intact: a
 plausible-looking flag in garbled text still scores 0.844 and the search goes on.
+
+## 25. The Windows artefacts (`ctfc/core/winartifact.py`, `ctfc/core/lnk.py`)
+
+Four files answer "what was run, and when", and `ctfc winartifact` reads
+whichever one it is handed.
+
+### Shortcuts (`.lnk`)
+
+The most under-rated file in forensics, because it is two things at once.
+
+**A payload.** A shortcut carries a command line. `invoice.pdf.lnk` with a PDF
+icon runs whatever its arguments field says - `powershell -nop -w hidden -enc
+<base64>` - and Explorer shows that field nowhere. Reading it *is* the analysis,
+so the `-enc` payload is decoded on the spot through the same decoder `ctfc lens`
+uses, and the dropper idioms (`-nop`, `-w hidden`, `iex`, `mshta`, `certutil`)
+are named.
+
+**A witness.** Windows writes a `.lnk` into `Recent/` whenever a file is opened,
+and that shortcut records the file's path, its size, its three timestamps, the
+**volume serial number** of the disk it was on, and - in the tracker block - the
+**NetBIOS name of the machine that created it**. So a shortcut proves a file
+existed, on which disk, on which machine, after the file itself is gone.
+
+The format (MS-SHLLINK) is a 76-byte header whose `LinkFlags` say which optional
+parts follow, in a fixed order: target ID list, link info, five strings, extra
+data blocks. The five strings - description, relative path, working directory,
+**arguments**, icon location - are each a 16-bit **character** count followed by
+that many characters, two bytes each when `IsUnicode` is set. That detail is the
+classic `.lnk` parser bug: read the count as bytes and every string comes out
+half-length and full of NULs.
+
+The target ID list is a chain of shell items whose layout differs per item type
+and would be a module of its own. It is not decoded; the names are lifted out of
+it instead, which works because every file and folder item carries its name
+twice, once in the code page and once in UTF-16. That is labelled as a best
+effort rather than presented as parsing.
+
+### Prefetch (`.pf`)
+
+Windows records, for every program started, **when it ran, how many times, and
+every file it loaded in its first ten seconds**. That last list is why prefetch
+wins challenges: it names the DLLs, the data files and often the payload a
+program touched, long after all of them have been deleted. The report separates
+the system DLLs from the rest, because the rest is the answer.
+
+The file is an 84-byte header, then a "file information" block whose first nine
+fields are the same in every version. The run count and the run-time array are
+*not*: Windows 7 keeps the count at 0x44 of the block, Windows 8.1 at 0x7c. Those
+two offsets were **measured** rather than read in a document - a marker was
+written into every four-byte slot of the block in turn and libscca was asked
+which one it reported as the run count. The test keeps them honest by opening
+the fixture with libscca and comparing every field.
+
+Deliberate limit: a modern (Windows 10+) prefetch file is **MAM-compressed**
+with LZXPRESS Huffman, and ctfc does not decompress it. It says so and names
+the tool, because there is nothing here to verify a decompressor against -
+`libscca` is installed on this machine and does it properly. The condition for
+finishing this is a real compressed `.pf` plus a known-good decompression to
+diff against.
+
+### Jump lists
+
+`*.automaticDestinations-ms` is a compound file (so `core/cfb.py` reads it)
+holding **one complete `.lnk` per recently-opened document**, in streams named
+with hex digits, plus a `DestList` stream giving the display order. So every
+entry carries its own path, volume and machine id, and the whole thing survives
+clearing the Recent folder. `*.customDestinations-ms` is simpler still:
+shortcuts concatenated, found by scanning for the shortcut CLSID.
+
+The `DestList` entry size changed between Windows versions, so rather than
+hard-code a stride the UTF-16 runs are lifted out in stored order - the same
+answer for every version.
+
+### AmCache
+
+`Amcache.hve` is a registry hive, so `ctfc hive` already reads it and this module
+only says so. What was added is the list of keys worth printing:
+`Root\InventoryApplicationFile` (one key per executable ever present, with its
+SHA-1 and size), `UserAssist` (programs the user ran, with counts), `RecentDocs`,
+`TypedPaths`, `RunMRU` and the RDP server list.
+
+### One fix that came out of this
+
+A volume path like `\VOLUME{01d9c0b2-0000-0000-0000-100000000000}` matches the
+generic flag pattern `[A-Za-z0-9_]{2,15}\{...\}` perfectly, and Windows is full
+of GUIDs in braces: volume paths, CLSIDs, jump list names, PE resources. They
+are now rejected in `flags.py`, which stops a prefetch file from proudly
+reporting a volume GUID as the flag.

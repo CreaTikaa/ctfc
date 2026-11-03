@@ -720,6 +720,9 @@ ctfc crc 27d829b4                                  # the 6-byte file behind a CR
 ctfc crc 0x$(python3 -c 'import zlib;print("%08x"%zlib.crc32(b"1337"))')   # a 4-digit PIN
 ctfc crc deadbeef --length 12 --solve              # *a* preimage, over GF(2)
 pytest tests/test_scoring_calibration.py -q -s     # the score distribution, printed
+ctfc winartifact tests/fixtures/winartifact_dropper.lnk        # the .lnk that is a dropper
+ctfc winartifact tests/fixtures/winartifact_powershell.pf      # when it ran, what it loaded
+ctfc winartifact tests/fixtures/winartifact_jumplist.automaticDestinations-ms
 ctfc git <a folder with a .git>                    # the secret that was committed then removed
 ctfc jwt <token> --show-code                       # alg=none / weak HMAC secret
 ctfc time 133476575820000000                       # Windows FILETIME

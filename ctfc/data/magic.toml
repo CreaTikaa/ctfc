@@ -261,6 +261,17 @@ ext = "lnk"
 hex = "4c0000000114020000000000c000000000000046"
 
 [[sig]]
+name = "Windows Prefetch (uncompressed)"
+ext = "pf"
+hex = "53434341"
+offset = 4
+
+[[sig]]
+name = "Windows Prefetch (MAM-compressed)"
+ext = "pf"
+hex = "4d414d04"
+
+[[sig]]
 name = "Windows minidump"
 ext = "dmp"
 hex = "4d444d5093a7"

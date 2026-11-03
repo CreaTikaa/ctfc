@@ -2484,6 +2484,244 @@ def write_compound_fixtures() -> None:
     write("compound_embedded.doc", document_with_embedded_object())
 
 
+# ---------------------------------------------------------------------------
+# Windows artefacts (ideas.md 2.4): a shortcut, a prefetch file, a jump list.
+#
+# The prefetch writer is checked against libscca (`pyscca`, installed on this
+# machine): the test opens the fixture with it and compares every field. The
+# shortcut is checked against `file`, which parses .lnk flags and strings.
+# ---------------------------------------------------------------------------
+
+CLSID_LNK = bytes.fromhex("0114020000000000c000000000000046")
+FILETIME_EPOCH_OFFSET = 11644473600
+
+
+def filetime(unix_seconds: int) -> int:
+    """A Unix time as a Windows FILETIME: 100-nanosecond ticks since 1601."""
+    return (unix_seconds + FILETIME_EPOCH_OFFSET) * 10_000_000
+
+
+def lnk_counted(text: str, unicode: bool = True) -> bytes:
+    """One StringData field: a *character* count, then the characters."""
+    raw = text.encode("utf-16-le" if unicode else "cp1252")
+    return struct.pack("<H", len(text)) + raw
+
+
+def lnk_link_info(
+    local_path: str,
+    suffix: str = "",
+    serial: int = 0x1A2B3C4D,
+    label: str = "USB_STICK",
+    drive_type: int = 2,
+) -> bytes:
+    """A LinkInfo structure with a VolumeID and an ANSI local base path."""
+    header_size = 0x1C
+    volume_label = label.encode("cp1252") + b"\x00"
+    volume = struct.pack("<IIII", 16 + len(volume_label), drive_type, serial, 16) + volume_label
+    path = local_path.encode("cp1252") + b"\x00"
+    suffix_bytes = suffix.encode("cp1252") + b"\x00"
+    volume_offset = header_size
+    path_offset = volume_offset + len(volume)
+    suffix_offset = path_offset + len(path)
+    total = suffix_offset + len(suffix_bytes)
+    head = struct.pack(
+        "<IIIIIII", total, header_size, 0x0001, volume_offset, path_offset, 0, suffix_offset
+    )
+    return head + volume + path + suffix_bytes
+
+
+def lnk_tracker_block(machine: str) -> bytes:
+    """The tracker block: the NetBIOS name of the machine that made the shortcut."""
+    body = struct.pack("<II", 0x58, 0) + machine.encode("cp1252").ljust(16, b"\x00")
+    body += bytes(64)  # the two droid GUIDs
+    return struct.pack("<II", 8 + len(body), 0xA0000003) + body
+
+
+def make_lnk(
+    target: str,
+    arguments: str = "",
+    description: str = "",
+    working_directory: str = "",
+    icon: str = "",
+    machine: str = "DESKTOP-CTF01",
+    target_size: int = 0,
+) -> bytes:
+    """A Windows shortcut, as MS-SHLLINK describes one. `file` reads these."""
+    flags = 0x00000002 | 0x00000080  # HasLinkInfo | IsUnicode
+    if description:
+        flags |= 0x00000004
+    if working_directory:
+        flags |= 0x00000010
+    if arguments:
+        flags |= 0x00000020
+    if icon:
+        flags |= 0x00000040
+    header = struct.pack(
+        "<I16sIIQQQIiIHHI",
+        0x4C,
+        CLSID_LNK,
+        flags,
+        0x20,  # FILE_ATTRIBUTE_ARCHIVE
+        filetime(1_700_000_000),
+        filetime(1_700_000_100),
+        filetime(1_700_000_200),
+        target_size,
+        0,
+        1,  # show the window normally
+        0,
+        0,
+        0,
+    ) + struct.pack("<I", 0)
+    strings = b""
+    for text in (description, "", working_directory, arguments, icon):
+        if text:
+            strings += lnk_counted(text)
+    extra = lnk_tracker_block(machine) + struct.pack("<I", 0)
+    return header + lnk_link_info(target) + strings + extra
+
+
+def make_prefetch(
+    name: str,
+    files: list[str],
+    run_count: int = 3,
+    runs: list[int] | None = None,
+    version: int = 26,
+    volume: str = "\\VOLUME{01d9c0b2-0000-0000-0000-100000000000}",
+    serial: int = 0xDEADBEEF,
+) -> bytes:
+    """An uncompressed prefetch file. libscca reads versions 17, 23 and 26.
+
+    Windows 10 writes the same layout but MAM-compressed (LZXPRESS Huffman),
+    which ctfc does not decode - so the fixture is a version 26 file, and the
+    test opens it with libscca to check every field we claim to read.
+    """
+    runs = runs or [1_700_000_000, 1_699_900_000]
+    strings = b""
+    offsets = []
+    for path in files:
+        offsets.append(len(strings))
+        strings += path.encode("utf-16-le") + b"\x00\x00"
+
+    header_size = 84
+    info_size = {17: 68, 23: 156, 26: 224, 30: 224, 31: 224}[version]
+    metrics_offset = header_size + info_size
+    metrics = b""
+    for path, offset in zip(files, offsets, strict=True):
+        if version >= 23:
+            metrics += struct.pack("<IIIIIIQ", 0, 0, 0, offset // 2, len(path), 0, 0)
+        else:
+            metrics += struct.pack("<IIIII", 0, 0, offset // 2, len(path), 0)
+    chains_offset = metrics_offset + len(metrics)
+    strings_offset = chains_offset  # no trace chains in the fixture
+    volumes_offset = strings_offset + len(strings)
+
+    device = volume.encode("utf-16-le") + b"\x00\x00"
+    volume_block_size = 0x60 + len(device)
+    volume_block = (
+        struct.pack(
+            "<IIQIIIIII",
+            0x60,  # the device path starts here, inside this block
+            len(volume),
+            filetime(1_690_000_000),
+            serial,
+            volume_block_size,
+            0,
+            volume_block_size,
+            0,
+            0,
+        ).ljust(0x60, b"\x00")
+        + device
+    )
+    total = volumes_offset + len(volume_block)
+
+    info = bytearray(info_size)
+    struct.pack_into(
+        "<IIIIIIIII",
+        info,
+        0,
+        metrics_offset,
+        len(files),
+        chains_offset,
+        0,
+        strings_offset,
+        len(strings),
+        volumes_offset,
+        1,
+        len(volume_block),
+    )
+    if version == 17:
+        struct.pack_into("<Q", info, 0x24, filetime(runs[0]))
+        struct.pack_into("<I", info, 0x3C, run_count)
+    else:
+        for index, when in enumerate(runs[: 1 if version == 23 else 8]):
+            struct.pack_into("<Q", info, 0x2C + index * 8, filetime(when))
+        # Windows 7 keeps the run count at 0x44 of this block and Windows 8.1 at
+        # 0x7c. Both were *measured* against libscca rather than guessed.
+        struct.pack_into("<I", info, 0x44 if version == 23 else 0x7C, run_count)
+
+    header = bytearray(header_size)
+    struct.pack_into("<I4sII", header, 0, version, b"SCCA", 0x11, total)
+    encoded = name.encode("utf-16-le")[:58]
+    header[0x10 : 0x10 + len(encoded)] = encoded
+    struct.pack_into("<I", header, 0x4C, 0x1A2B3C4D)
+    return bytes(header) + bytes(info) + metrics + strings + volume_block
+
+
+def jump_list(entries: list[tuple[str, str]]) -> bytes:
+    """An automaticDestinations-ms jump list: a DestList plus one .lnk per entry.
+
+    Windows names the entry streams with hexadecimal digits in creation order
+    and keeps the display order in the DestList stream.
+    """
+    streams: list[tuple[str, bytes]] = []
+    destlist = bytearray(struct.pack("<IIII", 1, len(entries), 0, 1) + bytes(16))
+    for index, (target, description) in enumerate(entries):
+        streams.append((f"{index + 1:x}", make_lnk(target, description=description)))
+        destlist += bytes(96) + target.encode("utf-16-le") + b"\x00\x00"
+    streams.append(("DestList", bytes(destlist)))
+    return cfb_write_tree(streams)
+
+
+def write_winartifact_fixtures() -> None:
+    """A malicious shortcut, a prefetch file and a jump list."""
+    command = "Write-Host 'CYBN{lnk_encoded_command}'"
+    encoded = base64.b64encode(command.encode("utf-16-le")).decode()
+    write(
+        "winartifact_dropper.lnk",
+        make_lnk(
+            "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+            f"-nop -w hidden -enc {encoded}",
+            description="Invoice March 2026",
+            working_directory="C:\\Users\\victim\\Downloads",
+            icon="%SystemRoot%\\System32\\shell32.dll",
+            target_size=452608,
+        ),
+    )
+    write(
+        "winartifact_powershell.pf",
+        make_prefetch(
+            "POWERSHELL.EXE",
+            [
+                "\\DEVICE\\HARDDISKVOLUME1\\WINDOWS\\SYSTEM32\\WINDOWSPOWERSHELL\\V1.0\\POWERSHELL.EXE",
+                "\\DEVICE\\HARDDISKVOLUME1\\WINDOWS\\SYSTEM32\\NTDLL.DLL",
+                "\\DEVICE\\HARDDISKVOLUME1\\USERS\\VICTIM\\DOWNLOADS\\STAGE2.PS1",
+                "\\DEVICE\\HARDDISKVOLUME1\\USERS\\VICTIM\\APPDATA\\LOCAL\\TEMP\\CYBN_PREFETCH.TXT",
+            ],
+            run_count=7,
+            version=26,
+        ),
+    )
+    write(
+        "winartifact_jumplist.automaticDestinations-ms",
+        jump_list(
+            [
+                ("C:\\Users\\victim\\Documents\\notes.txt", "notes"),
+                ("D:\\secret\\CYBN_jumplist.docx", "the one that matters"),
+            ]
+        ),
+    )
+
+
 def main() -> None:
     FIXTURES.mkdir(exist_ok=True)
     print(f"writing fixtures to {FIXTURES}")
@@ -2671,6 +2909,9 @@ def main() -> None:
 
     # --- lot F: the compound files that are not documents ---
     write_compound_fixtures()
+
+    # --- Windows artefacts: what was run, and when (ideas.md 2.4) ---
+    write_winartifact_fixtures()
 
 
 if __name__ == "__main__":

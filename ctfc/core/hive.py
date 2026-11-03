@@ -355,6 +355,21 @@ INTERESTING = (
     (r"Microsoft\Windows NT\CurrentVersion", "Windows version and install date"),
     (r"SAM\Domains\Account\Users\Names", "the local account names"),
     (r"Domains\Account\Users\Names", "the local account names"),
+    # An Amcache.hve is a hive like any other, and this is where it keeps one
+    # key per executable that was ever present on the machine - with the file's
+    # SHA-1, its size and its publisher, long after the file itself is gone.
+    (r"Root\InventoryApplicationFile", "every executable ever seen, with its SHA-1 (AmCache)"),
+    (r"Root\InventoryApplication", "every application installed (AmCache)"),
+    (r"Root\File", "executables seen, older AmCache layout"),
+    (r"Microsoft\Windows\CurrentVersion\Explorer\UserAssist", "programs the user ran, with counts"),
+    (r"Microsoft\Windows\CurrentVersion\Explorer\RecentDocs", "the documents the user opened"),
+    (r"Microsoft\Windows\CurrentVersion\Explorer\TypedPaths", "paths typed into Explorer"),
+    (r"Microsoft\Windows\CurrentVersion\Explorer\RunMRU", "commands typed into the Run box"),
+    (r"Microsoft\Terminal Server Client\Servers", "the RDP servers this user connected to"),
+    (
+        r"Microsoft\Windows\CurrentVersion\Internet Settings\ZoneMap\Domains",
+        "domains trusted by IE",
+    ),
 )
 
 
