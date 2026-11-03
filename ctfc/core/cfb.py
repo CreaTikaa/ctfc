@@ -25,6 +25,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from ctfc.core.errors import FormatError
+
 SIGNATURE = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"
 # Special FAT values (MS-CFB 2.2).
 MAXREGSECT = 0xFFFFFFFA
@@ -43,7 +45,7 @@ MAX_CHAIN = 1_000_000
 MAX_ENTRIES = 20_000
 
 
-class CfbError(Exception):
+class CfbError(FormatError):
     """The data is not a usable compound file."""
 
 

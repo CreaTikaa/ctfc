@@ -37,6 +37,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
+from ctfc.core.errors import FormatError
 from ctfc.core.scoring import shannon_entropy
 
 MZ = b"MZ"
@@ -139,7 +140,7 @@ PACKED_ENTROPY = 7.2  # a section above this is compressed or encrypted
 FEW_IMPORTS = 10  # a real program imports far more than this
 
 
-class PeError(Exception):
+class PeError(FormatError):
     """The data is not a PE we can read."""
 
 

@@ -31,6 +31,8 @@ import re
 import zlib
 from dataclasses import dataclass, field
 
+from ctfc.core.errors import FormatError
+
 HEADER = re.compile(rb"%PDF-(\d+\.\d+)")
 OBJECT = re.compile(rb"(\d{1,10})\s+(\d{1,5})\s+obj\b")
 STREAM_START = re.compile(rb"stream\r\n|stream\n|stream\r")
@@ -63,7 +65,7 @@ INDICATORS = (
 )
 
 
-class PdfError(Exception):
+class PdfError(FormatError):
     """The data is not a PDF we can read."""
 
 

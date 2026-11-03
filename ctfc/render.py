@@ -1112,3 +1112,87 @@ def print_repair(console: Console, report, source: str, written: list) -> None:
             console.print(line, markup=False, highlight=False, soft_wrap=True)
     elif report.carved or report.fixes:
         console.print("[dim]Add --out <folder> to write the repaired file and the pieces.[/]")
+
+
+def print_archive(console: Console, report) -> None:
+    """`ctfc archive`: the entries, the encryption, and the Docker layers."""
+    title = f"{report.format}: {len(report.entries)} entry/entries"
+    if report.encrypted_names:
+        title += " (the file names themselves are encrypted)"
+    table = Table(title=title, expand=True)
+    table.add_column("name", ratio=3)
+    table.add_column("method", ratio=2)
+    table.add_column("size", justify="right", width=10)
+    table.add_column("notes", ratio=3)
+    for entry in report.entries:
+        notes = [safe(note, 90) for note in entry.notes]
+        if entry.data is not None:
+            notes.insert(0, "[green]read by ctfc[/]")
+        table.add_row(
+            ("[dim]" if entry.directory else "") + safe(entry.name, 60),
+            ("[yellow]encrypted + [/]" if entry.encrypted else "") + safe(entry.method, 30),
+            "" if entry.directory else str(entry.size),
+            "\n".join(notes),
+        )
+    if report.entries:
+        console.print(table)
+
+    if report.docker is not None:
+        print_docker(console, report.docker)
+    for flag in report.flags:
+        console.print(f"[bold green]flag:[/] {escape(flag)}")
+    for note in report.notes:
+        console.print(f"[cyan]*[/] {safe(note)}")
+    for command in report.commands:
+        console.print(f"[green]$[/] {escape(command)}")
+
+
+def print_docker(console: Console, docker) -> None:
+    """The layer stack of a saved image, in build order, and what it still holds."""
+    table = Table(title=f"{len(docker.layers)} layer(s), oldest first", expand=True)
+    table.add_column("#", width=3, justify="right")
+    table.add_column("id", width=14)
+    table.add_column("files", width=6, justify="right")
+    table.add_column("created by", ratio=3)
+    table.add_column("deletes", ratio=2)
+    for layer in docker.layers:
+        table.add_row(
+            str(layer.index),
+            layer.short[:12],
+            str(len(layer.files)),
+            safe(layer.created_by or "(unknown)", 80),
+            "\n".join(safe(name, 40) for name in layer.whiteouts[:5]),
+        )
+    console.print(table)
+
+    if docker.tags:
+        console.print(f"[bold]tags:[/] {safe(', '.join(docker.tags), 120)}")
+    for value in docker.environment:
+        console.print(f"[dim]ENV[/] {safe(value, 160)}")
+    if docker.entrypoint or docker.command:
+        joined = " ".join(docker.entrypoint + docker.command)
+        console.print(f"[bold]runs:[/] {safe(joined, 160)}")
+
+    if docker.deleted:
+        deleted = Table(title="files a later layer hides, but the image still carries", expand=True)
+        deleted.add_column("path", ratio=3)
+        deleted.add_column("still in", width=9, justify="right")
+        deleted.add_column("deleted by", width=11, justify="right")
+        deleted.add_column("content", ratio=4)
+        for item in docker.deleted:
+            preview = "" if item.content is None else item.content[:200].decode("utf-8", "replace")
+            deleted.add_row(
+                safe(item.name, 60),
+                f"layer {item.present_in}",
+                f"layer {item.hidden_by}",
+                safe(preview.strip(), 160),
+            )
+        console.print(deleted)
+    if docker.overwritten:
+        console.print(
+            f"[cyan]*[/] {len(docker.overwritten)} file(s) exist in several layers, so an "
+            "earlier version of each is still in the image: "
+            + safe(", ".join(name for name, _ in docker.overwritten[:6]), 160)
+        )
+    for note in docker.notes:
+        console.print(f"[cyan]*[/] {safe(note)}")

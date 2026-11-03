@@ -705,6 +705,14 @@ ctfc pdf tests/fixtures/audit_malicious.pdf --extract /tmp/pdfout && ctfc scan /
 ctfc stego tests/fixtures/audit_lsb.png --show-code   # LSB in the red channel
 ctfc sqlite tests/fixtures/audit_notes.sqlite      # the deleted rows
 ctfc zip tests/fixtures/audit_zipcrypto.zip        # ZipCrypto + the CRC32 of a short file
+ctfc archive tests/fixtures/archive_lzma.7z        # 7z: LZMA decoded offline, flag found
+ctfc archive tests/fixtures/archive_encoded_header.7z   # the file list was itself LZMA
+ctfc archive tests/fixtures/archive_aes.7z         # names in clear, files AES -> 7z2john
+ctfc archive tests/fixtures/archive_rar5_header_encrypted.rar  # even the names need the password
+ctfc archive tests/fixtures/archive_mszip.cab      # a cabinet, MSZIP decoded
+ctfc archive tests/fixtures/archive_appended.tar   # the PNG hidden after the end marker
+ctfc archive tests/fixtures/archive_docker_image.tar    # layers + the file layer 2 deleted
+ctfc archive tests/fixtures/archive_docker_image.tar --extract /tmp/lay && ctfc scan /tmp/lay
 ctfc git <a folder with a .git>                    # the secret that was committed then removed
 ctfc jwt <token> --show-code                       # alg=none / weak HMAC secret
 ctfc time 133476575820000000                       # Windows FILETIME

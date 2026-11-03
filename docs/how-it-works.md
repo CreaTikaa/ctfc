@@ -1240,3 +1240,115 @@ Three details that decide whether the recovered key is right:
 checks, for each, that `G` is on the curve and that `n*G` is the point at
 infinity, and compares the scalar multiplication against pycryptodome on P-256 -
 so a typo in those constants cannot survive.
+
+## 21. Archives that are not ZIPs (`ctfc/core/archive.py`)
+
+`ctfc zip` already covers the ZIP family. `ctfc archive` covers tar, 7z, RAR and
+Microsoft cabinets, and each of those four taught us something worth writing
+down.
+
+### tar (`ctfc/core/tarfmt.py`)
+
+A tar is a 512-byte header, that file's bytes padded to 512, the next header, and
+so on until **two blocks of zeros** say "the end". The sizes are octal text,
+which is the only surprise - except for GNU's escape hatch: when a size does not
+fit in eleven octal digits, the high bit of the first byte is set and the field
+is read as a big-endian integer instead.
+
+Reading it by hand buys exactly one thing, and it is the thing a challenge uses:
+`tar tf` stops at the zero blocks and never mentions the 40 KB that follow. A
+second archive, a PNG, a whole disk image can sit after the end marker,
+invisible to every normal tool. `read_entries` therefore returns both the
+entries *and* where the archive ended, and `ctfc archive` reports the tail.
+
+The header carries its own checksum, with the checksum field itself read as
+eight spaces while summing. Very old tars summed the bytes as *signed* chars, so
+both sums are accepted - and the fuzzer found that computing the signed one by
+building a `bytes()` out of negative numbers raises `ValueError`, which is how
+one careless line turned every mutated tar into a traceback.
+
+### 7z (`ctfc/core/sevenzip.py`)
+
+7z's header is not a list of entries; it is a description of a **dataflow**. Its
+vocabulary, which takes five minutes to learn and then explains everything:
+
+- a **pack stream** is a physical blob of bytes in the file;
+- a **folder** - 7z's word for a compression unit, nothing to do with
+  directories - is a chain of **coders** (LZMA, BCJ, AES) wired together by
+  *bind pairs*: "coder 1's input is fed by coder 0's output";
+- a folder's final output is cut into **substreams**, one per file. For a folder
+  holding one file the substream block is omitted entirely, and the default
+  "one substream, the folder's whole output" has to be supplied by the reader.
+
+Two consequences matter in a CTF. First, **the header is normally compressed
+itself** (`kEncodedHeader`): the file list is an LZMA stream inside the archive,
+which is why `strings` on a `.7z` shows no names. Second, **the header can be
+encrypted** - `7z a -p` encrypts the files and leaves the names readable, while
+`7z a -mhe=on -p` encrypts the listing too. Telling the user which case they are
+in is worth as much as the listing.
+
+Where the codec is one Python has (stored, LZMA, LZMA2, deflate, bzip2) the
+contents are decompressed offline, with no 7z installed, and checked against the
+CRC32 the archive stores. The AES coder's properties give the iteration count as
+a power of two - 7z's KDF is *not* PBKDF2 but SHA-256 over
+`salt || password-as-UTF-16LE || an 8-byte counter`, repeated `2**n` times, with
+19 as the default. The test fixture is a genuine AES-encrypted 7z built from
+that definition, and `7z t -ppassword123` on it says "Everything is Ok", which is
+the proof that the KDF above is written correctly.
+
+### RAR (`ctfc/core/rar.py`)
+
+Two incompatible formats behind one name, and the marker says which: `Rar!` plus
+`1A 07 00` is RAR 4, plus `1A 07 01 00` is RAR 5. Both are a chain of blocks that
+each announce their own size. RAR 4 writes fixed little-endian fields; RAR 5
+writes **vints** (7 bits per byte, high bit = "one more byte"), and its per-file
+encryption lives in an *extra area* record at the end of the header.
+
+Nothing is decompressed: RAR's algorithm is proprietary and `unrar` does it well.
+The headers are where the answers are - the names, the methods, and above all
+which of the two encryptions is in use (`-p`: files encrypted, names readable;
+`-hp`: headers encrypted, so `unrar l` itself asks for the password). RAR 5 keys
+are PBKDF2-HMAC-SHA256 with the iteration count stored, again, as a power of two.
+There is no known-plaintext shortcut as there is for ZipCrypto, so the useful
+output is the exact `rar2john` + hashcat line, with mode 13000 for RAR 5 and
+12500 for RAR 3/4.
+
+### Cabinets (`ctfc/core/cab.py`)
+
+A `.cab` is three lists: a header, one **CFFOLDER** per compression unit, one
+**CFFILE** per file, then the **CFDATA** blocks of at most 32 KB each. A file is
+not stored on its own - it is a slice of its folder's decompressed stream, which
+is why everything before the last file has to be decompressed to reach it.
+
+Stored and **MSZIP** folders are decoded here. MSZIP is raw deflate per block,
+each block starting with the two bytes `CK` and inflating **with the previous
+block's output as its dictionary** - `zlib.decompressobj(wbits=-15, zdict=...)`
+does exactly that, which is the whole trick. LZX and Quantum are named and handed
+to `cabextract`.
+
+### Docker images (`ctfc/core/dockerimg.py`)
+
+A `docker save` tar is a tar full of tars, in one of two layouts: the legacy one
+(`manifest.json` plus `<digest>/layer.tar`) or the OCI one (`index.json` and
+everything under `blobs/sha256/`). Both are read.
+
+The reason this is a challenge genre of its own is one sentence: **a layer is a
+diff, and a diff cannot remove bytes.** When a Dockerfile says
+
+```dockerfile
+COPY secret.txt /app/
+RUN rm /app/secret.txt
+```
+
+the `rm` adds a file called `.wh.secret.txt` to the *next* layer - a whiteout
+marker telling the union filesystem to hide the name. `docker run` shows
+nothing; the image still carries every byte in the layer below. `.wh..wh..opq`
+does the same for a whole directory.
+
+So the module puts the layers back in build order, labels each one with the
+Dockerfile line from the configuration's `history` (dropping the `empty_layer`
+steps, which is what lines them up), and then reports every whited-out or
+overwritten path *with the bytes from the layer that still holds it*. Those
+bytes, the environment variables and the build commands are all searched for
+flags, because that is where they are. `--extract` lays each layer out in its
+own folder so `ctfc scan` can walk them.

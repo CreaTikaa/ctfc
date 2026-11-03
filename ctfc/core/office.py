@@ -29,6 +29,7 @@ import zlib
 from dataclasses import dataclass, field
 
 from ctfc.core import cfb
+from ctfc.core.errors import FormatError
 
 CONTAINER_SIGNATURE = 0x01  # first byte of a compressed container
 CHUNK_SIGNATURE = 0b011  # bits 12-14 of a chunk header
@@ -76,7 +77,7 @@ EXTERNAL_TARGET = re.compile(rb'Target="(https?://[^"]{4,400})"[^>]*TargetMode="
 EXTERNAL_TARGET_ALT = re.compile(rb'TargetMode="External"[^>]*Target="(https?://[^"]{4,400})"')
 
 
-class OfficeError(Exception):
+class OfficeError(FormatError):
     """The file is not an Office document we can read."""
 
 

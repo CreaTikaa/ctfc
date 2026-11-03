@@ -31,6 +31,7 @@ import zlib
 from dataclasses import dataclass, field
 
 from ctfc.core.budget import Budget
+from ctfc.core.errors import FormatError
 from ctfc.core.scoring import score
 from ctfc.core.types import Candidate
 
@@ -44,7 +45,7 @@ MAX_PIXELS = 40_000_000  # refuse a decompression bomb
 PROBE_BYTES = 2048
 
 
-class StegoError(Exception):
+class StegoError(FormatError):
     """The data is not an image we can read."""
 
 

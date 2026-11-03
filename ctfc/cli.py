@@ -169,6 +169,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--key", help=t("opt_hive_key"))
     p.add_argument("--list", action="store_true", help=t("opt_hive_list"))
 
+    p = add("archive")
+    p.add_argument("input", help=t("arg_archive_any"))
+    p.add_argument("--extract", help=t("opt_archive_extract"))
+    p.add_argument("--no-contents", action="store_true", help=t("opt_archive_no_contents"))
+
     p = add("zip")
     p.add_argument("input", help=t("arg_archive"))
     p.add_argument("--seconds", type=float, default=30.0, help=t("opt_seconds"))
@@ -952,6 +957,35 @@ def cmd_zip(args: argparse.Namespace, config: Config, console: Console) -> int:
     return 0
 
 
+def cmd_archive(args: argparse.Namespace, config: Config, console: Console) -> int:
+    """Read a tar / 7z / RAR / cabinet, or a saved Docker image."""
+    from ctfc.core import archive as archive_module
+
+    inp = parse_input(args.input, decode_bare=False)
+    report = archive_module.analyse(
+        inp.data,
+        args.input,
+        flagset=flagset_from(config),
+        read_contents=not args.no_contents,
+    )
+    remember(args, config, inp.data, args.input, summary=report.notes[:4])
+    written: list = []
+    if args.extract:
+        written = archive_module.extract(report, args.extract)
+    if args.json:
+        payload = {"input": input_to_dict(inp), **report.to_dict()}
+        if args.extract:
+            payload["extracted"] = [str(path) for path in written]
+        print(json.dumps(payload, indent=2))
+        return 0
+    render.print_input_notes(console, inp)
+    render.print_archive(console, report)
+    if args.extract:
+        console.print(f"[green]*[/] wrote {len(written)} file(s) to {args.extract}")
+        console.print(f"[green]$[/] ctfc scan {args.extract}")
+    return 0
+
+
 def cmd_time(args: argparse.Namespace, config: Config, console: Console) -> int:
     """Read a number as a date, across the epochs forensics runs into."""
     from ctfc.core import timestamps
@@ -1494,6 +1528,7 @@ def main(argv: list[str] | None = None) -> int:
         "prng": cmd_prng,
         "extend": cmd_extend,
         "sig": cmd_sig,
+        "archive": cmd_archive,
         "zip": cmd_zip,
         "hive": cmd_hive,
         "pe": cmd_pe,

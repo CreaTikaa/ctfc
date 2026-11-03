@@ -46,8 +46,11 @@ if str(ROOT) not in sys.path:  # so it runs as a plain script too
     sys.path.insert(0, str(ROOT))
 
 from ctfc.core import (  # noqa: E402
+    archive,
+    cab,
     cfb,
     detect,
+    dockerimg,
     evtx,
     hive,
     luks,
@@ -58,9 +61,12 @@ from ctfc.core import (  # noqa: E402
     pe,
     protobuf,
     radius,
+    rar,
     repair,
+    sevenzip,
     sqlitedb,
     stego,
+    tarfmt,
     timestamps,
     zipinfo,
 )
@@ -136,6 +142,26 @@ READERS: tuple[Reader, ...] = (
         ("*.zip", "png_with_zip.png"),
     ),
     Reader("sqlitedb", sqlitedb.analyse, (sqlitedb.SqliteError,), ("*.sqlite",)),
+    # The archives that are not ZIPs. The dispatcher is listed too, because it
+    # is the one a user actually calls and it must not let a reader's error
+    # through in another reader's name.
+    Reader("tarfmt", tarfmt.read_entries, (tarfmt.TarError,), ("*.tar",)),
+    Reader("sevenzip", sevenzip.read, (sevenzip.SevenZipError,), ("*.7z",)),
+    Reader(
+        "sevenzip_extract",
+        lambda data: sevenzip.extract(data),
+        (sevenzip.SevenZipError,),
+        ("*.7z",),
+    ),
+    Reader("rar", rar.read, (rar.RarError,), ("*.rar",)),
+    Reader("cab", lambda data: cab.extract(data), (cab.CabError,), ("*.cab",)),
+    Reader("dockerimg", dockerimg.analyse, (dockerimg.DockerError,), ("archive_docker*.tar",)),
+    Reader(
+        "archive",
+        lambda data: archive.analyse(data),
+        (archive.ArchiveError, tarfmt.TarError, sevenzip.SevenZipError, rar.RarError, cab.CabError),
+        ("archive_*", "*.tar", "*.7z", "*.rar", "*.cab"),
+    ),
     # No real hive on this machine: the seed is the one tests/test_hive.py builds
     # from the regf structures.
     Reader("hive", hive.analyse, (hive.HiveError,), builders=(simple_hive,)),

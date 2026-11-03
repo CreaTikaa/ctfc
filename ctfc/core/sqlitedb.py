@@ -33,6 +33,8 @@ import struct
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from ctfc.core.errors import FormatError
+
 MAGIC = b"SQLite format 3\x00"
 HEADER_SIZE = 100
 # Page types, from the first byte of a page's b-tree header.
@@ -45,7 +47,7 @@ MAX_TEXT = 64 * 1024
 MIN_INTERESTING = 3  # a record needs this many bytes of content to be worth showing
 
 
-class SqliteError(Exception):
+class SqliteError(FormatError):
     """The file is not a SQLite database we can read."""
 
 

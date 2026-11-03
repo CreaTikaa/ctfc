@@ -57,8 +57,13 @@ SIG_HINTS = {
     "doc": "ctfc office <file>   (OLE2: extracts the VBA macros and reads them)",
     "png": "ctfc stego <file>   (low-bit message); exiftool <file>; zsteg -a <file>",
     "bmp": "ctfc stego <file>   (low-bit message); exiftool <file>",
-    "7z": "7z l <file>; encrypted? 7z2john.pl <file>",
-    "rar": "unrar l <file>; encrypted? rar2john <file>",
+    "7z": "ctfc archive <file>   (lists it, decodes LZMA/LZMA2 contents, names the "
+    "encryption; 7z2john.pl <file> when it has to be cracked)",
+    "rar": "ctfc archive <file>   (says whether the names themselves are encrypted); "
+    "unrar l <file>; rar2john <file>",
+    "tar": "ctfc archive <file>   (also finds data appended after the end-of-archive "
+    "marker, and reads a `docker save` image's layers)",
+    "cab": "ctfc archive <file>   (decodes stored and MSZIP folders); cabextract <file>",
     "kdbx": "keepass2john <file> > h; hashcat -m 13400 h wordlist",
     "kdb": "keepass2john <file> > h; hashcat -m 13400 h wordlist",
     "pcap": "open in Wireshark; tshark -r <file> -qz conv,tcp",

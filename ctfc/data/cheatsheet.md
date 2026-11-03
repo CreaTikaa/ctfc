@@ -43,6 +43,9 @@ mirror the encryptor, do not guess.
 | the *same message* under several keys | `ctfc rsa --key a.pem --decrypt a.bin --also b.pem=b.bin` (common modulus, Hastad) |
 | two signatures (ECDSA/DSA) | `ctfc sig sigs.txt --curve secp256k1` - the same r means the key is already yours |
 | a pcap / pcapng | `ctfc pcap cap.pcap --extract out/` then `ctfc scan out/` |
+| a ZIP (or .docx/.jar/.apk) | `ctfc zip <file>` - which encryption, and tiny files from their CRC32 |
+| a tar / 7z / rar / cab | `ctfc archive <file>` - the listing, the encryption, the contents |
+| a `docker save` tar | `ctfc archive img.tar` - layer order, and the files a later layer deleted |
 | zero-width characters | `ctfc auto` (both bit mappings) or a StegCloak decoder |
 | a column of big integers (tokens, "random" ids) | `ctfc prng <file>` - 624 of them clone MT19937 |
 

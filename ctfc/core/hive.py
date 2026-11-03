@@ -30,6 +30,8 @@ from __future__ import annotations
 import struct
 from dataclasses import dataclass, field
 
+from ctfc.core.errors import FormatError
+
 MAGIC = b"regf"
 HEADER_SIZE = 4096  # every cell offset is relative to the end of this
 BIN_MAGIC = b"hbin"
@@ -61,7 +63,7 @@ BOOTKEY_KEYS = ("JD", "Skew1", "GBG", "Data")
 BOOTKEY_PERMUTATION = (8, 5, 4, 2, 11, 9, 13, 3, 0, 6, 1, 12, 14, 10, 15, 7)
 
 
-class HiveError(Exception):
+class HiveError(FormatError):
     """The file is not a registry hive we can read."""
 
 

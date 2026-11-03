@@ -34,6 +34,8 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
+from ctfc.core.errors import FormatError
+
 FILE_MAGIC = b"ElfFile\x00"
 CHUNK_MAGIC = b"ElfChnk\x00"
 RECORD_MAGIC = b"\x2a\x2a\x00\x00"
@@ -48,7 +50,7 @@ MAX_RECORD_SIZE = 4 * 1024 * 1024
 UTF16_RUN = re.compile(rb"(?:[\x20-\x7e]\x00){%d,}" % MIN_STRING)
 
 
-class EvtxError(Exception):
+class EvtxError(FormatError):
     """The file is not an event log we can read."""
 
 

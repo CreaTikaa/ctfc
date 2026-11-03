@@ -39,6 +39,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
 from ctfc.core.datafiles import load_passwords
+from ctfc.core.errors import FormatError
 
 # A JWT is three dot-separated base64url groups; the signature may be empty.
 TOKEN_SHAPE = re.compile(r"^[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{2,}\.[A-Za-z0-9_-]*$")
@@ -54,7 +55,7 @@ TIME_CLAIMS = {
 MAX_SECRETS = 20_000
 
 
-class JwtError(Exception):
+class JwtError(FormatError):
     """The string is not a JWT we can read."""
 
 

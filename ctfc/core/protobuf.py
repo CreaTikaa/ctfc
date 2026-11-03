@@ -28,6 +28,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from ctfc.core.errors import FormatError
+
 WIRE_VARINT = 0
 WIRE_64BIT = 1
 WIRE_LENGTH = 2
@@ -43,7 +45,7 @@ MAX_FIELDS = 10_000
 MIN_LENGTH = 4  # a buffer shorter than this proves nothing
 
 
-class ProtobufError(Exception):
+class ProtobufError(FormatError):
     """The bytes are not a protobuf message."""
 
 

@@ -31,6 +31,7 @@ import zlib
 from dataclasses import dataclass, field
 
 from ctfc.core.budget import Budget
+from ctfc.core.errors import FormatError
 
 LOCAL_HEADER = b"PK\x03\x04"
 CENTRAL_HEADER = b"PK\x01\x02"
@@ -62,7 +63,7 @@ CRC_ALPHABET = (string.ascii_letters + string.digits + "_-{}!?.,: @#$%&*+=/\\\n\
 BOMB_RATIO = 200  # an entry that expands more than this is worth a warning
 
 
-class ZipError(Exception):
+class ZipError(FormatError):
     """The data is not a ZIP we can read."""
 
 

@@ -33,6 +33,8 @@ import zlib
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from ctfc.core.errors import FormatError
+
 PACK_MAGIC = b"PACK"
 IDX_MAGIC = b"\xfftOc"
 # Pack object types (git's own numbering).
@@ -44,7 +46,7 @@ MAX_OBJECTS = 200_000
 SHA_PATTERN = re.compile(r"\b[0-9a-f]{40}\b")
 
 
-class GitError(Exception):
+class GitError(FormatError):
     """The folder is not a readable git repository."""
 
 

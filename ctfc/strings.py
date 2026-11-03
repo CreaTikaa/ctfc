@@ -238,6 +238,18 @@ EN: dict[str, str] = {
     "arg_hive": "the hive file (SAM, SYSTEM, SOFTWARE, NTUSER.DAT) - a path, or -",
     "opt_hive_key": "read one key by path instead of the usual report",
     "opt_hive_list": "print every key path in the hive",
+    "cmd_archive": "read a tar / 7z / RAR / cabinet, or a saved Docker image",
+    "cmd_archive_ex": (
+        "examples: ctfc archive files.7z  |  ctfc archive image.tar --extract ./layers  |  "
+        "ctfc archive secret.rar --json. "
+        "Lists the entries from the headers, says which encryption guards them (and "
+        "whether the file names themselves are encrypted), decodes stored/deflate/bzip2/"
+        "LZMA/LZMA2/MSZIP contents offline, and for a Docker image puts the layers back "
+        "in build order and recovers the files a later layer deleted."
+    ),
+    "arg_archive_any": "the archive (tar, 7z, rar, cab, docker save .tar) - a path, or -",
+    "opt_archive_extract": "write every member ctfc could decode into this folder",
+    "opt_archive_no_contents": "headers only: do not decompress anything",
     "cmd_zip": "look closely at a ZIP: encryption, header mismatches, tiny files",
     "cmd_zip_ex": (
         "examples: ctfc zip secret.zip  |  ctfc zip archive.zip --json. "

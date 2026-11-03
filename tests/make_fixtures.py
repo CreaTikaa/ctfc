@@ -11,6 +11,7 @@ import base64
 import hashlib
 import hmac
 import io
+import json
 import math
 import random
 import sqlite3
@@ -1715,6 +1716,461 @@ def write_prng_fixtures() -> None:
     write("prng_java_nextint.txt", "\n".join(str(value) for value in java_next_int) + "\n")
 
 
+# ---------------------------------------------------------------------------
+# Archives that are not ZIPs (lot F): tar, 7z, RAR, cabinet, Docker image.
+#
+# Every one of these is a *real* archive, not a mock-up: the 7z and cabinet
+# writers below were checked against `7z l` / `7z t`, the hand-written RAR 4
+# passes `unrar t`, and the two RAR 5 archives are the output of RAR 7.00
+# itself, frozen here as base64 because `rar` is not installed everywhere.
+# ---------------------------------------------------------------------------
+
+
+def seven_zip_number(value: int) -> bytes:
+    """7z's variable-length number, for the sizes the writers below need.
+
+    One byte up to 127, otherwise the 0x80 mask plus the value little-endian.
+    That covers everything a fixture needs without writing the general form.
+    """
+    if value < 0x80:
+        return bytes([value])
+    if value < 0x10000:
+        return bytes([0xC0 | (value >> 16)]) + value.to_bytes(2, "little")
+    return bytes([0xE0]) + value.to_bytes(4, "little")
+
+
+def seven_zip_files_info(names: list[str]) -> bytes:
+    """The kFilesInfo property: just the names, which is all a fixture needs."""
+    encoded = b"".join(name.encode("utf-16-le") + b"\x00\x00" for name in names)
+    body = b"\x00" + encoded  # not external
+    return (
+        bytes([0x05])
+        + seven_zip_number(len(names))
+        + bytes([0x11])
+        + seven_zip_number(len(body))
+        + body
+        + bytes([0x00])
+    )
+
+
+def lzma1_stream(data: bytes) -> tuple[bytes, bytes]:
+    """Raw LZMA1 of `data`, plus the five property bytes a 7z coder stores."""
+    import lzma
+
+    filters = [{"id": lzma.FILTER_LZMA1, "dict_size": 1 << 20, "lc": 3, "lp": 0, "pb": 2}]
+    compressor = lzma.LZMACompressor(format=lzma.FORMAT_RAW, filters=filters)
+    stream = compressor.compress(data) + compressor.flush()
+    properties = bytes([(2 * 5 + 0) * 9 + 3]) + (1 << 20).to_bytes(4, "little")
+    return stream, properties
+
+
+def seven_zip_streams_info(pack_size: int, coders: list[bytes], sizes: list[int]) -> bytes:
+    """kPackInfo + kUnPackInfo for one folder holding one substream.
+
+    `coders` are already-encoded coder records and `sizes` their output sizes,
+    in the same order; several coders are wired as a straight chain.
+    """
+    pack_info = (
+        bytes([0x06])  # kPackInfo
+        + seven_zip_number(0)  # pack position
+        + seven_zip_number(1)  # one pack stream
+        + bytes([0x09])  # kSize
+        + seven_zip_number(pack_size)
+        + bytes([0x00])  # kEnd
+    )
+    folder = seven_zip_number(len(coders)) + b"".join(coders)
+    # Bind pairs: coder N's input is fed by coder N-1's output.
+    for index in range(1, len(coders)):
+        folder += seven_zip_number(index) + seven_zip_number(index - 1)
+    unpack_info = (
+        bytes([0x07, 0x0B])  # kUnPackInfo, kFolder
+        + seven_zip_number(1)  # one folder
+        + bytes([0x00])  # not external
+        + folder
+        + bytes([0x0C])  # kCodersUnPackSize
+        + b"".join(seven_zip_number(size) for size in sizes)
+        + bytes([0x00])  # kEnd
+    )
+    return bytes([0x04]) + pack_info + unpack_info + bytes([0x00])  # kMainStreamsInfo
+
+
+def seven_zip_finish(header: bytes, packed: bytes) -> bytes:
+    """The signature header in front of a finished 7z body."""
+    next_header = (
+        len(packed).to_bytes(8, "little")
+        + len(header).to_bytes(8, "little")
+        + zlib.crc32(header).to_bytes(4, "little")
+    )
+    start = b"7z\xbc\xaf\x27\x1c\x00\x04" + zlib.crc32(next_header).to_bytes(4, "little")
+    return start + next_header + packed + header
+
+
+def seven_zip_lzma(name: str, content: bytes) -> bytes:
+    """A 7z archive with one LZMA-compressed file and a plain header."""
+    stream, properties = lzma1_stream(content)
+    coder = (
+        bytes([0x23, 0x03, 0x01, 0x01])  # flags: id size 3, attributes present
+        + seven_zip_number(len(properties))
+        + properties
+    )
+    header = (
+        bytes([0x01])  # kHeader
+        + seven_zip_streams_info(len(stream), [coder], [len(content)])
+        + seven_zip_files_info([name])
+        + bytes([0x00])  # kEnd
+    )
+    return seven_zip_finish(header, stream)
+
+
+def seven_zip_encoded_header(name: str, content: bytes) -> bytes:
+    """A 7z whose *header* is itself LZMA-compressed (kEncodedHeader).
+
+    This is what 7z writes by default, and it is why `strings` on a .7z shows no
+    file names: the listing has to be decompressed first.
+    """
+    stream, properties = lzma1_stream(content)
+    coder = bytes([0x23, 0x03, 0x01, 0x01]) + seven_zip_number(len(properties)) + properties
+    inner = (
+        bytes([0x01])
+        + seven_zip_streams_info(len(stream), [coder], [len(content)])
+        + seven_zip_files_info([name])
+        + bytes([0x00])
+    )
+    # The header becomes a second packed stream, right after the first.
+    header_stream, header_properties = lzma1_stream(inner)
+    header_coder = (
+        bytes([0x23, 0x03, 0x01, 0x01])
+        + seven_zip_number(len(header_properties))
+        + header_properties
+    )
+    outer = (
+        bytes([0x17])  # kEncodedHeader
+        + bytes([0x06])
+        + seven_zip_number(len(stream))  # pack position: after the file's stream
+        + seven_zip_number(1)
+        + bytes([0x09])
+        + seven_zip_number(len(header_stream))
+        + bytes([0x00])
+        + bytes([0x07, 0x0B])
+        + seven_zip_number(1)
+        + bytes([0x00])
+        + seven_zip_number(1)
+        + header_coder
+        + bytes([0x0C])
+        + seven_zip_number(len(inner))
+        + bytes([0x00])
+        + bytes([0x00])
+    )
+    return seven_zip_finish(outer, stream + header_stream)
+
+
+def seven_zip_key(password: str, salt: bytes, cycles_power: int) -> bytes:
+    """7z's own key derivation: SHA-256 over salt || password || counter, repeated.
+
+    Not PBKDF2 - 7-Zip hashes one long stream of (salt, the UTF-16LE password,
+    an 8-byte little-endian round counter), 2**cycles_power times over. The
+    fixture uses a small power so the tests stay fast; 7z's own default is 19.
+    """
+    digest = hashlib.sha256()
+    encoded = password.encode("utf-16-le")
+    for round_number in range(1 << cycles_power):
+        digest.update(salt + encoded + round_number.to_bytes(8, "little"))
+    return digest.digest()
+
+
+def seven_zip_aes(name: str, content: bytes, password: str, cycles_power: int = 6) -> bytes:
+    """A real AES-256 encrypted 7z (names in clear), as `7z a -p` writes it.
+
+    The chain is AES over LZMA: the file is compressed first, then the compressed
+    bytes are encrypted, which is why the coder list reads AES, then LZMA.
+    """
+    stream, properties = lzma1_stream(content)
+    salt = b""
+    iv = bytes(range(16))
+    key = seven_zip_key(password, salt, cycles_power)
+    padded = stream + b"\x00" * (-len(stream) % 16)
+    encrypted = AES.new(key, AES.MODE_CBC, iv).encrypt(padded)
+    # The AES coder's properties: the cycle count, then the IV, exactly as
+    # 7-Zip encodes them (bit 0x40 says an IV follows, its length in byte 1).
+    aes_properties = bytes([cycles_power | 0x40, len(iv) - 1]) + iv
+    aes_coder = (
+        bytes([0x24, 0x06, 0xF1, 0x07, 0x01])  # id size 4, attributes present
+        + seven_zip_number(len(aes_properties))
+        + aes_properties
+    )
+    lzma_coder = bytes([0x23, 0x03, 0x01, 0x01]) + seven_zip_number(len(properties)) + properties
+    header = (
+        bytes([0x01])
+        + seven_zip_streams_info(
+            len(encrypted), [aes_coder, lzma_coder], [len(stream), len(content)]
+        )
+        + seven_zip_files_info([name])
+        + bytes([0x00])
+    )
+    return seven_zip_finish(header, encrypted)
+
+
+def cab_write(files: list[tuple[str, bytes]], compress: str = "mszip") -> bytes:
+    """A real Microsoft cabinet with one folder. Checked with `7z l` and `7z x`.
+
+    MSZIP is raw deflate per 32 KB block, each block starting with the two bytes
+    `CK` and using the previous block's output as its dictionary.
+    """
+    stream = b"".join(content for _, content in files)
+    offsets: list[int] = []
+    position = 0
+    for _, content in files:
+        offsets.append(position)
+        position += len(content)
+
+    blocks: list[tuple[bytes, int]] = []
+    if compress == "stored":
+        method = 0
+        for start in range(0, max(1, len(stream)), 0x8000):
+            chunk = stream[start : start + 0x8000]
+            blocks.append((chunk, len(chunk)))
+    else:
+        method = 1
+        history = b""
+        for start in range(0, max(1, len(stream)), 0x8000):
+            chunk = stream[start : start + 0x8000]
+            compressor = (
+                zlib.compressobj(9, zlib.DEFLATED, -15, zdict=history)
+                if history
+                else zlib.compressobj(9, zlib.DEFLATED, -15)
+            )
+            body = compressor.compress(chunk) + compressor.flush(zlib.Z_FINISH)
+            blocks.append((b"CK" + body, len(chunk)))
+            history = (history + chunk)[-0x8000:]
+
+    entries = b""
+    for (name, content), offset in zip(files, offsets, strict=True):
+        # The date/time pair is an MS-DOS one: 2025-01-01 09:00:00.
+        entries += struct.pack("<IIHHHH", len(content), offset, 0, 0x5A21, 0x4800, 0x20)
+        entries += name.encode("ascii") + b"\x00"
+
+    files_offset = 36 + 8
+    data_offset = files_offset + len(entries)
+    data = b""
+    for body, uncompressed in blocks:
+        data += struct.pack("<IHH", 0, len(body), uncompressed) + body
+    header = struct.pack(
+        "<4sIIIIIBBHHHHH",
+        b"MSCF",
+        0,
+        data_offset + len(data),
+        0,
+        files_offset,
+        0,
+        3,
+        1,
+        1,
+        len(files),
+        0,
+        0x1234,
+        0,
+    )
+    return header + struct.pack("<IHH", data_offset, len(blocks), method) + entries + data
+
+
+def rar4_block(kind: int, flags: int, body: bytes, data: bytes = b"") -> bytes:
+    """One RAR 4 block: its own CRC, the 7-byte common header, then the data."""
+    size = 7 + len(body)
+    header = struct.pack("<BHH", kind, flags, size) + body
+    return struct.pack("<H", zlib.crc32(header) & 0xFFFF) + header + data
+
+
+def rar4_archive(files: list[tuple[str, bytes]], encrypted: bool = False) -> bytes:
+    """A real RAR 4 archive with stored files. `unrar t` on this says "All OK"."""
+    out = b"Rar!\x1a\x07\x00"
+    out += rar4_block(0x73, 0x0000, struct.pack("<HI", 0, 0))  # archive header
+    for name, content in files:
+        encoded = name.encode("ascii")
+        body = (
+            struct.pack(
+                "<IIBIIBBHI",
+                len(content),  # packed size (also the data size that follows)
+                len(content),  # unpacked size
+                3,  # host OS: Unix
+                zlib.crc32(content),
+                0x5A214800,  # MS-DOS date/time
+                20,  # written by RAR 2.0
+                0x30,  # method 0x30: stored
+                len(encoded),
+                0x20,  # DOS attributes
+            )
+            + encoded
+        )
+        out += rar4_block(0x74, 0x8000 | (0x0004 if encrypted else 0), body, content)
+    out += rar4_block(0x7B, 0x0000, b"")  # end of archive
+    return out
+
+
+# RAR 5 archives produced by RAR 7.00 itself, with
+#   rar a -m0 -tsm- -tsa- -tsc- -ep <name>.rar flag.txt notes.txt
+# (the -ts switches drop the timestamps, which is what makes the bytes stable),
+# and `-ppassword123` / `-hppassword123` for the two encrypted ones. Frozen here
+# because `rar` is not free software and is not installed everywhere; each was
+# checked with `unrar l` and `unrar t`.
+RAR5_STORED = """
+UmFyIRoHAQAzkrXlCgEFBgAFAQGAgADxthVwGgICkAAEkACkgwK4DyXJgAABCGZsYWcudHh0Q1lC
+TntyYXI1X2ZsYWd9CjB4TIsbAgKfAASfAKSDAmY1396AAAEJbm90ZXMudHh0YWFhYWFhYWFhYWFh
+YWFhYWFhYWFhYWFhYWFhYWFhCh13VlEDBQQA
+"""
+RAR5_ENCRYPTED_FILES = """
+UmFyIRoHAQAzkrXlCgEFBgAFAQGAgABV5DnVTAIDMZAABJAApIMCLDZbWIAAAQhmbGFnLnR4dDAB
+AAMPqO15v9LpTq2lt+YJRJ9gBs0B+VXAZD5CjA5zIW4XRoowwh/7zSOOri3bw3je1Pgbr+8R/Nr7
+hVeDvYeCe5qur00CAzGgAASfAKSDAnFOreeAAAEJbm90ZXMudHh0MAEAAw+o7Xm/0ulOraW35glE
+n2AGrSxXVl8A/plHzMpZKTtx3TDCH/vNI46uLdvDeAvTKzmoAh3MQYOMcEXYU6/PO+O/deH6VpyA
++B569V35HXdWUQMFBAA=
+"""
+RAR5_ENCRYPTED_HEADERS = """
+UmFyIRoHAQBHUtguIQQAAAEP6JrBYTWajUngyELXFr60vcahu0i1F8U1zeKtDNfXe/9xb7Uv1Wd7
+VZRTQp4So5yvxUI0Nvq55JGXpYoBpr+dRRiYTi30XDMkxsyH2FJ2dhQRfVdxglpAmdSJm+D2mFEJ
+o8rWFxR3KhIYSs+B+219EFjnosbc5fSLhYm13sutaVxMdBMNPmJGrz5Tz2RwojsG3CJchUq/pWsO
+Mv+Bd1m0Nvz2/6qTCMK9P4QbVY+JhSj4xgjotuwtryIiVTWEBhsjUlc60n/yYF61F+5Qy0FQ3pf6
+ykd+hxptrr9dTQ==
+"""
+
+
+def tar_member(name: str, content: bytes, kind: str = "0", mode: int = 0o644) -> bytes:
+    """One 512-byte tar header plus its padded data, written by hand.
+
+    Written out rather than taken from `tarfile` so that the fixture has no
+    timestamp in it and the bytes never change.
+    """
+    header = bytearray(512)
+    encoded = name.encode("utf-8")
+    header[0 : len(encoded)] = encoded
+    header[100:108] = b"%07o\x00" % mode
+    header[108:116] = b"0000000\x00"
+    header[116:124] = b"0000000\x00"
+    header[124:136] = b"%011o\x00" % len(content)
+    header[136:148] = b"00000000000\x00"  # mtime 0: the epoch, so it never moves
+    header[148:156] = b" " * 8  # the checksum field reads as spaces while summing
+    header[156:157] = kind.encode()
+    header[257:263] = b"ustar\x00"
+    header[263:265] = b"00"
+    header[265:271] = b"ctfc\x00\x00"
+    header[297:303] = b"ctfc\x00\x00"
+    header[148:156] = b"%06o\x00 " % sum(header)
+    return bytes(header) + content + b"\x00" * (-len(content) % 512)
+
+
+def tar_archive(members: list[tuple[str, bytes]], trailing: bytes = b"") -> bytes:
+    """A tar, with the two zero blocks that end it - and anything appended after."""
+    body = b"".join(tar_member(name, content) for name, content in members)
+    return body + b"\x00" * 1024 + trailing
+
+
+def docker_layer(members: list[tuple[str, bytes]]) -> bytes:
+    """One layer: a tar of the files that layer adds (or whites out)."""
+    return tar_archive(members)
+
+
+def docker_image_tar() -> bytes:
+    """A saved Docker image in the legacy layout, with a secret deleted by a layer.
+
+    The shape `docker save` writes: a manifest naming the layers in build order,
+    a configuration carrying the `history` (so each layer can be labelled with
+    its Dockerfile line), and one `layer.tar` per layer. The third layer deletes
+    `app/secret.txt` the only way a layer can - by adding a `.wh.` marker - so
+    the file itself is still sitting in layer two.
+    """
+    layers = [
+        docker_layer([("usr/bin/app", b"#!/bin/sh\necho hello\n")]),
+        docker_layer(
+            [
+                ("app/secret.txt", b"CYBN{docker_whiteout}\n"),
+                ("app/keep.txt", b"this one stays\n"),
+            ]
+        ),
+        docker_layer([("app/.wh.secret.txt", b"")]),
+    ]
+    digests = [hashlib.sha256(layer).hexdigest() for layer in layers]
+    config = {
+        "architecture": "amd64",
+        "config": {
+            "Env": ["PATH=/usr/bin", "APP_TOKEN=CYBN{docker_env_token}"],
+            "Cmd": ["/usr/bin/app"],
+        },
+        "history": [
+            {"created_by": "FROM scratch", "empty_layer": True},
+            {"created_by": "COPY app /usr/bin/app"},
+            {"created_by": "COPY secret.txt keep.txt /app/"},
+            {"created_by": "RUN rm /app/secret.txt"},
+            {"created_by": 'CMD ["/usr/bin/app"]', "empty_layer": True},
+        ],
+    }
+    config_bytes = json.dumps(config, indent=2, sort_keys=True).encode()
+    config_name = hashlib.sha256(config_bytes).hexdigest() + ".json"
+    manifest = [
+        {
+            "Config": config_name,
+            "RepoTags": ["ctfc/demo:1"],
+            "Layers": [f"{digest}/layer.tar" for digest in digests],
+        }
+    ]
+    members: list[tuple[str, bytes]] = [
+        ("manifest.json", json.dumps(manifest, indent=2).encode()),
+        (config_name, config_bytes),
+    ]
+    for digest, layer in zip(digests, layers, strict=True):
+        members.append((f"{digest}/VERSION", b"1.0"))
+        members.append((f"{digest}/json", b'{"id": "%s"}' % digest.encode()))
+        members.append((f"{digest}/layer.tar", layer))
+    return tar_archive(members)
+
+
+def write_archive_fixtures() -> None:
+    """tar / 7z / RAR / cabinet / Docker image, for `ctfc archive`."""
+    flag = b"CYBN{sevenzip_lzma}\n"
+    write("archive_lzma.7z", seven_zip_lzma("flag.txt", flag * 4))
+    write(
+        "archive_encoded_header.7z",
+        seven_zip_encoded_header("hidden.txt", b"CYBN{sevenzip_encoded_header}\n" * 3),
+    )
+    write(
+        "archive_aes.7z",
+        seven_zip_aes("secret.txt", b"CYBN{sevenzip_aes}\n" * 3, "password123"),
+    )
+    write(
+        "archive_mszip.cab",
+        cab_write(
+            [("flag.txt", b"CYBN{cabinet_mszip}\n"), ("readme.txt", b"nothing to see\n" * 50)],
+            "mszip",
+        ),
+    )
+    write(
+        "archive_stored.rar",
+        rar4_archive([("flag.txt", b"CYBN{rar4_stored}\n"), ("notes.txt", b"a" * 30)]),
+    )
+    write(
+        "archive_encrypted.rar",
+        rar4_archive([("flag.txt", b"CYBN{rar4_encrypted}\n")], encrypted=True),
+    )
+    write("archive_rar5_stored.rar", base64.b64decode("".join(RAR5_STORED.split())))
+    write("archive_rar5_encrypted.rar", base64.b64decode("".join(RAR5_ENCRYPTED_FILES.split())))
+    write(
+        "archive_rar5_header_encrypted.rar",
+        base64.b64decode("".join(RAR5_ENCRYPTED_HEADERS.split())),
+    )
+    # A tar with a PNG appended after the end-of-archive blocks: `tar tf` shows
+    # the three files and nothing else.
+    write(
+        "archive_appended.tar",
+        tar_archive(
+            [
+                ("flag.txt", b"CYBN{tar_plain}\n"),
+                ("notes/readme.txt", b"read me\n"),
+                ("notes/deep/file.bin", bytes(range(64))),
+            ],
+            trailing=tiny_png(),
+        ),
+    )
+    write("archive_docker_image.tar", docker_image_tar())
+
+
 def main() -> None:
     FIXTURES.mkdir(exist_ok=True)
     print(f"writing fixtures to {FIXTURES}")
@@ -1896,6 +2352,9 @@ def main() -> None:
 
     # --- the attacks that need more than one message (ideas.md 2.5) ---
     write_multi_message_fixtures()
+
+    # --- lot F: the archives that are not ZIPs, and a saved Docker image ---
+    write_archive_fixtures()
 
 
 if __name__ == "__main__":
