@@ -1,11 +1,17 @@
 # Ideas for later
 
 Everything in `CLAUDE.md`'s milestones is built, both audits are closed, the
-A/B/C feature batches are done, and **every section of this file that could be
-built has now been built** (lots D, E, F and G - see `HANDOFF.md` §5septies and
-§5octies). What is left is listed in section 1: three things that need a real
-sample before they can be finished honestly, and the things that were measured
-or considered and deliberately not built.
+A/B/C feature batches are done, and every section of the *previous* version of
+this file has been built (lots D, E, F and G - see `HANDOFF.md` §5septies and
+§5octies).
+
+- **Section 1** is what is still open from that list: three things that need a
+  real sample before they can be finished honestly, and the things that were
+  measured or considered and deliberately not built.
+- **Section 2** is the new list, written at the end of the session that finished
+  the old one - what I would build next, and why.
+- **Section 3** keeps the reasoning behind what is already done, and section 4
+  the questions that do not need reopening.
 
 The rules still apply to anything added later: no LLM, offline-first, nothing
 executed, and every feature has to *deduce its parameters* rather than ask for
@@ -72,7 +78,150 @@ are all read.
 
 ---
 
-## 2. Done, kept for the reasoning
+## 2. What I would build next (2026-11-03)
+
+Written at the end of the session that finished the previous list, while the
+code was still fresh. Ordered by **value against effort**, as before. Each entry
+says what it unlocks, roughly what it costs, and the trap to avoid - because the
+trap is usually the reason a feature ends up half-useful.
+
+The two at the top are the ones I would actually start with: they are the only
+two that change what ctfc *is*, rather than adding another reader to it.
+
+### 2.1 `ctfc solve <file>` - the cheat sheet, executed
+
+**What it is.** One command that runs the decision tree instead of printing it:
+fingerprint the file, pick the reader that claims it (the Files tab already
+sniffs exactly this), run it, feed everything that came *out* of it - extracted
+members, decoded streams, carved files, decompressed layers - back through
+`auto` and the flag hunt, and print **only** the answer: the flag if there is
+one, otherwise the three most interesting things that came out, each with the
+exact command to go further.
+
+**Why it is first.** It is the two-in-the-morning command. With twenty minutes
+left nobody wants to remember whether this one is `ctfc archive` or `ctfc zip`,
+or that a `.docm` goes to `office` and a `.jar` to `exe`. Everything needed
+already exists; what is missing is the thing that puts them in order.
+
+**Cost.** Small to medium. It is a bounded loop over pieces that are all
+written: `detect`, `formats.sniff`, every reader, `auto`, `search_flags`. The
+only new code is the iterator "what did this reader produce that is itself worth
+reading" - and each report already carries it (entries with `data`, `objects`,
+`carved`, `extracted`, Docker layers).
+
+**The trap.** Becoming `auto` with extra steps, and burning four minutes on a
+64 MB dump. The rule has to be: `solve` only chains things that are already
+deterministic, it never brute-forces anything that `auto` would not, it stops at
+the first flag, and it reports its budget like every other search here.
+
+### 2.2 A workspace that correlates artefacts
+
+**What it is.** Today ctfc is one file in, one answer out. A real challenge is a
+folder: the key is never in the same file as the ciphertext. So:
+`ctfc workspace <folder>` (or the session, extended) reads every file once and
+keeps three pools -
+
+- **candidate secrets**: every password-shaped string found anywhere - a config
+  file, a mail body, a ZIP comment, a registry value, a `.lnk` argument, a
+  Docker `ENV`, an MSI string, a literal Code Lens pulled out of a script;
+- **candidate keys**: the high-entropy 16/24/32-byte windows and the hex/base64
+  strings of the right length (`keyhunt` already finds these, per file);
+- **ciphertexts**: everything that is encrypted - `openssl enc` files, encrypted
+  ZIP/7z/RAR entries, Fernet tokens, AES-shaped blobs.
+
+Then it tries every secret against every ciphertext under a visible budget and
+reports the pairs that worked: *"the password in mail.eml opens backup.7z"*.
+
+**Why.** That cross-product is exactly what he does by hand across a multi-file
+challenge, and it is the one step the tool does not do. It is also where a
+forensics challenge is actually won.
+
+**Cost.** Medium to large, but mostly glue: `secrets.find_secrets`, `keyhunt`,
+`solve_symmetric` and every format reader already produce the three lists.
+
+**The trap.** The combinatorics. 40 secrets x 12 ciphertexts x the layout solver
+is a long afternoon, so the budget has to be shared across the whole cross
+product rather than per pair, with the cheap tests first (does this ZIP's
+password check byte match?) before the expensive ones (PBKDF2). And the report
+has to say what it did *not* get to.
+
+### 2.3 PNG surgery: the shrunk height and the bad CRC
+
+**What it is.** The classic: a PNG whose IHDR height was reduced so the bottom
+of the image - where the flag is - never gets drawn. The fix is to brute-force
+the real height, recompute the IHDR CRC and write the file back out. While in
+there: a deliberately wrong chunk CRC, a bit-depth/colour-type pair that no
+encoder would emit, and a `zTXt`/`iTXt` holding the answer.
+
+**Why.** It is a stock challenge, it is pure stdlib (zlib and CRC32), and
+`ctfc repair` is already the right home for it - it repairs magic bytes and
+carves trailing data, so chunk-level surgery is the missing half.
+
+**Cost.** Small. The pixels do not even need decoding: a height is right when
+the IDAT stream inflates to exactly `height * (1 + width * channels)` bytes.
+
+**The trap.** Silently "fixing" a file that was never broken. Every change has to
+be reported the way `repair` already reports: offset, old bytes, new bytes, why.
+
+### 2.4 `ctfc timeline` - every timestamp in one table
+
+**What it is.** Every reader already pulls times out: prefetch run times, a
+shortcut's three, EVTX records, SQLite rows, ZIP and CAB entries, a PE build
+stamp, Docker `history`, EXIF. Merge them, sort them, label each with where it
+came from, and print one table. `--since` / `--until` to narrow it.
+
+**Why.** A forensics challenge is usually "what happened, in which order" - and
+the answer is currently spread over six commands and read by eye.
+
+**Cost.** Medium, nearly all plumbing: `core/timestamps.py` already normalises
+every epoch involved.
+
+**The trap.** Time zones and fake stamps. Everything should be printed as UTC
+and labelled with its source, and a stamp that is obviously forged (a 2080 build
+date, an mtime before the file format existed) should be *kept* and flagged, not
+dropped - a forged timestamp is evidence too.
+
+### 2.5 Small, frequent, cheap
+
+Each of these is an afternoon at most, and each has come up in a real challenge:
+
+- **`ctfc mail <file.eml>`**. `core/mail.py` exists but is only reachable
+  through a capture. A plain `.eml` or `.mbox` on disk has no command, which is
+  a strange gap now that `.msg` has one.
+- **An EXIF reader**. The flag, the GPS point or the camera serial in a photo.
+  About a hundred lines (TIFF IFDs), no dependency - `exiftool` is suggested
+  today but is not always installed, and `ctfc stego` is already the natural
+  home.
+- **WAV LSB**, with `wave` from the standard library, plus a "this looks like a
+  spectrogram puzzle" note that hands over to Audacity or Sonic Visualiser (the
+  spectrogram itself needs numpy, which is not an allowed dependency).
+- **`--wordlist <path>`** on the password tries of `sym`, `zip` and `jwt`, with
+  a budget and progress. He keeps a full `rockyou.txt` in `~/Documents`, and the
+  embedded list is only its first 10000 entries.
+- **Code Lens: PHP**, which is the one language of the web category that is
+  missing, and **string extraction from Go and Rust binaries**, whose strings are
+  length-prefixed rather than NUL-terminated - which is precisely why `strings`
+  is useless on them and why a small reader would not be.
+- **QR codes and barcodes in an image**: suggest `zbarimg` through the tool
+  bridge first, and only then consider a minimal decoder for the clean,
+  well-aligned case. Reading a damaged QR properly is a project.
+
+### 2.6 Engineering, not features
+
+- **Fuzz the web API** the way the format readers are fuzzed: random JSON bodies
+  at every route. The page is the part a stranger's file reaches *through Flask*,
+  and `tests/fuzz_formats.py` stops at the reader.
+- **A regression corpus from his own past challenges**, anonymized. He offered
+  samples long ago and they never arrived; each one becomes a fixture with its
+  expected flag, and the suite then proves the tool still solves them. That is
+  the only test that measures the thing he actually cares about.
+- **`make demo`**: run every command in `HANDOFF.md` §7 and fail if any exits
+  non-zero. That list is checked by hand today, which means it is checked when
+  someone remembers.
+
+---
+
+## 3. Done, kept for the reasoning
 
 The entries below were the plan; they are built. What each one says about *why*
 still holds, and the limits named in them are still the limits.
@@ -113,7 +262,7 @@ still holds, and the limits named in them are still the limits.
 
 ---
 
-## 3. Deliberately not doing
+## 4. Deliberately not doing
 
 Recorded so the question does not have to be reopened each time.
 

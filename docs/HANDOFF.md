@@ -735,9 +735,17 @@ He asked three follow-up questions, each of which was a real gap:
    `core/search.py` goes through `find_flags`, which knows those forms, and prints what it
    searched for. It runs on the input or on the last result.
 
-### What is left
+### What is left, and what to do next
 
-`docs/ideas.md` section 1, and only that: three readers that stop short until there is a real
+**`docs/ideas.md` section 2 is a fresh list**, written at the end of this session while the code
+was still in mind: what I would build next and why. The two at the top are the only two that
+change what ctfc *is* rather than adding another reader - `ctfc solve <file>` (the cheat sheet
+executed: sniff, read, chain, print only the answer) and a **workspace that correlates
+artefacts** (the key is never in the same file as the ciphertext, so pool every secret, key and
+ciphertext found in a folder and try the cross product under one budget). Then PNG surgery (the
+shrunk IHDR height), `ctfc timeline`, and a handful of cheap ones.
+
+**`docs/ideas.md` section 1** is what is still open from the old list: three readers that stop short until there is a real
 sample to verify against (SAM hashes, EVTX binary XML, LZXPRESS Huffman for compressed prefetch),
 parallelism (measured, declined), the keyed classical ciphers that belong to dcode.fr, and Mach-O.
 Everything else in that file is built.
