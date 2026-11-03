@@ -26,10 +26,9 @@ see the disagreements a well-behaved reader hides.
 
 from __future__ import annotations
 
-import string
-import zlib
 from dataclasses import dataclass, field
 
+from ctfc.core import crc32
 from ctfc.core.budget import Budget
 from ctfc.core.errors import FormatError
 
@@ -55,11 +54,12 @@ METHODS = {
     99: "WinZip AES",
 }
 AES_STRENGTH = {1: "AES-128", 2: "AES-192", 3: "AES-256"}
-# Recovering a short plaintext from its CRC32. 256**2 is instant; three bytes is
-# 16.7 million checks, so that pass is limited to the characters a flag uses.
-CRC_FULL_MAX = 2
-CRC_TEXT_MAX = 3
-CRC_ALPHABET = (string.ascii_letters + string.digits + "_-{}!?.,: @#$%&*+=/\\\n\r\t").encode()
+# Recovering a short plaintext from its CRC32 lives in `core/crc32.py`, which
+# tries the answers that can be *real* (every short string, the word lists, a
+# meet-in-the-middle search) and stops before fabricating a preimage. This is
+# the longest entry it is worth calling for: beyond it the search space is too
+# large for an answer to mean anything.
+CRC_RECOVER_MAX = 8
 BOMB_RATIO = 200  # an entry that expands more than this is worth a warning
 
 
@@ -229,30 +229,20 @@ def compare_with_local(data: bytes, entry: Entry) -> list[str]:
 
 
 def recover_from_crc(crc: int, size: int, budget: Budget | None = None) -> bytes | None:
-    """Recover a very short plaintext from its CRC32.
+    """Recover a short plaintext from its CRC32, when the answer can be trusted.
 
-    For a file of one or two bytes every possibility is tried. For three, only
-    the characters a flag or a word is made of - the full 16.7 million is slow in
-    Python and almost never needed. The CRC is stored in clear even when the
-    entry is encrypted, so this works with no password.
+    The CRC is of the *plaintext* and is stored in clear even for an encrypted
+    entry, so this works with no password. `core/crc32.py` does the work; only
+    its trustworthy answers are taken here - a listing is no place to print "a
+    string that happens to collide", which is what the linear solve would give.
     """
-    if size <= 0 or size > CRC_TEXT_MAX:
+    if size <= 0 or size > CRC_RECOVER_MAX:
         return None
-    budget = budget or Budget(max_attempts=20_000_000, max_seconds=30)
-    alphabet = range(256) if size <= CRC_FULL_MAX else CRC_ALPHABET
-
-    def search(prefix: bytes) -> bytes | None:
-        if len(prefix) == size:
-            return prefix if zlib.crc32(prefix) == crc else None
-        for byte in alphabet:
-            if not budget.spend():
-                return None
-            found = search(prefix + bytes([byte]))
-            if found is not None:
-                return found
-        return None
-
-    return search(b"")
+    report = crc32.recover(crc, size, budget=budget, solve=False)
+    for result in report.results:
+        if result.exact:
+            return result.data
+    return None
 
 
 @dataclass
@@ -316,7 +306,7 @@ def analyse(data: bytes, path: str = "archive.zip", budget: Budget | None = None
                 "check the size before extracting it"
             )
         # The CRC is the plaintext's, and it is in clear even when encrypted.
-        if 0 < entry.uncompressed_size <= CRC_TEXT_MAX and entry.crc:
+        if 0 < entry.uncompressed_size <= CRC_RECOVER_MAX and entry.crc:
             entry.recovered = recover_from_crc(entry.crc, entry.uncompressed_size, budget)
             if entry.recovered is not None:
                 report.notes.append(

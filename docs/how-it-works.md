@@ -1438,3 +1438,103 @@ no macro - because it was never a document. Every reader therefore names the
 right command when it recognises another's format, and `ctfc archive` does the
 same for a compound file, a ZIP and a gzip. A refusal is only useful if it ends
 with the command that works.
+
+## 23. Working backwards from a CRC32 (`ctfc/core/crc32.py`)
+
+A ZIP stores the CRC32 of each file's **plaintext**, in clear, even when the
+file is encrypted. For a short file that is a leak: there is effectively one
+sensible string with that checksum, so the content can be recovered with no
+password at all. Challenge authors hide one-word flags exactly this way.
+
+"Invert a CRC32" hides three different questions, and they need three different
+answers:
+
+**1. What was the file?** A search - but only over spaces where a hit *means*
+something. Every string up to three bytes; the two embedded lists (10000
+passwords and a small EN+FR vocabulary), each entry tried bare, capitalised,
+upper-cased and with a trailing newline, because a file written by `echo` has
+one; and for four to eight bytes a **meet-in-the-middle** search.
+
+The meet-in-the-middle works because every step of a CRC is invertible. Running
+a byte in mixes one table entry into the register; the top byte of the result
+identifies which entry it was, so the step can be undone. The first half of the
+message is therefore run *forwards* from the initial register, the second half
+*backwards* from the target, and a collision between the two tables is a
+message with the right checksum - at the square root of the full cost. Several
+alphabets are tried in order of plausibility (digits, lowercase, alphanumeric,
+printable), so `4242` is found as a PIN before anything else is attempted.
+
+**2. What fits this pattern?** `CYBN{????}` is the shape a challenge really
+hands you: the format is known and four characters are not. The unknown
+positions are searched directly.
+
+**3. Give me *a* file with this checksum.** That is not a search at all. CRC32
+is affine over GF(2): flipping one bit of the message flips a fixed set of bits
+of the checksum, whatever the rest of the message is. So
+
+    crc(m0 XOR d) = crc(m0) XOR L(d)
+
+with `L` linear. Each flippable bit contributes one column - the checksum
+difference it alone causes - and `L(d) = crc(m0) XOR target` is 32 equations,
+solved by Gaussian elimination in microseconds. Restricting the answer to a
+character class costs nothing: digits `0-7` are `0x30` plus three free bits,
+letters `a-o` are `0x60` plus four, so the solver is simply not offered the bits
+that would leave the class. Thirty-two free bits are necessary but not always
+sufficient - the low four bits of eight consecutive bytes do not span GF(2)^32 -
+and that needs no prediction: an unsolvable system has no solution and the
+caller moves to a wider class.
+
+### Saying what an answer is worth
+
+This is the part that matters more than the search. A CRC32 has 2^32 values, so
+a space of N candidates puts N / 2^32 of them on any given checksum:
+
+| search space | size | share of all checksums |
+|---|---|---|
+| 4 digits | 10^4 | 0.0002% |
+| 6 lowercase letters | 3×10^8 | 7% |
+| 8 lowercase letters | 4×10^11 | 8900% (about 89 collisions each) |
+
+So a 4-digit hit is a fact and an 8-letter hit is one string among dozens that
+collide. When the length is unknown, every searchable space is tried
+**smallest first** and the running total is reported, because that total is what
+decides the question: below a few per cent, a match is the content; above, it is
+a maybe. A linear solve is always labelled as not-the-original, and `ctfc zip`
+only prints the trustworthy answers - a listing is no place for "a string that
+happens to collide".
+
+That is also why the brute-force limit moved: `ctfc zip` used to give up past
+three bytes, and now reads a six-byte password straight out of an encrypted
+archive's listing.
+
+## 24. Is the judge calibrated? (`tests/test_scoring_calibration.py`)
+
+`scoring.score()` decides every search in ctfc, and each caller compares it
+against a hard-coded cut-off: `auto.FOUND` (0.9) ends a decode chain,
+`auto.XOR_MIN_SCORE` (0.6) keeps an XOR guess, `symmetric.MIN_SCORE` (0.25) is
+the noise floor. Those numbers were chosen by eye, and the per-feature tests
+only ever check one case at a time.
+
+The calibration test asks the question none of them do: **do the right things
+score above the cut-off that keeps them, and the wrong things below it?** It
+imports the real constants rather than inventing bars, prints the distribution
+it measured (`pytest -s`), and asserts the shape:
+
+- a flag reaches `FOUND`; plain English clears `XOR_MIN_SCORE` but stays under
+  `FOUND`; base64 of English stays under `READS_FINE` so `auto` keeps peeling;
+- random bytes, all-zeros and high-byte-only data stay under the noise floor;
+- all 255 **wrong** single-byte XOR keys stay under `XOR_MIN_SCORE`, and the
+  right one wins by more than 0.2 - the margin is what makes the ranking safe;
+- across all 131 fixtures the spread stays above 0.6 and all three bands stay
+  occupied, so a change that drags everything towards one number fails here
+  instead of quietly making every search worse.
+
+It found one real miscalibration on the first run. A flag in an *unknown* CTF's
+format carries strength 0.9 exactly, and the "flag inside unreadable text"
+penalty was scaled by the readability of the surrounding text - but
+`_text_score` tops out near 0.88 even for perfect English, so every flag found
+in a sentence was quietly docked a little and landed at 0.881, just under
+`FOUND`. `auto` therefore kept decoding past the answer for any CTF whose prefix
+is not in the config. The penalty now applies only when the surround really is
+unreadable, which leaves the garbled-flag case it was written for intact: a
+plausible-looking flag in garbled text still scores 0.844 and the search goes on.

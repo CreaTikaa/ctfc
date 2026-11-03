@@ -45,6 +45,7 @@ mirror the encryptor, do not guess.
 | a pcap / pcapng | `ctfc pcap cap.pcap --extract out/` then `ctfc scan out/` |
 | a ZIP (or .docx/.jar/.apk) | `ctfc zip <file>` - which encryption, and tiny files from their CRC32 |
 | a tar / 7z / rar / cab | `ctfc archive <file>` - the listing, the encryption, the contents |
+| a CRC32 of a short file (a ZIP prints them) | `ctfc crc <crc32>` - the content itself, with no password |
 | an Outlook .msg | `ctfc msg <file> --extract att/` - headers, body, attachments |
 | an .msi installer | `ctfc msi <file>` - the string pool, the embedded cabinet, what it runs |
 | a .doc with an icon in it | `ctfc office <file> --extract obj/` - the embedded object itself |

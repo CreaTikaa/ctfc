@@ -39,6 +39,10 @@ FRENCH_FREQ = [
     7.10, 5.80, 2.52, 1.36, 6.69, 7.95, 7.24, 6.31, 1.84, 0.05, 0.43, 0.13, 0.33,
 ]  # fmt: skip
 
+# Text scoring this well counts as readable: `_text_score` tops out near 0.88
+# for plain English, so this is "as good as prose gets", not "nearly perfect".
+READABLE_SURROUND = 0.85
+
 WORD_RE = re.compile(r"[a-zàâäéèêëïîôöùûüç]+")
 ACCENTS = str.maketrans("àâäéèêëïîôöùûüç", "aaaeeeeiioouuuc")
 
@@ -189,12 +193,18 @@ def score(
     if flag_strength:
         # A flag inside unreadable text is suspicious (e.g. a half-correct XOR key):
         # the flag score loses up to 0.15 depending on how readable the rest is.
+        # Readable surroundings cost nothing at all - `_text_score` tops out
+        # around 0.88 even for plain English, so scaling the penalty by it would
+        # quietly dock every flag found in a sentence, which is where flags
+        # normally are.
         rest = data
         for hit in hits:
             rest = rest.replace(hit.text.encode("utf-8", errors="replace"), b"")
         penalty = 0.0
         if len(rest.strip()) >= 8:
-            penalty = 0.15 * (1 - _text_score(text_stats(rest)))
+            readability = _text_score(text_stats(rest))
+            if readability < READABLE_SURROUND:
+                penalty = 0.15 * (1 - readability / READABLE_SURROUND)
         best = max(best, flag_strength - penalty)
 
     if check_padding and has_valid_pkcs7(data, block_size):

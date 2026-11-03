@@ -1277,3 +1277,28 @@ def print_msi(console: Console, report) -> None:
     for flag in report.flags:
         console.print(f"[bold green]flag:[/] {escape(flag)}")
     print_notes(console, report.notes)
+
+
+def print_crc(console: Console, report) -> None:
+    """`ctfc crc`: what content could have this checksum, and how much to trust it."""
+    console.print(
+        f"[bold]CRC32 {report.target:08x}[/]"
+        + (f" of {report.length} byte(s)" if report.length else "")
+    )
+    if report.results:
+        table = Table(title="candidates", expand=True)
+        table.add_column("content", ratio=2)
+        table.add_column("hex", ratio=2)
+        table.add_column("found by", width=18)
+        table.add_column("why", ratio=4)
+        for result in report.results:
+            table.add_row(
+                ("[bold green]" if result.exact else "[yellow]")
+                + safe(repr(result.data), 50)
+                + "[/]",
+                result.data.hex(),
+                result.method,
+                safe(result.note, 200),
+            )
+        console.print(table)
+    print_notes(console, report.notes)

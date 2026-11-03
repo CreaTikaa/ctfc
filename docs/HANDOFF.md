@@ -716,6 +716,10 @@ ctfc archive tests/fixtures/archive_docker_image.tar --extract /tmp/lay && ctfc 
 ctfc msg tests/fixtures/compound_message.msg --extract /tmp/att   # body + the attachment
 ctfc msi tests/fixtures/compound_installer.msi     # string pool, cabinet, the -enc command
 ctfc office tests/fixtures/compound_embedded.doc --extract /tmp/obj   # the embedded .bat
+ctfc crc 27d829b4                                  # the 6-byte file behind a CRC32
+ctfc crc 0x$(python3 -c 'import zlib;print("%08x"%zlib.crc32(b"1337"))')   # a 4-digit PIN
+ctfc crc deadbeef --length 12 --solve              # *a* preimage, over GF(2)
+pytest tests/test_scoring_calibration.py -q -s     # the score distribution, printed
 ctfc git <a folder with a .git>                    # the secret that was committed then removed
 ctfc jwt <token> --show-code                       # alg=none / weak HMAC secret
 ctfc time 133476575820000000                       # Windows FILETIME

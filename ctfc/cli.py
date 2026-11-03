@@ -142,6 +142,13 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--save-macros", help=t("opt_office_save"))
     p.add_argument("--extract", help=t("opt_office_extract"))
 
+    p = add("crc")
+    p.add_argument("value", help=t("arg_crc"))
+    p.add_argument("--length", type=int, default=None, help=t("opt_crc_length"))
+    p.add_argument("--pattern", default=None, help=t("opt_crc_pattern"))
+    p.add_argument("--solve", action="store_true", help=t("opt_crc_solve"))
+    p.add_argument("--seconds", type=float, default=20.0, help=t("opt_seconds"))
+
     p = add("msg")
     p.add_argument("input", help=t("arg_msg"))
     p.add_argument("--extract", help=t("opt_msg_extract"))
@@ -974,6 +981,39 @@ def cmd_zip(args: argparse.Namespace, config: Config, console: Console) -> int:
     return 0
 
 
+def cmd_crc(args: argparse.Namespace, config: Config, console: Console) -> int:
+    """Work backwards from a CRC32: what file could have produced it."""
+    from ctfc.core import crc32
+
+    text = args.value.strip().lower().removeprefix("0x")
+    if len(text) == 8 and all(char in "0123456789abcdef" for char in text):
+        target = int(text, 16)
+    else:
+        try:
+            target = int(args.value, 0)
+        except ValueError as exc:
+            raise ValueError(
+                f"{args.value!r} is not a CRC32: give 8 hex digits (as `ctfc zip` prints "
+                "them) or a decimal number"
+            ) from exc
+    if not 0 <= target <= 0xFFFFFFFF:
+        raise ValueError(f"{target} does not fit in 32 bits: a CRC32 is 4 bytes")
+
+    pattern = args.pattern.encode() if args.pattern else None
+    budget = Budget(max_attempts=200_000_000, max_seconds=args.seconds)
+    if args.length is None and pattern is None:
+        report = crc32.recover_any_length(target, budget=budget)
+    else:
+        length = args.length if args.length is not None else len(pattern or b"")
+        report = crc32.recover(target, length, pattern, budget, solve=args.solve)
+    remember(args, config, summary=report.notes[:3])
+    if args.json:
+        print(json.dumps(report.to_dict(), indent=2))
+        return 0 if report.results else 1
+    render.print_crc(console, report)
+    return 0 if report.results else 1
+
+
 def cmd_msg(args: argparse.Namespace, config: Config, console: Console) -> int:
     """Read an Outlook .msg: headers, body, recipients, attachments."""
     from ctfc.core import msg as msg_module
@@ -1619,6 +1659,7 @@ def main(argv: list[str] | None = None) -> int:
         "extend": cmd_extend,
         "sig": cmd_sig,
         "archive": cmd_archive,
+        "crc": cmd_crc,
         "msg": cmd_msg,
         "msi": cmd_msi,
         "zip": cmd_zip,

@@ -238,6 +238,20 @@ EN: dict[str, str] = {
     "arg_hive": "the hive file (SAM, SYSTEM, SOFTWARE, NTUSER.DAT) - a path, or -",
     "opt_hive_key": "read one key by path instead of the usual report",
     "opt_hive_list": "print every key path in the hive",
+    "cmd_crc": "work backwards from a CRC32: what file could have produced it",
+    "cmd_crc_ex": (
+        "examples: ctfc crc 0x1b851995  |  ctfc crc 1b851995 --length 6  |  "
+        "ctfc crc 1b851995 --pattern 'CYBN{????}'. "
+        "A ZIP stores the CRC32 of each file's plaintext in clear, even when the file "
+        "is encrypted, so a short file can be read with no password. Tries the answers "
+        "that can be real (every short string, the word lists, a two-halves search) "
+        "and says how much a hit is worth; --solve adds a GF(2) preimage of a given "
+        "length, which is a file with that checksum rather than the original."
+    ),
+    "arg_crc": "the CRC32: 8 hex digits (0x optional) or a decimal number",
+    "opt_crc_length": "the content's length in bytes (a ZIP's listing has it)",
+    "opt_crc_pattern": "a pattern with ? for the unknown characters, e.g. 'CYBN{????}'",
+    "opt_crc_solve": "also solve for *a* preimage of that length over GF(2) (not the original)",
     "cmd_msg": "read an Outlook .msg: headers, body, recipients, attachments",
     "cmd_msg_ex": (
         "examples: ctfc msg mail.msg  |  ctfc msg mail.msg --extract ./att. "
