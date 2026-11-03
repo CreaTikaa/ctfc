@@ -713,6 +713,9 @@ ctfc archive tests/fixtures/archive_mszip.cab      # a cabinet, MSZIP decoded
 ctfc archive tests/fixtures/archive_appended.tar   # the PNG hidden after the end marker
 ctfc archive tests/fixtures/archive_docker_image.tar    # layers + the file layer 2 deleted
 ctfc archive tests/fixtures/archive_docker_image.tar --extract /tmp/lay && ctfc scan /tmp/lay
+ctfc msg tests/fixtures/compound_message.msg --extract /tmp/att   # body + the attachment
+ctfc msi tests/fixtures/compound_installer.msi     # string pool, cabinet, the -enc command
+ctfc office tests/fixtures/compound_embedded.doc --extract /tmp/obj   # the embedded .bat
 ctfc git <a folder with a .git>                    # the secret that was committed then removed
 ctfc jwt <token> --show-code                       # alg=none / weak HMAC secret
 ctfc time 133476575820000000                       # Windows FILETIME

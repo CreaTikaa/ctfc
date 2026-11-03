@@ -1352,3 +1352,89 @@ overwritten path *with the bytes from the layer that still holds it*. Those
 bytes, the environment variables and the build commands are all searched for
 flags, because that is where they are. `--extract` lays each layer out in its
 own folder so `ctfc scan` can walk them.
+
+## 22. The compound files that are not documents
+
+`core/cfb.py` reads OLE2 compound files for `ctfc office`, and three other
+formats turn out to be exactly the same container. Each gets its own command,
+because the thing you want out of each is different.
+
+### Outlook messages (`ctfc/core/msg.py`)
+
+A `.msg` has no `From:` line to grep. It is a compound file of **MAPI
+properties**, one per stream, with the property number written into the stream's
+name:
+
+    __substg1.0_0037001F    subject, UTF-16
+    __substg1.0_1000001F    the plain-text body
+    __substg1.0_007D001F    the transport headers, as the servers wrote them
+    __attach_version1.0_#00000000/__substg1.0_37010102   attachment 1's bytes
+
+`__substg1.0_` then eight hex digits: four for the tag, four for the type (`001F`
+UTF-16, `001E` 8-bit, `0102` binary). That is the whole format - and it explains
+why `strings` on a `.msg` shows nothing useful: the names are hex and the text is
+UTF-16.
+
+Recipients and attachments each live in their own numbered storage, so the
+reader groups the properties by storage and then reads the pieces it knows.
+The useful output is the real recipients, the full `Received:` chain (which
+reads bottom-up, oldest hop last), the body, and the attachments as files -
+including the ones a gateway would have stripped from the `.eml`.
+
+One deliberate behaviour: when an attachment is itself a container, its flag is
+*not* reported, because the bytes are compressed and a flag search over them
+would find nothing. Instead the file type is named and the next command printed
+(`secret.zip is a ZIP archive [...] run ctfc zip on it`). Silence would read as
+"there is nothing in it".
+
+### Windows Installer packages (`ctfc/core/msi.py`)
+
+An MSI is a compound file *and* a relational database: `Property`, `File`,
+`CustomAction`, `Binary` and `Media` are streams. The payload is a cabinet
+stored as one more stream, or files shipped beside the `.msi`.
+
+What makes an MSI look unreadable is its **stream-name encoding**. Names are
+packed into a private Unicode range - two 6-bit indexes into the 64-character
+alphabet `0-9A-Za-z._` per code point in U+3800..U+4800, one per code point in
+U+4800..U+4840 - so `_StringData` is stored as a handful of CJK-looking
+characters. `decode_name` is twelve lines and makes the file legible. Its
+inverse `encode_name` lives next to it on purpose: an encoder and a decoder that
+disagree are the easiest bug in the world to write, and the round trip is a test.
+7-Zip decodes these names too, so `7z l -tCompound` on the fixture is the
+independent check that ours agrees with theirs.
+
+The **string pool** is where the answers are. `_StringPool` is an array of 2-byte
+pairs - **length first, then reference count** - and `_StringData` is the strings
+themselves end to end, with no separators: a string is found by adding up the
+lengths before it, so swapping the pair order turns every string after the first
+into garbage. The first pair is not a string but the code page. Out of that pool
+come the paths, the URLs and the command lines, which is why row-level decoding
+of arbitrary tables (`_Columns`, per-column types) is deliberately *not*
+implemented - it would answer the same questions with ten times the code, and
+`msidump` exists. Any `powershell -enc <base64>` found among the strings is
+decoded on the spot, because that is how an installer hides what it runs.
+
+### Embedded objects (`ctfc/core/embedded.py`)
+
+Double-clicking an icon in a Word document opens a file that was never on disk:
+it was stored inside the document, in a storage called `ObjectPool`, one
+sub-storage per object. The "Package" case - any file dragged in - lands in a
+stream named `\x01Ole10Native`, which holds the original file name, **the path it
+came from on the author's machine**, and then the file's bytes unchanged. That
+path is sometimes the whole answer (`C:\Users\<name>\Desktop\flag.exe`).
+
+The middle of that stream has two undocumented fields, and descriptions of the
+layout disagree about how many. So all the plausible readings are tried and the
+one whose size field actually fits the stream wins - a more reliable test than
+trusting any one description. `ctfc office --extract` writes the objects out;
+`CONTENTS`, `Package` and nested compound files are handed back raw for
+`ctfc detect` to identify.
+
+### No dead ends
+
+A `.doc`, a `.msg` and an `.msi` are the same file format, and that is the most
+common wrong turn with them: the file opens, the streams are there, and there is
+no macro - because it was never a document. Every reader therefore names the
+right command when it recognises another's format, and `ctfc archive` does the
+same for a compound file, a ZIP and a gzip. A refusal is only useful if it ends
+with the command that works.

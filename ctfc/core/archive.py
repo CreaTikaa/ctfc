@@ -133,10 +133,7 @@ def analyse(
     """Read whichever archive this is and say what to do with it."""
     kind = sniff(data)
     if not kind:
-        raise ArchiveError(
-            "not a tar, 7z, RAR or cabinet. A ZIP (and the .docx/.jar/.apk family) "
-            "goes to `ctfc zip`; for anything else start with `ctfc detect`"
-        )
+        raise ArchiveError(_wrong_format_reason(data))
     if kind == "7z":
         report = _from_sevenzip(data, read_contents)
     elif kind.startswith("rar"):
@@ -150,6 +147,35 @@ def analyse(
         _search_flags(report, flagset)
     _add_commands(report, path)
     return report
+
+
+def _wrong_format_reason(data: bytes) -> str:
+    """Name the command that *does* read this, rather than only saying no.
+
+    The containers get confused with each other constantly - an .msi and a .doc
+    are the same file format, a .docx and a .jar are both ZIPs - so a refusal is
+    only useful if it ends with the right command.
+    """
+    if data[:4] == b"PK\x03\x04":
+        return (
+            "this is a ZIP (which includes .docx/.xlsx, .jar, .apk): `ctfc zip <file>` "
+            "reads the archive itself, `ctfc office <file>` its macros"
+        )
+    if data[:8] == b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1":
+        return (
+            "this is an OLE2 compound file, not an archive: `ctfc msi <file>` for an "
+            "installer, `ctfc msg <file>` for an Outlook message, `ctfc office <file>` "
+            "for a .doc/.xls"
+        )
+    if data[:2] in (b"\x1f\x8b", b"BZ") or data[:5] == b"\xfd7zXZ":
+        return (
+            "this is a compressed file, not an archive: decompress it first "
+            "(gunzip/bunzip2/unxz) - a .tar.gz is a tar once it is gunzipped"
+        )
+    return (
+        "not a tar, 7z, RAR or cabinet. A ZIP (and the .docx/.jar/.apk family) "
+        "goes to `ctfc zip`; for anything else start with `ctfc detect`"
+    )
 
 
 # ---------------------------------------------------------------------------

@@ -135,6 +135,11 @@ def read_vint(data: bytes, offset: int) -> tuple[int, int]:
     Returns the value and the offset after it. Ten bytes is already more than
     64 bits, so anything longer is a crafted file.
     """
+    if offset < 0:
+        # A header whose declared extra area is bigger than the header itself
+        # produces a negative offset, and a negative index reads the *end* of
+        # the file instead of failing. Refuse it here, once, for every caller.
+        raise RarError(f"a vint was asked for at offset {offset}: the header is corrupt")
     value = 0
     shift = 0
     for step in range(10):
@@ -339,7 +344,7 @@ def _read_rar5_file(
     # Each record is "vint size, vint type, body", and `size` counts everything
     # after the size field itself.
     extra_at = header_end - extra_size
-    while extra_size and extra_at < header_end:
+    while 0 <= extra_at < header_end and extra_size:
         record_size, after_size = read_vint(data, extra_at)
         if record_size <= 0 or after_size + record_size > header_end:
             break

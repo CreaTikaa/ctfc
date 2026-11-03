@@ -28,7 +28,7 @@ import zipfile
 import zlib
 from dataclasses import dataclass, field
 
-from ctfc.core import cfb
+from ctfc.core import cfb, embedded
 from ctfc.core.errors import FormatError
 
 CONTAINER_SIGNATURE = 0x01  # first byte of a compressed container
@@ -170,6 +170,7 @@ class OfficeReport:
 
     container: str = ""  # "ole2" | "ooxml"
     macros: list[Macro] = field(default_factory=list)
+    objects: list[embedded.EmbeddedObject] = field(default_factory=list)
     streams: list[str] = field(default_factory=list)
     externals: list[str] = field(default_factory=list)
     indicators: list[str] = field(default_factory=list)
@@ -186,6 +187,16 @@ class OfficeReport:
             "macros": [
                 {"module": macro.module, "offset": macro.offset, "code": macro.code}
                 for macro in self.macros
+            ],
+            "objects": [
+                {
+                    "stream": item.stream,
+                    "name": item.name,
+                    "source_path": item.source_path,
+                    "size": item.size,
+                    "notes": list(item.notes),
+                }
+                for item in self.objects
             ],
             "streams": list(self.streams),
             "externals": list(self.externals),
@@ -271,6 +282,29 @@ def _externals(archive: zipfile.ZipFile) -> list[str]:
     return targets
 
 
+def _other_compound_formats(streams: list[str]) -> list[str]:
+    """A .doc, a .msg and an .msi are all compound files. Name the right command.
+
+    This is the single most common wrong turn with these formats: the file opens,
+    the streams are there, and there is no macro - because it was never a
+    document in the first place.
+    """
+    notes: list[str] = []
+    leaves = [name.rsplit("/", 1)[-1] for name in streams]
+    if any(leaf.startswith("__substg1.0_") for leaf in leaves):
+        notes.append(
+            "these streams are MAPI properties (__substg1.0_...): this is an Outlook "
+            "message, so `ctfc msg <file>` reads it"
+        )
+    # MSI table names are encoded into the U+3800-U+4840 range.
+    if any(any(0x3800 <= ord(char) < 0x4840 for char in leaf) for leaf in leaves):
+        notes.append(
+            "the stream names are in the MSI private Unicode range: this is a Windows "
+            "Installer package, so `ctfc msi <file>` reads it"
+        )
+    return notes
+
+
 def analyse(data: bytes) -> OfficeReport:
     """Read an Office document and report its macros and indicators."""
     report = OfficeReport()
@@ -285,10 +319,23 @@ def analyse(data: bytes) -> OfficeReport:
         report.streams = sorted(container.streams)
         report.macros = extract_macros(container)
         if any(name.lower() == "objectpool" for name in container.names):
-            report.notes.append(
-                "an ObjectPool storage is present: the document embeds an object "
-                "(another file). Try `ctfc scan` after extracting the streams."
-            )
+            report.objects = embedded.find_objects(container)
+            if report.objects:
+                report.notes.append(
+                    f"{len(report.objects)} embedded object(s) in the ObjectPool storage: "
+                    "the files are listed below and --extract writes them out"
+                )
+                for item in report.objects:
+                    if item.source_path:
+                        report.notes.append(
+                            f"{item.name or item.stream} came from {item.source_path} on the "
+                            "author's machine"
+                        )
+            else:
+                report.notes.append(
+                    "an ObjectPool storage is present but no object could be read out of "
+                    "it: `ctfc scan` after extracting the streams"
+                )
     elif data[:4] == b"PK\x03\x04":
         report.container = "ooxml"
         try:
@@ -311,6 +358,7 @@ def analyse(data: bytes) -> OfficeReport:
                 Macro(module=f"{name}:{macro.module}", code=macro.code, offset=macro.offset)
                 for macro in extract_macros(inner)
             ]
+            report.objects += embedded.find_objects(inner)
         if not project:
             report.notes.append(
                 "no vbaProject.bin: this document has no VBA macro (a .docx cannot "
@@ -330,6 +378,7 @@ def analyse(data: bytes) -> OfficeReport:
         )
     elif report.container == "ole2":
         report.notes.append("no VBA module found in the streams")
+        report.notes += _other_compound_formats(report.streams)
     for url in report.externals:
         report.notes.append(f"external relationship target (remote template injection?): {url}")
     return report

@@ -238,6 +238,23 @@ EN: dict[str, str] = {
     "arg_hive": "the hive file (SAM, SYSTEM, SOFTWARE, NTUSER.DAT) - a path, or -",
     "opt_hive_key": "read one key by path instead of the usual report",
     "opt_hive_list": "print every key path in the hive",
+    "cmd_msg": "read an Outlook .msg: headers, body, recipients, attachments",
+    "cmd_msg_ex": (
+        "examples: ctfc msg mail.msg  |  ctfc msg mail.msg --extract ./att. "
+        "A .msg is an OLE2 compound file of MAPI properties, which is why `strings` "
+        "shows nothing: the body is UTF-16 and the property names are hex."
+    ),
+    "arg_msg": "the Outlook message (.msg) - a path, or -",
+    "opt_msg_extract": "write the attachments into this folder",
+    "cmd_msi": "read a Windows Installer package: strings, tables, embedded cabinet",
+    "cmd_msi_ex": (
+        "examples: ctfc msi setup.msi  |  ctfc msi setup.msi --extract ./payload. "
+        "Decodes the MSI stream-name encoding, reads the string pool (paths, URLs, "
+        "command lines), decodes an embedded cabinet and any PowerShell -enc payload."
+    ),
+    "arg_msi": "the installer package (.msi) - a path, or -",
+    "opt_msi_extract": "write the embedded cabinet's files and the Binary streams here",
+    "opt_office_extract": "write the embedded objects (ObjectPool) into this folder",
     "cmd_archive": "read a tar / 7z / RAR / cabinet, or a saved Docker image",
     "cmd_archive_ex": (
         "examples: ctfc archive files.7z  |  ctfc archive image.tar --extract ./layers  |  "

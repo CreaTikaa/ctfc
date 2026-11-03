@@ -450,6 +450,20 @@ def print_office(console: Console, report) -> None:
         for line in report.indicators:
             table.add_row(safe(line, 160))
         console.print(table)
+    if report.objects:
+        table = Table(title="embedded objects (ObjectPool)", expand=True)
+        table.add_column("name", ratio=2)
+        table.add_column("size", justify="right", width=10)
+        table.add_column("came from", ratio=3)
+        table.add_column("stream", ratio=2)
+        for item in report.objects:
+            table.add_row(
+                safe(item.name or "(unnamed)", 40),
+                str(item.size),
+                safe(item.source_path, 60),
+                safe(item.stream, 40),
+            )
+        console.print(table)
     for macro in report.macros:
         console.print(f"[bold]{escape(macro.module)}[/] [dim](at offset {macro.offset})[/]")
         console.print(Panel(escape(macro.code[:4000]), border_style="dim"))
@@ -1196,3 +1210,70 @@ def print_docker(console: Console, docker) -> None:
         )
     for note in docker.notes:
         console.print(f"[cyan]*[/] {safe(note)}")
+
+
+def print_msg(console: Console, report) -> None:
+    """`ctfc msg`: who sent it, what it says, and what it carries."""
+    facts = Table(title="Outlook message", show_header=False, expand=False)
+    facts.add_column("name", style="cyan")
+    facts.add_column("value")
+    for name, value in report.headers.items():
+        facts.add_row(name, safe(value, 200))
+    for recipient in report.recipients:
+        facts.add_row("recipient", safe(recipient, 200))
+    console.print(facts)
+
+    if report.attachments:
+        table = Table(title="attachments", expand=True)
+        table.add_column("name", ratio=3)
+        table.add_column("size", justify="right", width=10)
+        table.add_column("type", ratio=2)
+        for attachment in report.attachments:
+            table.add_row(
+                safe(attachment.name, 60), str(attachment.size), safe(attachment.mime, 40)
+            )
+        console.print(table)
+
+    if report.body:
+        console.print(Panel(safe_block(report.body, 4000), title="body", expand=True))
+    elif report.html_body:
+        console.print(Panel(safe_block(report.html_body, 2000), title="body (HTML)", expand=True))
+    if report.transport_headers:
+        console.print(Panel(safe_block(report.transport_headers, 3000), title="transport headers"))
+    for flag in report.flags:
+        console.print(f"[bold green]flag:[/] {escape(flag)}")
+    print_notes(console, report.notes)
+
+
+def print_msi(console: Console, report) -> None:
+    """`ctfc msi`: what the installer carries and what it would run."""
+    facts = Table(title="installer package", show_header=False, expand=False)
+    facts.add_column("name", style="cyan")
+    facts.add_column("value")
+    facts.add_row("streams", str(len(report.streams)))
+    facts.add_row("strings", str(len(report.strings)))
+    if report.cabinets:
+        facts.add_row(
+            "embedded cabinets",
+            ", ".join(f"{name} ({count} file(s))" for name, count in report.cabinets),
+        )
+    if report.binaries:
+        facts.add_row(
+            "Binary streams", ", ".join(f"{name} ({size} B)" for name, size in report.binaries)
+        )
+    console.print(facts)
+
+    tables = [name for name in report.streams if name[:1].isalpha()]
+    if tables:
+        console.print(f"[bold]tables:[/] {safe(', '.join(tables), 400)}")
+    if report.cabinet_files:
+        console.print(f"[bold]inside the cabinet:[/] {safe(', '.join(report.cabinet_files), 400)}")
+    for indicator in report.indicators:
+        console.print(f"[yellow]![/] {safe(indicator, 120)}")
+    for command in report.commands:
+        console.print(Panel(safe_block(command, 2000), title="decoded PowerShell command"))
+    if report.strings:
+        console.print(Panel(safe_block("\n".join(report.strings), 4000), title="string pool"))
+    for flag in report.flags:
+        console.print(f"[bold green]flag:[/] {escape(flag)}")
+    print_notes(console, report.notes)

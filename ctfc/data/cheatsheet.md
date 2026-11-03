@@ -45,6 +45,9 @@ mirror the encryptor, do not guess.
 | a pcap / pcapng | `ctfc pcap cap.pcap --extract out/` then `ctfc scan out/` |
 | a ZIP (or .docx/.jar/.apk) | `ctfc zip <file>` - which encryption, and tiny files from their CRC32 |
 | a tar / 7z / rar / cab | `ctfc archive <file>` - the listing, the encryption, the contents |
+| an Outlook .msg | `ctfc msg <file> --extract att/` - headers, body, attachments |
+| an .msi installer | `ctfc msi <file>` - the string pool, the embedded cabinet, what it runs |
+| a .doc with an icon in it | `ctfc office <file> --extract obj/` - the embedded object itself |
 | a `docker save` tar | `ctfc archive img.tar` - layer order, and the files a later layer deleted |
 | zero-width characters | `ctfc auto` (both bit mappings) or a StegCloak decoder |
 | a column of big integers (tokens, "random" ids) | `ctfc prng <file>` - 624 of them clone MT19937 |

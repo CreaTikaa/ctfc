@@ -140,6 +140,15 @@ def build_parser() -> argparse.ArgumentParser:
     p = add("office")
     p.add_argument("document", help=t("arg_document"))
     p.add_argument("--save-macros", help=t("opt_office_save"))
+    p.add_argument("--extract", help=t("opt_office_extract"))
+
+    p = add("msg")
+    p.add_argument("input", help=t("arg_msg"))
+    p.add_argument("--extract", help=t("opt_msg_extract"))
+
+    p = add("msi")
+    p.add_argument("input", help=t("arg_msi"))
+    p.add_argument("--extract", help=t("opt_msi_extract"))
 
     p = add("pdf")
     p.add_argument("input", help=t("arg_input"))
@@ -725,6 +734,14 @@ def cmd_office(args: argparse.Namespace, config: Config, console: Console) -> in
         if (report.macros)
         else None
     )
+    if args.extract and report.objects:
+        folder = Path(args.extract)
+        folder.mkdir(parents=True, exist_ok=True)
+        for index, item in enumerate(report.objects):
+            name = re.sub(r"[^A-Za-z0-9._-]", "_", item.name) or f"object{index}"
+            (folder / name).write_bytes(item.data)
+        console.print(f"[green]wrote {len(report.objects)} embedded object(s)[/] to {folder}")
+        console.print(f"[green]$[/] ctfc scan {folder}")
     if args.save_macros:
         folder = Path(args.save_macros)
         folder.mkdir(parents=True, exist_ok=True)
@@ -954,6 +971,79 @@ def cmd_zip(args: argparse.Namespace, config: Config, console: Console) -> int:
         return 0
     render.print_input_notes(console, inp)
     render.print_zip(console, report)
+    return 0
+
+
+def cmd_msg(args: argparse.Namespace, config: Config, console: Console) -> int:
+    """Read an Outlook .msg: headers, body, recipients, attachments."""
+    from ctfc.core import msg as msg_module
+
+    inp = parse_input(args.input, decode_bare=False)
+    report = msg_module.analyse(inp.data, flagset=flagset_from(config))
+    remember(args, config, inp.data, args.input, summary=report.notes[:4])
+    written: list[Path] = []
+    if args.extract:
+        folder = Path(args.extract)
+        folder.mkdir(parents=True, exist_ok=True)
+        for index, attachment in enumerate(report.attachments):
+            name = re.sub(r"[^A-Za-z0-9._-]", "_", attachment.name) or f"attachment{index}"
+            target = folder / name
+            target.write_bytes(attachment.data)
+            written.append(target)
+    if args.json:
+        payload = {"input": input_to_dict(inp), **report.to_dict()}
+        if args.extract:
+            payload["extracted"] = [str(path) for path in written]
+        print(json.dumps(payload, indent=2))
+        return 0
+    render.print_input_notes(console, inp)
+    render.print_msg(console, report)
+    if args.extract:
+        console.print(f"[green]*[/] wrote {len(written)} attachment(s) to {args.extract}")
+        console.print(f"[green]$[/] ctfc scan {args.extract}")
+    return 0
+
+
+def cmd_msi(args: argparse.Namespace, config: Config, console: Console) -> int:
+    """Read a Windows Installer package: strings, tables, embedded cabinet."""
+    from ctfc.core import cab as cab_module
+    from ctfc.core import cfb
+    from ctfc.core import msi as msi_module
+
+    inp = parse_input(args.input, decode_bare=False)
+    report = msi_module.analyse(inp.data, flagset=flagset_from(config))
+    remember(args, config, inp.data, args.input, summary=report.notes[:4])
+    written: list[Path] = []
+    if args.extract:
+        folder = Path(args.extract)
+        folder.mkdir(parents=True, exist_ok=True)
+        container = cfb.read(inp.data)
+        for name, payload in container.streams.items():
+            pretty = msi_module.decode_name(name)
+            safe = re.sub(r"[^A-Za-z0-9._-]", "_", pretty) or "stream"
+            if payload[:4] == cab_module.SIGNATURE:
+                cabinet = cab_module.extract(payload)
+                for file in cabinet.files:
+                    if file.data is None:
+                        continue
+                    target = folder / re.sub(r"[^A-Za-z0-9._-]", "_", file.name)
+                    target.write_bytes(file.data)
+                    written.append(target)
+            elif pretty.startswith("Binary"):
+                target = folder / safe
+                target.write_bytes(payload)
+                written.append(target)
+    if args.json:
+        payload_json = {"input": input_to_dict(inp), **report.to_dict()}
+        if args.extract:
+            payload_json["extracted"] = [str(path) for path in written]
+        print(json.dumps(payload_json, indent=2))
+        return 0
+    render.print_input_notes(console, inp)
+    render.print_msi(console, report)
+    if args.extract:
+        console.print(f"[green]*[/] wrote {len(written)} file(s) to {args.extract}")
+        console.print(f"[green]$[/] ctfc scan {args.extract}")
     return 0
 
 
@@ -1529,6 +1619,8 @@ def main(argv: list[str] | None = None) -> int:
         "extend": cmd_extend,
         "sig": cmd_sig,
         "archive": cmd_archive,
+        "msg": cmd_msg,
+        "msi": cmd_msi,
         "zip": cmd_zip,
         "hive": cmd_hive,
         "pe": cmd_pe,

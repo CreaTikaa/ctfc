@@ -54,7 +54,8 @@ SIG_HINTS = {
     "openssl enc -d -aes-256-cbc -md sha256 -pbkdf2 -in <file> -pass pass:<password>",
     "zip": "unzip -l <file>; a .docm/.xlsm? ctfc office <file>; encrypted? "
     "zip2john <file> > h && john h",
-    "doc": "ctfc office <file>   (OLE2: extracts the VBA macros and reads them)",
+    "doc": "OLE2 compound file: ctfc office <file> for a .doc/.xls (VBA macros), "
+    "ctfc msi <file> for an installer, ctfc msg <file> for an Outlook message",
     "png": "ctfc stego <file>   (low-bit message); exiftool <file>; zsteg -a <file>",
     "bmp": "ctfc stego <file>   (low-bit message); exiftool <file>",
     "7z": "ctfc archive <file>   (lists it, decodes LZMA/LZMA2 contents, names the "
