@@ -1,175 +1,138 @@
 # Ideas for later
 
 Everything in `CLAUDE.md`'s milestones is built, both audits are closed, the
-A/B/C feature batches are done (`HANDOFF.md` §5sexies), and **section 1 plus
-section 2.5 of this file are now done too** (`HANDOFF.md` §5septies):
-`ctfc prng`, `ctfc extend`, `make fuzz`, `ctfc rsa --also`, `ctfc sig`. This is
-the list of what could come next.
+A/B/C feature batches are done, and **every section of this file that could be
+built has now been built** (lots D, E, F and G - see `HANDOFF.md` §5septies and
+§5octies). What is left is listed in section 1: three things that need a real
+sample before they can be finished honestly, and the things that were measured
+or considered and deliberately not built.
 
-It is ordered by **value against effort**, not by how interesting it is to build.
-Each entry says what it unlocks, roughly what it costs, and - where it matters -
-what would have to be true before it is worth starting. The same rules still
-apply: no LLM, offline-first, nothing executed, and every feature has to *deduce
-its parameters* rather than ask for them.
-
----
-
-## 1. Done (2026-10-30) - kept for the reasoning
-
-The three entries below are built. What they say about *why* still holds, and the
-limits named in 1.1 are still the limits.
-
-### 1.1 ~~Mersenne Twister state recovery~~ **done** (`ctfc prng`, commit `6b6424c`)
-**Unlocks:** a whole family of challenges. Any target that leaks 624 consecutive
-32-bit outputs of Python's `random`, PHP's `mt_rand` or a JS polyfill has its
-entire future *and past* output recoverable - tokens, shuffles, "random" keys.
-**Cost:** small. Untempering an MT19937 output is four invertible bit operations;
-feed 624 of them back into the state array and the generator is cloned. No
-dependency, no target needed, completely deterministic.
-**Shape:** `ctfc prng mt19937 <numbers>` taking a list of outputs (decimal, hex,
-or a file), reporting the recovered state, then the next N and previous N values.
-Handle the common variants: outputs truncated to fewer bits (needs 624 full
-words, so say clearly when there are not enough), and `random.random()` floats,
-which are two outputs combined.
-**Why it is first:** highest ratio of "challenges solved" to "lines written" of
-anything left, and it fits the existing shape exactly.
-
-### 1.2 ~~Hash length extension~~ **done** (`ctfc extend`, commit `c4082e0`)
-**Unlocks:** the classic `MAC = md5(secret || message)` forgery. Given the digest
-and the length of the secret, append anything and produce a valid digest without
-ever knowing the secret.
-**Cost:** small-to-medium. Needs MD5, SHA-1, SHA-256 and SHA-512 compression
-functions callable from a chosen state, which means writing the three
-compression loops by hand (hashlib will not resume from a state). Each is
-~40 lines and well specified.
-**Shape:** `ctfc extend --hash <digest> --algo sha256 --append <data>
-[--secret-length N | --secret-length 1-64]`. When the length is unknown, emit one
-candidate per plausible length - that *is* the deduce-the-parameters behaviour.
-Output the forged digest and the exact padded message to send.
-
-### 1.3 ~~A fuzzing harness over the format readers~~ **done** (`make fuzz`, commit `beeb792`: it found three real bugs, see `HANDOFF.md` §5septies)
-**Unlocks:** confidence. There are now about a dozen readers chewing on untrusted
-bytes - `cfb`, `office`, `pdf`, `stego`, `zipinfo`, `gitrepo`, `sqlitedb`, `hive`,
-`pe`, `evtx`, `protobuf`, `pcap`, `usb`, `mail`. They are written defensively and
-each has its own error type, but "defensively" is a claim, not a proof.
-**Cost:** small. `tests/fuzz_formats.py` walking every fixture, mutating bytes
-with a seeded RNG, and asserting that each `analyse()` either returns or raises
-*its own* exception type - never `IndexError`, `struct.error`, `MemoryError`, or
-a hang. Run it with a fixed seed in `make test` and a longer sweep behind
-`make fuzz`.
-**Why:** this is the cheapest way to find the bugs that a real challenge file
-would find at the worst moment. It is also the kind of thing that only gets
-written if it is written down.
+The rules still apply to anything added later: no LLM, offline-first, nothing
+executed, and every feature has to *deduce its parameters* rather than ask for
+them.
 
 ---
 
-## 2. Clear value, more work (2.5 is done; the rest is open)
+## 1. Still open, and why
 
-### 2.1 Finish what was deliberately left unfinished
-Three places stop short *on purpose*, each because there was nothing real to
-verify against. Each is worth finishing the moment that changes:
+### 1.1 Three places that stop short on purpose
 
-- **SAM hash decryption** (`core/hive.py`). Needs the boot key - already
-  recovered - plus the RC4 or AES path over the SAM's `F` and `V` structures,
-  and DES keys derived from each RID. Do this only with a genuine SAM+SYSTEM
-  pair in hand and a known-good `samdump2` output to compare against.
-- **Full EVTX binary XML** (`core/evtx.py`). Templates, the substitution array
-  and the per-chunk string table. Would give real element names and the EventID,
-  so `4688` and `4104` could be filtered. Needs one real `.evtx` and an
-  `evtx_dump` run to diff against.
-- **CRC32 recovery beyond three bytes** (`core/zipinfo.py`). Brute force stops at
-  three because 95⁴ is too slow in Python. CRC32 is linear over GF(2), so a
-  4-8 byte preimage can be *solved* rather than searched - pick the message
-  length, build the 32 equations, and solve. Medium maths, small code, and it
-  turns "a short file" into "a short-ish file".
+Each needs something real to verify against. That condition is the whole entry:
+without it, the code would be a guess wearing the clothes of an implementation.
 
-### 2.2 More containers through the OLE2 reader we already have
-`core/cfb.py` already reads compound files, and three high-value formats *are*
-compound files, so they are mostly report-writing rather than parsing:
+- **SAM hash decryption** (`core/hive.py`). The boot key is already recovered.
+  What is missing is the RC4 or AES path over the SAM's `F` and `V` structures
+  plus the DES keys derived from each RID. **Condition:** a genuine SAM+SYSTEM
+  pair and a known-good `samdump2` output to diff against.
+- **EVTX binary XML** (`core/evtx.py`). Templates, the substitution array and
+  the per-chunk string table. It would give real element names and the EventID,
+  so `4688` and `4104` could be filtered instead of grepped.
+  **Condition:** one real `.evtx` and an `evtx_dump` run to compare with.
+- **LZXPRESS Huffman**, for MAM-compressed prefetch (`core/winartifact.py`).
+  Every Windows 10+ `.pf` is compressed this way, and the reader names the file
+  and hands over instead of guessing. **Condition:** a real compressed `.pf`
+  plus a known-good decompression (libscca is installed here and does it) to
+  diff against. Writing a decompressor that only agrees with itself is exactly
+  what this project does not do.
 
-- **`.msg` Outlook messages**: headers, body, attachments. Pairs with
-  `core/mail.py`, which already handles the MIME side.
-- **MSI installers**: the tables are streams; the embedded CAB and the custom
-  actions are what matter.
-- **OLE2 embedded objects** (`ObjectPool`): `ctfc office` notes when one is
-  present but does not extract it yet. That is the "the real payload was an
-  embedded object inside the .doc" case.
+### 1.2 Measured and declined: parallel brute force
 
-### 2.3 Archive formats beyond ZIP
-`ctfc zip` showed how much is in the headers. The same treatment for **7z, RAR,
-tar and CAB**: entry listing, which encryption, and the matching `*2john`
-hand-off. 7z's header is itself compressed, which is the only awkward part.
+`ctfc` searches, measured on this machine (the table is also in
+`docs/how-it-works.md` §28):
 
-### 2.4 LNK, Prefetch, AmCache, Jump Lists
-The Windows artefacts that answer "what was run, and when". All are
-well-documented binary structures of moderate size, and all three timestamps
-decode through `core/timestamps.py`, which exists now. A `ctfc winartifact
-<file>` that sniffs which one it is would cover a lot of forensics ground for one
-module's worth of work.
+| search | time |
+|---|---|
+| `solve_xor` on 289 bytes, hashed-key fallback included | 0.4 s |
+| key hunt over a 64 KB memory dump | 0.04 s |
+| `ctfc crc` worst case (every searchable length and alphabet) | 4.5 s |
+| `ctfc sym --passwords` over the 10000-password list | 8.3 s |
 
-### 2.5 ~~RSA attacks that need more than one message~~ **done** (commit `2d897c9`)
-All four are built: common modulus, Håstad broadcast and Franklin-Reiter in
-`core/rsa_multi.py` behind `ctfc rsa --also <key>=<ct>`, and ECDSA/DSA nonce
-reuse in `core/signatures.py` behind `ctfc sig`. The nonce-reuse one did turn out
-to be the cheapest and most valuable of the four, as suspected here.
+Nothing is felt as slow. The slowest is the password list, and it is slow for
+the one honest reason that PBKDF2 is *meant* to be: four cores would turn 8
+seconds into 2, bought with process pools, pickling, and re-plumbing progress
+and cancellation through `Budget`. A search big enough to need real parallelism
+belongs in hashcat, which `ctfc hash` already hands over to. **Condition to
+revisit:** a real search in a real CTF that is actually waited on.
 
----
+### 1.3 The long tail that stays with dcode.fr
 
-## 3. Worth doing, lower priority
+`Playfair`, `Bifid`, `Nihilist`, `ADFGVX` and friends all need a key square
+typed in by hand. The rule that came out of section 3.3 is that a decoding
+belongs in ctfc when it is **deterministic**, so `auto` can simply try it and
+let the scoring decide. These are not, so `ctfc tools` links to dcode's page for
+them and that is the better answer. The keyless ones (Morse, Bacon, A1Z26,
+Polybius, tap code) *are* in, and so are Base45, basE91, Z85 and uuencode.
 
-### 3.1 Other executables
-**ELF triage** to match `ctfc pe` (sections, dynamic symbols, `RWX` segments,
-packers, overlay) - useful but `readelf` is usually installed, which is why it
-scores below PE. **Mach-O** likewise. **Java `.class`/JAR** (constant-pool
-strings are where keys hide) and **Android DEX** (the SimpleLocker case was
-Android) are more distinctive and probably better value than ELF.
+### 1.4 Other executables not read
 
-### 3.2 .NET IL string extraction
-`ctfc pe` says "use dnSpy" for a .NET assembly. Reading the `#Strings` and
-`#US` heaps out of the metadata would at least dump every string literal without
-leaving ctfc - which is often all that is needed.
-
-### 3.3 Classical and encoding long tail
-Playfair, Bifid, Nihilist, Beaufort, ADFGVX, Bacon, tap code, Morse in odd
-encodings, Base45/Base91/z85, Brainfuck and friends. Individually small; the
-honest question is whether dcode.fr's page (already linked by the tool bridge) is
-simply the better answer for most of them. Add the ones that `auto` can try
-*automatically* and leave the interactive ones to dcode.
-
-### 3.4 Workflow polish
-- **Watch mode**: `ctfc watch <folder>` running `detect`/`auto` on anything new,
-  for when a challenge drips files out.
-- **A solve replay**: a session already records every step; rendering it as a
-  single runnable script would turn a session into a write-up artefact rather
-  than a log of one.
-- **Parallel brute force**: the XOR, password and CRC searches are embarrassingly
-  parallel and currently single-threaded. Only worth it if a real search is
-  actually felt as slow - measure before building.
-
-### 3.5 Scoring calibration
-`scoring.py` is the judge for every brute-force result, and its thresholds were
-chosen by eye. A test that runs it across every fixture plus a pile of noise and
-reports the score distribution would show whether the cut-offs are where they
-should be - and would catch a regression that makes everything score 0.6.
+**Mach-O** is named and handed to `otool`/`nm`: there is no macOS here to test
+against, and a Mach-O challenge is rare enough that `ctfc exe` saying so plainly
+is worth more than a half-read header. ELF, PE, Java class/JAR and Android DEX
+are all read.
 
 ---
 
-## 4. Deliberately not doing
+## 2. Done, kept for the reasoning
 
-Recorded so the question does not have to be reopened each time:
+The entries below were the plan; they are built. What each one says about *why*
+still holds, and the limits named in them are still the limits.
+
+- ~~**Mersenne Twister state recovery**~~ `ctfc prng`. Highest ratio of
+  "challenges solved" to "lines written" of anything on the original list.
+  Untempering is exact; the truncated variants (`random()`, `mt_rand()`,
+  `getrandbits(k<32)`) are refused on purpose - they need a GF(2) solve over the
+  19937-bit state, which is a self-contained addition and must not be bolted
+  onto `untemper`.
+- ~~**Hash length extension**~~ `ctfc extend`. MD5/SHA-1/SHA-256/SHA-512 with
+  the compression functions written out, because hashlib cannot resume from a
+  state. SHA-224/384 are refused with the reason: they publish only part of the
+  final state.
+- ~~**A fuzzing harness**~~ `make fuzz`. It has now found **six** real bugs
+  across three sessions, which is six more than "written defensively" was worth
+  as a claim.
+- ~~**RSA with several messages**~~ `ctfc rsa --also` and `ctfc sig`. Nonce reuse
+  was indeed the cheapest and most valuable of the four.
+- ~~**Archives beyond ZIP**~~ `ctfc archive`: tar, 7z, RAR 4 and 5, cabinets,
+  and a `docker save` image's layers (the whiteout case is one of his own
+  challenges). 7z's compressed *and* encrypted header both handled.
+- ~~**More containers through the OLE2 reader**~~ `ctfc msg`, `ctfc msi`, and
+  ObjectPool objects through `ctfc office --extract`.
+- ~~**Windows artefacts**~~ `ctfc winartifact`: `.lnk`, prefetch, jump lists;
+  AmCache through `ctfc hive`.
+- ~~**CRC32 beyond three bytes**~~ `ctfc crc`: the word lists, a
+  meet-in-the-middle search over several alphabets, and a GF(2) solve - with the
+  share of the checksum space searched reported, because that number is what
+  decides whether a hit is the content or a coincidence.
+- ~~**Scoring calibration**~~ `tests/test_scoring_calibration.py`. It found a
+  real miscalibration on its first run (every flag found in a sentence was
+  quietly docked below `auto.FOUND`), and later a second one (a weak magic
+  number was worth exactly `auto.XOR_MIN_SCORE`).
+- ~~**ELF triage, Java constant pool, DEX string table, .NET literals**~~
+  `ctfc exe`, and `ctfc pe` for the `#US` heap.
+- ~~**Watch mode and a solve replay**~~ `ctfc watch` and `ctfc replay`.
+
+---
+
+## 3. Deliberately not doing
+
+Recorded so the question does not have to be reopened each time.
 
 - **Anything with an LLM in it.** Hard rule 1. The whole point is that ctfc works
   in a competition that bans them.
-- **Attacking a remote target**: padding oracles, ECB byte-at-a-time, blind SQLi.
-  Out of scope per `CLAUDE.md`, and they need a live service, which makes them a
-  different tool.
-- **Disk container cracking** (VeraCrypt, LUKS passphrase, BitLocker). Explicitly
-  out of scope; `ctfc keys` already handles the "the master key is in this memory
-  dump" case, which is the part a CTF actually asks.
+- **Attacking a remote target**: padding oracles, ECB byte-at-a-time, blind
+  SQLi. Out of scope per `CLAUDE.md`, and they need a live service, which makes
+  them a different tool.
+- **Disk container cracking** (VeraCrypt, LUKS passphrase, BitLocker).
+  Explicitly out of scope; `ctfc keys` already handles the "the master key is in
+  this memory dump" case, which is the part a CTF actually asks.
 - **Running or emulating a sample.** Hard rule 3. Static only, always - even
-  marshal-loading a `.pyc` is over that line.
-- **Vendoring zsteg, xortool or Detect It Easy.** The idea gets reimplemented and
-  the real tool gets called when installed. `core/stego.py` and `core/xor.py` are
-  that decision already carried out twice.
+  marshal-loading a `.pyc` is over that line, and so is interpreting a
+  Brainfuck program we were handed.
+- **Vendoring zsteg, xortool or Detect It Easy.** The idea gets reimplemented
+  and the real tool gets called when installed. `core/stego.py`, `core/xor.py`
+  and `core/pe.py` are that decision carried out three times.
 - **A full memory-forensics engine.** The Volatility tab exists precisely so
   that ctfc can hand that job over well instead of doing it badly.
+- **Row-level MSI table decoding.** The string pool answers the same questions
+  with a tenth of the code, and `msidump` exists. Stated in the report rather
+  than hidden.

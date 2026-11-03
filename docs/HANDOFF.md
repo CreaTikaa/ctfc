@@ -1,9 +1,10 @@
 # Handoff notes (for the next agent)
 
-Last update: 2026-10-30. Every milestone of CLAUDE.md is built, both audits are closed, the
-A/B/C batches are done, and **lot D and the first half of lot E** of `docs/ideas.md` are done
-(section 5septies). What is left is in `docs/ideas.md`, ordered by value against effort.
-Read `CLAUDE.md` first, then this file.
+Last update: 2026-11-03. Every milestone of CLAUDE.md is built, both audits are closed, the
+A/B/C batches are done, and **every section of `docs/ideas.md` that could be built now is**
+(sections 5septies and 5octies). What is left is `docs/ideas.md` section 1: three readers that
+stop short until there is a real sample to verify against, one thing measured and declined, and
+the ciphers that belong to dcode.fr. Read `CLAUDE.md` first, then this file.
 
 ## 1. Working agreement with the user
 
@@ -34,9 +35,11 @@ Read `CLAUDE.md` first, then this file.
 | M7 classical + key hunting | `180633d`..`bcdd550` | classical.py, keyhunt.py, `ctfc classical`, `ctfc keys`, web Keys tab (section 5bis) |
 | M8 sessions + report + bundle | `5e35985`..this one | write-up lessons (`lens --against`), sessions, `ctfc report`, cheat sheet, `make bundle` (section 5ter) |
 | lot D + E (ideas.md 1 and 2.5) | `6b6424c`..`2d897c9` | `ctfc prng`, `ctfc extend`, `make fuzz`, `ctfc rsa --also`, `ctfc sig` (section 5septies) |
+| lot F + G (the rest of ideas.md) | `b6e0fb9`..`5e142f2` | `ctfc archive`, `ctfc msg`, `ctfc msi`, `ctfc crc`, `ctfc winartifact`, `ctfc exe`, the encoding long tail, `ctfc watch`, `ctfc replay` (section 5octies) |
 
-1181 tests pass, 1 skipped (`.venv/bin/python -m pytest -q`, ~52 s), `ruff check .` and
-`ruff format --check .` clean. `make fuzz` (the long sweep) is clean on seeds 1, 3, 11 and 42.
+1439 tests pass, 1 skipped (`.venv/bin/python -m pytest -q`, ~66 s), `ruff check .` and
+`ruff format --check .` clean. `make fuzz` (the long sweep) is clean on seeds 3, 7, 9, 13, 17,
+42 and 101, over 35 reader entry points.
 
 **Plan approval: the user waived it twice on 2026-10-27.** For M4: "tu peux directement commencer
 avec ton plan, pas besoin de me le présenter". For M5 and the improvement ideas that follow:
@@ -607,22 +610,104 @@ and work started without waiting, as he has twice allowed.
 - **`--also KEY=CT`** also accepts `<e>=<ciphertext>` (a bare number means "same modulus, this
   exponent"), which is the common-modulus shape when the user has one PEM and two exponents.
 
-### Lot F, not started (the next thing to do)
+## 5octies. Lot F and lot G (2026-11-03): the rest of ideas.md
 
-Proposed to him in the same plan, in this order:
+He said: *"Lis l'historique des commits, le handoff.md et ta mémoire pour reprendre la ou on en
+était, finis le travail et les nouvelles idées puis push tout sur github"*. So: lot F as it was
+written below, then every remaining section of `docs/ideas.md`. **All of it is done**; what is
+left is only what needs a real sample, and that is now section 1 of `docs/ideas.md`.
 
-1. **`ctfc archive`**: 7z / RAR / tar / CAB - entries, which encryption, the matching `*2john`
-   hand-off; and on top of the tar reader, **Docker image analysis** (`manifest.json`, layer order,
-   `history`, deleted files via `.wh.*` whiteouts). That last one is one of his real challenges
-   ("Docker Layers", see `examples/*.zip` -> the second write-up). 7z's header is itself compressed,
-   which is the only awkward part.
-2. **`.msg` Outlook + MSI + OLE2 embedded objects (`ObjectPool`)** through `core/cfb.py`, which
-   already reads compound files - mostly report-writing, little parsing.
-3. **Scoring calibration** (`docs/ideas.md` 3.5) and **CRC32 recovery beyond three bytes** by
-   solving over GF(2) instead of searching (ideas 2.1).
+### Done this session
 
-Everything else stays as written in `docs/ideas.md` (2.4 Windows artefacts LNK/Prefetch/AmCache is
-the other high-value one; 3.x is the long tail).
+| Commit | Feature | What it does |
+|---|---|---|
+| `b6e0fb9` | `ctfc archive` | tar, 7z, RAR 4/5, cabinets, and a `docker save` image. Reads the headers by hand; decodes stored/deflate/bzip2/LZMA/LZMA2/MSZIP contents **offline**; names which of the two encryptions each format uses (files encrypted vs. the file list itself encrypted) with the matching `*2john`/hashcat line. For a Docker image: layers in build order, labelled with their Dockerfile line, and every file a later layer whites out, reported *with the bytes from the layer that still holds it* |
+| `42d4625` | `ctfc msg`, `ctfc msi`, `ctfc office --extract` | Outlook messages (MAPI properties), Windows Installer packages (name encoding, string pool, embedded cabinet, `-enc` payload), and the ObjectPool object embedded in a `.doc` with the path it came from on the author's machine |
+| `0162f0a` | `ctfc crc`, scoring calibration | CRC32 run backwards: word lists, a meet-in-the-middle search over several alphabets, a GF(2) solve - and the *share of the checksum space searched* reported, because that is what decides whether a hit is the content or a coincidence. Plus `tests/test_scoring_calibration.py`, which asserts the scoring against the real cut-offs the solvers use |
+| `dcda652` | `ctfc winartifact` | `.lnk` (a payload *and* a witness: command line, machine name, volume serial), prefetch (when it ran, every file it loaded), jump lists (one embedded `.lnk` per recent document). AmCache keys added to `ctfc hive` |
+| `d0f967c` | `ctfc exe`, `ctfc pe` | ELF triage (RWX segment, no section headers, RUNPATH, appended data), the Java constant pool (`.class` and a whole JAR), the DEX string table, and the `#US` metadata heap of a .NET assembly |
+| `ea58e47` | the encoding long tail | Base45 (RFC 9285), basE91, Z85, uuencode, Morse, Bacon (both tables), Polybius, tap code, A1Z26 - all keyless, so `auto` tries them by itself - plus the **Beaufort** cipher, solved blind |
+| `5e142f2` | `ctfc watch`, `ctfc replay` | Triage whatever lands in a folder; turn a session into one script that re-does the whole solve (and the test *runs* that script) |
+
+1439 tests pass, 1 skipped (~66 s), `ruff check .` and `ruff format --check .` clean,
+`make fuzz` clean on seeds 3, 7, 9, 13, 17, 42 and 101 over **35 reader entry points**.
+
+### Ground truth: where each new reader was checked against something external
+
+This is the part worth keeping. Every format reader added this session was checked against a
+tool that is not ours, wherever one exists on this machine:
+
+- **7z**: `7z l` / `7z t` on all three fixtures - including the AES one, where
+  `7z t -ppassword123` says "Everything is Ok", which proves the hand-written 7z KDF
+  (SHA-256 over salt+password+counter, 2^n times) is byte-correct.
+- **RAR**: `unrar t` on the hand-written RAR 4 says "All OK"; the two RAR 5 fixtures are the
+  output of RAR 7.00 itself, frozen as base64 with the exact command line in a comment.
+- **cabinets, compound files, MSI**: `7z l`. For the MSI, 7-Zip **decodes the table names** to
+  `_StringData`, `_StringPool`, `CustomAction`... which is the independent check that our name
+  encoding agrees with theirs.
+- **tar**: `tar tf` listing compared entry by entry.
+- **prefetch**: `libscca` (`pyscca`, installed system-wide, in the *system* python3 not the
+  venv) opens the fixture and every field is compared. The run-count offsets were **measured**
+  against it - a marker written into every four-byte slot of the block in turn, asking libscca
+  which one it then reported - which is how Windows 7's 0x44 and Windows 8.1's 0x7c got pinned.
+- **`.lnk`**: `file`, whose libmagic parses the flags and strings.
+- **ELF**: `readelf -d` for the needed libraries, and the parser is run over `/bin/ls`,
+  `/bin/bash` and `/usr/bin/python3` with the assertion that *no* overlay is reported.
+- **Java**: the test compiles a class with the **JDK** and checks every literal `javap -v`
+  reports as a String constant is in our list.
+- **Base45**: RFC 9285's published test vectors.
+- **.NET**: the two real assemblies on this machine (`/usr/share/dotnet/sdk/...` and a nuget
+  analyzer DLL).
+- **No external reader exists here for `.msg` or DEX.** The `.msg` is written from MS-OXMSG;
+  the DEX fixture's adler32 checksum and SHA-1 signature are computed properly, which is the
+  strongest check available. Say so rather than imply more.
+
+### Decisions worth keeping
+
+- **Every format reader's error now inherits `FormatError(ValueError)`** (`core/errors.py`).
+  Before that, `ctfc zip <a 7z>` printed a traceback - and so did all eighteen format commands,
+  because the CLI and the web API only catch `ValueError`. One file, one base class, eighteen
+  commands fixed.
+- **A refusal is only useful if it names the command that works.** A `.doc`, a `.msg` and an
+  `.msi` are one file format, so each reader recognises the others and says which command to
+  use; `ctfc archive` does the same for compound files, ZIPs and gzips.
+- **The ELF "end of file" is the maximum over sections, segments *and* the two header tables.**
+  The section header table sits at the end of a normal ELF, so without that every binary on the
+  system looks like it carries an appended payload. There is a test for it on three real binaries.
+- **With a tiny alphabet, `applicable` is the whole design.** Morse at three symbols and A1Z26 at
+  four numbers made `auto` "decode" four stray digits in a base64 blob as `EE HB`. The minimum
+  material is now explicit (`MIN_MORSE_SYMBOLS` and friends) and still far below any challenge.
+- **Two scoring bugs, both found by the calibration test rather than by a user.** A flag in an
+  unknown CTF's format carries strength 0.9 exactly, and the "flag in unreadable text" penalty was
+  scaled by the surround's readability - but `_text_score` tops out near 0.88 for perfect English,
+  so every flag found in a sentence landed at 0.881, just under `auto.FOUND`, and `auto` kept
+  decoding past the answer. And a **weak** magic number was worth 0.6, which is exactly
+  `auto.XOR_MIN_SCORE`, so junk starting with `00 00 01 00` (an ICO header) outranked readable
+  text. Both fixed, both with a test.
+- **A GUID in braces is not a flag.** `\VOLUME{01d9c0b2-0000-...}` matches the generic flag
+  pattern perfectly and Windows is full of them, so a prefetch file proudly reported a volume GUID
+  as the flag. Rejected in `flags.py` now.
+- **Beaufort needed two fixes the Vigenère code already had.** Its key length must be ranked by
+  the **index of coincidence alone** (`vigenere_key_lengths` ranks by how well a column solves as a
+  *Caesar* shift, and a Beaufort column is a reflected alphabet), and `reduce_key`'s majority vote
+  across repeats is what turns `lemonlemon` into `lemon` rather than `lemoe`.
+- **`ctfc watch` reads a file one pass after it appears**, once its size has stopped changing.
+  Triaging the first 4 KB of a download and announcing "this is not a ZIP" is worse than silence.
+- **Parallel brute force was measured and declined** - the numbers and the condition to revisit
+  are in `docs/ideas.md` §1.2. The slowest search in ctfc is 8.3 s.
+- **The fuzzer found three more bugs** (six across its life): a `ValueError` in the tar checksum
+  (the signed-char sum built a `bytes()` out of negative numbers), an `lzma.LZMAError` escaping
+  from decompressor *construction* rather than from decompression, an `IndexError` in the RAR 5
+  vint (a header claiming an extra area bigger than itself gives a negative offset, and a negative
+  index reads the end of the file instead of failing), and `NotImplementedError` from `zipfile`,
+  which is how it reports an unknown compression method rather than as `BadZipFile`.
+
+### What is left
+
+`docs/ideas.md` section 1, and only that: three readers that stop short until there is a real
+sample to verify against (SAM hashes, EVTX binary XML, LZXPRESS Huffman for compressed prefetch),
+parallelism (measured, declined), the keyed classical ciphers that belong to dcode.fr, and Mach-O.
+Everything else in that file is built.
 
 ## 6bis. The improvement ideas (all five done)
 

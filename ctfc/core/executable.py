@@ -370,7 +370,9 @@ def sniff(data: bytes) -> str:
         try:
             with zipfile.ZipFile(io.BytesIO(data)) as archive:
                 names = archive.namelist()
-        except (zipfile.BadZipFile, OSError, ValueError):
+        # A damaged header makes zipfile claim an unknown compression method,
+        # which it reports as NotImplementedError rather than BadZipFile.
+        except (zipfile.BadZipFile, OSError, ValueError, NotImplementedError):
             return ""
         if any(name.endswith(".class") for name in names) or "META-INF/MANIFEST.MF" in names:
             return "jar"
@@ -784,7 +786,7 @@ def read_jar(data: bytes, report: ExecutableReport) -> list[ClassReport]:
     try:
         archive = zipfile.ZipFile(io.BytesIO(data))
         names = [name for name in archive.namelist() if name.endswith(".class")]
-    except (zipfile.BadZipFile, OSError, ValueError) as exc:
+    except (zipfile.BadZipFile, OSError, ValueError, NotImplementedError) as exc:
         raise ExecutableError(f"not a readable JAR: {exc}") from exc
     if len(names) > MAX_CLASSES:
         report.notes.append(
@@ -795,7 +797,13 @@ def read_jar(data: bytes, report: ExecutableReport) -> list[ClassReport]:
     for name in names:
         try:
             payload = archive.read(name)
-        except (zipfile.BadZipFile, OSError, ValueError, RuntimeError) as exc:
+        except (
+            zipfile.BadZipFile,
+            OSError,
+            ValueError,
+            RuntimeError,
+            NotImplementedError,
+        ) as exc:
             report.notes.append(f"{name}: {exc}")
             continue
         try:
@@ -807,7 +815,14 @@ def read_jar(data: bytes, report: ExecutableReport) -> list[ClassReport]:
         classes.append(item)
     try:
         manifest = archive.read("META-INF/MANIFEST.MF").decode("utf-8", "replace")
-    except (KeyError, zipfile.BadZipFile, OSError, ValueError, RuntimeError):
+    except (
+        KeyError,
+        zipfile.BadZipFile,
+        OSError,
+        ValueError,
+        RuntimeError,
+        NotImplementedError,
+    ):
         manifest = ""
     for line in manifest.splitlines():
         if line.lower().startswith(("main-class:", "class-path:", "premain-class:")):

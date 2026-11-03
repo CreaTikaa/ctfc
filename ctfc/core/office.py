@@ -261,6 +261,9 @@ ZIP_READ_ERRORS = (
     EOFError,
     ValueError,
     UnicodeDecodeError,
+    # A damaged header makes zipfile claim an unknown compression method, which
+    # it reports as NotImplementedError rather than as a BadZipFile.
+    NotImplementedError,
 )
 
 
