@@ -312,3 +312,8 @@ table.grid td.maybe { color: var(--mid); }
 .command code { color: var(--good); }
 .command button { margin-left: 0.6rem; }
 .row { display: flex; gap: 0.5rem; margin-bottom: 0.8rem; }
+
+/* --- the search strip, under the hexdump -------------------------------- */
+#search-box { display: flex; flex-direction: column; gap: 0.4rem; margin-bottom: 0.8rem; }
+#search-box input[type="text"] { width: 100%; }
+#search-box .row { align-items: center; margin-bottom: 0; }

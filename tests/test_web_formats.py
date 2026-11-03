@@ -296,3 +296,130 @@ def test_classical_runs_as_a_job_too(client, fixture_bytes):
         time.sleep(0.05)
     assert status["state"] == "done", status
     assert status["result"]["candidates"][0]["label"] == "beaufort(key='lemon')"
+
+
+# ---------------------------------------------------------------------------
+# Search: a regex, or a flag hunt - which is not the same search
+# ---------------------------------------------------------------------------
+
+PLAIN_AND_BASE64 = (
+    b"\x89PNG\r\n\x1a\n"
+    + bytes(32)
+    + b"notes: the first part is CYBN{in_clear}"
+    + bytes(20)
+    + base64.b64encode(b"second half: CYBN{hidden_in_base64}!!")
+)
+
+
+def test_flag_hunt_finds_the_base64_one_too(client):
+    """Typing `CYBN` into a regex box finds the first and misses the second."""
+    answer = client.post(
+        "/api/search", json={"input": "b64:" + base64.b64encode(PLAIN_AND_BASE64).decode()}
+    ).get_json()
+    found = {match["text"]: match for match in answer["matches"]}
+    assert "CYBN{in_clear}" in found
+    assert "CYBN{hidden_in_base64}" in found
+    assert found["CYBN{in_clear}"]["how"] == "plain"
+    assert found["CYBN{hidden_in_base64}"]["how"] == "base64"
+    # And each one says where it was: the offset is half the answer.
+    assert found["CYBN{in_clear}"]["offset"] > 0
+    assert found["CYBN{hidden_in_base64}"]["offset"] > found["CYBN{in_clear}"]["offset"]
+
+
+def test_the_flag_hunt_says_what_it_searched_for(client):
+    answer = client.post("/api/search", json={"input": "text:nothing here"}).get_json()
+    joined = " ".join(answer["searched"])
+    assert "CYBN" in joined
+    assert "base64" in joined
+    assert answer["matches"] == []
+    # And when it finds nothing it prints the base64 forms, so you can eyeball them.
+    assert any("Q1lCTn" in note for note in answer["notes"])
+
+
+def test_a_regex_search_gives_offsets_and_context(client):
+    answer = client.post(
+        "/api/search",
+        json={
+            "input": "b64:" + base64.b64encode(PLAIN_AND_BASE64).decode(),
+            "options": {"pattern": "notes.{0,12}"},
+        },
+    ).get_json()
+    assert answer["matches"][0]["text"].startswith("notes:")
+    assert answer["matches"][0]["hex_offset"].startswith("0x")
+    assert "PNG" in answer["matches"][0]["context"]
+
+
+def test_a_regex_can_search_the_last_result_instead(client):
+    answer = client.post(
+        "/api/search",
+        json={"input": "text:ignored", "options": {"pattern": "CYBN", "text": "a result CYBN{x}"}},
+    ).get_json()
+    assert answer["source"] == "result"
+    assert answer["matches"][0]["source"] == "result"
+
+
+def test_a_broken_regex_is_a_400_with_the_reason(client):
+    answer = client.post(
+        "/api/search", json={"input": "text:abc", "options": {"pattern": "([unclosed"}}
+    )
+    assert answer.status_code == 400
+    assert "not a usable regex" in answer.get_json()["error"]
+
+
+def test_the_search_is_case_insensitive_by_default(client):
+    payload = {"input": "text:Hello World", "options": {"pattern": "hello"}}
+    assert client.post("/api/search", json=payload).get_json()["matches"]
+    payload["options"]["ignore_case"] = False
+    assert client.post("/api/search", json=payload).get_json()["matches"] == []
+
+
+# ---------------------------------------------------------------------------
+# Docs, signatures, replay
+# ---------------------------------------------------------------------------
+
+
+def test_the_docs_ship_inside_the_package(client):
+    """They are in ctfc/data, not docs/, so an installed copy has them offline."""
+    docs = client.get("/api/docs").get_json()["docs"]
+    identifiers = [doc["id"] for doc in docs]
+    assert identifiers == ["cheatsheet", "how-it-works", "day-of-the-ctf"]
+    for doc in docs:
+        markdown = client.get(f"/api/docs/{doc['id']}").get_json()["markdown"]
+        assert markdown.startswith("#")
+    assert client.get("/api/docs/nonsense").status_code == 404
+
+
+def test_how_it_works_is_the_whole_document(client):
+    markdown = client.get("/api/docs/how-it-works").get_json()["markdown"]
+    assert len(markdown) > 50_000
+    assert "## 29." in markdown  # the last section written
+
+
+def test_api_sig_recovers_a_key_from_a_reused_nonce(client, fixture_bytes):
+    text = fixture_bytes("ecdsa_nonce_reuse.txt").decode()
+    answer = client.post(
+        "/api/sig", json={"input": "text:" + text, "options": {"curve": "secp256k1"}}
+    ).get_json()
+    assert answer["recoveries"]
+    assert any("share an r" in note for note in answer["notes"])
+
+
+def test_api_sig_needs_a_group(client, fixture_bytes):
+    text = fixture_bytes("ecdsa_nonce_reuse.txt").decode()
+    answer = client.post("/api/sig", json={"input": "text:" + text, "options": {"curve": ""}})
+    assert answer.status_code == 400
+    assert "curve" in answer.get_json()["error"]
+
+
+def test_api_replay_downloads_a_runnable_script(client, tmp_path):
+    from ctfc.core import session as sessions
+
+    base = tmp_path / "sessions"
+    session = sessions.Session.open("web-demo", base, create=True)
+    session.add_step("auto", "ctfc auto x", None, [], [])
+    app = create_app(Config(sessions_dir=str(base)))
+    app.testing = True
+    answer = app.test_client().get("/api/sessions/web-demo/replay")
+    assert answer.status_code == 200
+    assert b"Re-does the whole solve" in answer.data
+    assert "attachment" in answer.headers["Content-Disposition"]

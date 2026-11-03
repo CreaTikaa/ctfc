@@ -799,6 +799,97 @@ def create_app(config: Config | None = None) -> Flask:
             result = toolbox.run_tool(tool, values)
         return jsonify(result.to_dict())
 
+    @app.get("/api/docs")
+    def api_docs():
+        """The documents that ship inside the package, for the Docs tab."""
+        from ctfc.core.datafiles import list_docs
+
+        return jsonify({"docs": list_docs()})
+
+    @app.get("/api/docs/<name>")
+    def api_doc(name: str):
+        """One document, as Markdown. They live in ctfc/data so they work offline."""
+        from ctfc.core.datafiles import load_doc
+
+        try:
+            return jsonify({"markdown": load_doc(name)})
+        except KeyError:
+            return jsonify({"error": f"unknown document {name!r}"}), 404
+
+    @app.post("/api/search")
+    def api_search():
+        """Search the input: a regex, or a flag in every form it may be written in.
+
+        With no pattern this is a flag hunt, which is *not* a regex for `CYBN` -
+        a flag may be base64 (at any of three alignments), and `core/search.py`
+        goes through `find_flags`, which knows those forms.
+        """
+        from ctfc.core.search import search_flags, search_pattern
+
+        payload = read_payload()
+        options = payload.get("options") or {}
+        text = options.get("text")
+        if isinstance(text, str) and text:
+            data, source = text.encode("utf-8", "surrogateescape"), "result"
+        else:
+            data, source = input_from_payload(payload, decode_bare=False).data, "input"
+        pattern = str(options.get("pattern") or "").strip()
+        if pattern:
+            report = search_pattern(
+                data, pattern, ignore_case=bool(options.get("ignore_case", True)), source=source
+            )
+        else:
+            report = search_flags(data, flagset)
+            for match in report.matches:
+                match.source = source
+        answer = report.to_dict()
+        answer["source"] = source
+        answer["length"] = len(data)
+        return jsonify(answer)
+
+    @app.post("/api/sig")
+    def api_sig():
+        """ECDSA / DSA signatures: a reused nonce hands over the private key."""
+        from ctfc.core import signatures
+
+        payload = read_payload()
+        options = payload.get("options") or {}
+        # The signatures may be typed in, pasted with a `text:` prefix, or
+        # dropped as a file: all three go through the same input parsing.
+        text = input_from_payload(payload, decode_bare=False).data.decode("utf-8", "replace")
+        if not text.strip():
+            raise InputError(t("web_empty_input"))
+        name = str(options.get("curve") or "").strip()
+        curve = signatures.find_curve(name) if name else None
+        order_text = str(options.get("order") or "").strip()
+        order = int(order_text, 0) if order_text else None
+        if curve is None and order is None:
+            raise InputError(
+                "choose a curve (secp256k1, p-256, p-384, p-521, p-224, p-192), or give "
+                "the DSA group order q: every scalar is reduced by it"
+            )
+        found = signatures.parse_signatures(
+            text,
+            order=order if order is not None else curve.n,
+            algorithm=str(options.get("hash") or "").strip() or None,
+        )
+        report = signatures.solve(found, curve=curve, order=order)
+        answer = report.to_dict()
+        record(payload, "sig", None, answer)
+        return jsonify(answer)
+
+    @app.get("/api/sessions/<name>/replay")
+    def api_replay(name: str):
+        """The session as one script that re-does the whole solve."""
+        from ctfc.core.replay import build_script
+
+        session = sessions.Session.open(name, sessions_base, create=False)
+        return Response(
+            build_script(session),
+            mimetype="text/x-python",
+            headers={"Content-Disposition": f'attachment; filename="{name}-solve.py"'},
+        )
+
     @app.get("/api/cheatsheet")
     def cheatsheet():
         from ctfc.core.datafiles import load_cheatsheet
@@ -904,11 +995,15 @@ def create_app(config: Config | None = None) -> Flask:
     from ctfc.core.classical import ClassicalError
     from ctfc.core.hashext import HashExtError
     from ctfc.core.prng import PrngError
+    from ctfc.core.search import SearchError
+    from ctfc.core.signatures import SignatureError
 
     @app.errorhandler(FormatError)
     @app.errorhandler(ClassicalError)
     @app.errorhandler(HashExtError)
     @app.errorhandler(PrngError)
+    @app.errorhandler(SearchError)
+    @app.errorhandler(SignatureError)
     def bad_format(error: Exception):
         return jsonify({"error": str(error)}), 400
 

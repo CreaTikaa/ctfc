@@ -61,7 +61,7 @@ echo "Try: $HERE/.venv/bin/ctfc cheatsheet"
 EOF
 chmod +x "$OUT/install.sh"
 
-cp "$REPO/docs/day-of-the-ctf.md" "$OUT/README-OFFLINE.md"
+cp "$REPO/ctfc/data/day-of-the-ctf.md" "$OUT/README-OFFLINE.md"
 
 echo "Done: $OUT"
 ls -1 "$OUT/wheels"

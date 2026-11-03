@@ -399,6 +399,31 @@ EN: dict[str, str] = {
     "opt_prng_gen": "which generator to assume (default: auto, from how many values there are)",
     "opt_prng_forward": "how many future values to print (default: 10)",
     "opt_prng_backward": "how many values from before the capture to print (default: 10)",
+    "web_session_replay": "Script (.py)",
+    "web_tab_docs": "Docs",
+    "web_tab_sig": "Signatures",
+    "web_docs_pick": "document",
+    "web_docs_terminal": (
+        "Three commands take a *folder* rather than a file, so they live in the terminal: "
+        "`ctfc scan <folder>` (detect + auto on everything in it, ranked), "
+        "`ctfc watch <folder>` (triage each new file as it lands) and "
+        "`ctfc git <folder>` (what a .git still holds that the files do not show). "
+        "`ctfc replay` writes a session out as one runnable script - the button is in the "
+        "session panel."
+    ),
+    "web_search": "Search",
+    "web_search_pattern": "regex (empty = hunt for a flag in every form)",
+    "web_search_flags": "Find a flag",
+    "web_search_run": "Search",
+    "web_search_scope_input": "in the input",
+    "web_search_scope_result": "in the last result",
+    "web_search_case": "ignore case",
+    "web_search_searched": "searched for",
+    "web_search_none": "no match",
+    "web_search_offset": "offset",
+    "web_sig_curve": "curve (or leave empty and give the DSA order)",
+    "web_sig_order": "DSA group order q (decimal or 0x...)",
+    "web_sig_hash": "hash used to sign (sha256, sha1, ...)",
     "web_tab_file": "Files",
     "web_tab_crc": "CRC32",
     "web_tab_classical": "Classical",

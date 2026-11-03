@@ -46,6 +46,33 @@ def load_cheatsheet() -> str:
     return (DATA_DIR / "cheatsheet.md").read_text(encoding="utf-8")
 
 
+# The documents that ship *inside* the package, so that they are readable on the
+# day of the CTF with no network and no copy of the repository. `docs/` keeps a
+# one-paragraph pointer to each, which is why they live here and not there.
+DOCS: tuple[tuple[str, str, str], ...] = (
+    ("cheatsheet", "Cheat sheet", "cheatsheet.md"),
+    ("how-it-works", "How it works", "how-it-works.md"),
+    ("day-of-the-ctf", "Day of the CTF", "day-of-the-ctf.md"),
+)
+
+
+def list_docs() -> list[dict]:
+    """The documents available, for a menu."""
+    return [
+        {"id": name, "title": title}
+        for name, title, filename in DOCS
+        if (DATA_DIR / filename).is_file()
+    ]
+
+
+def load_doc(name: str) -> str:
+    """One document, as Markdown text. Raises KeyError for an unknown name."""
+    for identifier, _title, filename in DOCS:
+        if identifier == name:
+            return (DATA_DIR / filename).read_text(encoding="utf-8")
+    raise KeyError(name)
+
+
 def load_volatility() -> dict:
     """The Volatility cheat sheet (ctfc/data/volatility.toml) for the web UI.
 

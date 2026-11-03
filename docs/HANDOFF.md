@@ -717,6 +717,24 @@ Two more tabs came with it: **Classical** (the cipher family was CLI-only) and *
 raw bytes look like nothing in particular. The whole thing was checked in a real headless
 Chromium, not only through the test client.
 
+### Search, docs and the last three CLI gaps (same session)
+
+He asked three follow-up questions, each of which was a real gap:
+
+1. **Is everything CLI-doable also doable in the page?** It now is, except three commands that
+   take a *folder* rather than a file - `ctfc scan`, `ctfc watch`, `ctfc git` - which a browser
+   cannot hand over. The Docs tab names them with their command lines instead of pretending.
+   `ctfc sig` became a **Signatures** tab and `ctfc replay` a button in the session bar.
+2. **Are the docs visible from the page?** Only the cheat sheet was. `how-it-works.md` and
+   `day-of-the-ctf.md` moved into `ctfc/data/` (with pointers left in `docs/`) so they ship with
+   the package, and a **Docs** tab renders them with the Markdown renderer the cheat sheet used.
+3. **Is there a button to run a regex for CYBN, including in base64?** There was none. There is
+   now a search strip under the hexdump offering *two* searches: a regex over the bytes (with
+   offsets and context - the offset is half the answer), and a **flag hunt**, which is
+   deliberately not the regex `CYBN` because a flag may be base64 at any of three alignments.
+   `core/search.py` goes through `find_flags`, which knows those forms, and prints what it
+   searched for. It runs on the input or on the last result.
+
 ### What is left
 
 `docs/ideas.md` section 1, and only that: three readers that stop short until there is a real

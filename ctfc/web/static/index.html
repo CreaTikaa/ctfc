@@ -18,6 +18,7 @@
       <input id="session-note" type="text" data-t-placeholder="web_session_note_ph">
       <button id="session-note-add" class="small" data-t="web_session_note">Add note</button>
       <button id="session-report" class="small" data-t="web_session_report">Report (.md)</button>
+      <button id="session-replay" class="small" data-t="web_session_replay">Script (.py)</button>
     </div>
     <span id="offline-badge" class="badge hidden" data-t="web_offline">offline</span>
     <span id="version" class="dim"></span>
@@ -49,6 +50,24 @@
       <div id="input-info" class="dim"></div>
       <h3 data-t="web_hexdump">Hexdump</h3>
       <pre id="hexdump" class="hexdump"></pre>
+      <!-- Search: a regex over the bytes, or a flag hunt - which is not the
+           same search, because a flag may be base64 at any of three
+           alignments (see ctfc/core/search.py). -->
+      <h3 data-t="web_search">Search</h3>
+      <div id="search-box">
+        <input id="search-pattern" type="text" spellcheck="false"
+               data-t-placeholder="web_search_pattern">
+        <div class="row">
+          <button id="search-flags" class="small" data-t="web_search_flags">Find a flag</button>
+          <button id="search-run" class="small" data-t="web_search_run">Search</button>
+          <label><select id="search-scope">
+            <option value="input" data-t="web_search_scope_input">in the input</option>
+            <option value="result" data-t="web_search_scope_result">in the last result</option>
+          </select></label>
+        </div>
+        <label class="checkbox"><input id="search-case" type="checkbox" checked>
+          <span data-t="web_search_case">ignore case</span></label>
+      </div>
     </section>
 
     <!-- Right: tabs and results -->
@@ -60,6 +79,7 @@
         <button class="tab" data-tab="xor" data-t="web_tab_xor">XOR</button>
         <button class="tab" data-tab="sym" data-t="web_tab_sym">Symmetric</button>
         <button class="tab" data-tab="rsa" data-t="web_tab_rsa">RSA</button>
+        <button class="tab" data-tab="sig" data-t="web_tab_sig">Signatures</button>
         <button class="tab" data-tab="lens" data-t="web_tab_lens">Code Lens</button>
         <button class="tab" data-tab="file" data-t="web_tab_file">Files</button>
         <button class="tab" data-tab="classical" data-t="web_tab_classical">Classical</button>
@@ -72,6 +92,7 @@
         <button class="tab" data-tab="radius" data-t="web_tab_radius">RADIUS</button>
         <button class="tab" data-tab="volatility" data-t="web_tab_volatility">Volatility</button>
         <button class="tab" data-tab="cheatsheet" data-t="web_tab_cheatsheet">Cheatsheet</button>
+        <button class="tab" data-tab="docs" data-t="web_tab_docs">Docs</button>
       </nav>
       <!-- Options of the Pipeline tab: the recipe, as editable JSON -->
       <div id="options-pipeline" class="options hidden">
@@ -232,6 +253,28 @@
       </div>
       <!-- Options of the JWT tab: the token goes in the input box on the left -->
       <!-- Options of the Files tab: one reader per file format, sniffed by default -->
+      <!-- Options of the Docs tab: which document to show -->
+      <div id="options-docs" class="options hidden">
+        <label><span data-t="web_docs_pick">document</span>
+          <select id="docs-pick"></select></label>
+      </div>
+      <!-- Options of the Signatures tab: the group the scalars live in -->
+      <div id="options-sig" class="options hidden">
+        <label><span data-t="web_sig_curve">curve</span>
+          <select id="sig-curve">
+            <option value="secp256k1">secp256k1</option>
+            <option value="p-256">p-256</option>
+            <option value="p-384">p-384</option>
+            <option value="p-521">p-521</option>
+            <option value="p-224">p-224</option>
+            <option value="p-192">p-192</option>
+            <option value="">(DSA: give q below)</option>
+          </select></label>
+        <label><span data-t="web_sig_order">DSA group order q</span>
+          <input id="sig-order" type="text" spellcheck="false"></label>
+        <label><span data-t="web_sig_hash">hash used to sign</span>
+          <input id="sig-hash" type="text" spellcheck="false" placeholder="sha256"></label>
+      </div>
       <div id="options-file" class="options hidden">
         <label><span data-t="web_file_reader">reader (auto-detected from the file)</span>
           <select id="file-reader">

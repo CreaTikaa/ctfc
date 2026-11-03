@@ -38,6 +38,7 @@ const TOOLS = {
   file: "sync",
   crc: "sync",
   classical: "job",
+  sig: "sync",
 };
 
 // API route of a tab, when it is not /api/<tab>.
@@ -46,12 +47,12 @@ const API_PATH = { pipeline: "/api/recipe" };
 // Tabs that have their own options panel (#options-<tab>).
 const OPTION_PANELS = [
   "xor", "sym", "rsa", "hash", "pipeline", "keys", "lens", "radius", "volatility", "jwt", "prng", "extend",
-  "file", "classical", "crc",
+  "file", "classical", "crc", "sig", "docs",
 ];
 
 // Tabs that are reference pages, not tools: opening them shows the page and
 // there is nothing to Run.
-const REFERENCE_TABS = ["cheatsheet", "volatility"];
+const REFERENCE_TABS = ["cheatsheet", "volatility", "docs"];
 
 // Tabs after which the "Suggested tools" strip is computed (data tabs, not scripts).
 const SUGGEST_TABS = ["auto", "detect", "xor", "sym", "hash", "file"];
@@ -199,6 +200,13 @@ function currentOptions() {
       secret_length: $("extend-length").value,
       algo: $("extend-algo").value,
       secret: $("extend-secret").value,
+    };
+  }
+  if (state.tab === "sig") {
+    return {
+      curve: $("sig-curve").value,
+      order: $("sig-order").value,
+      hash: $("sig-hash").value,
     };
   }
   if (state.tab === "file") {
@@ -386,6 +394,11 @@ function showAnswer(tab, answer) {
   }
   if (tab === "crc") {
     renderCrc(answer);
+    setStatus("");
+    return;
+  }
+  if (tab === "sig") {
+    renderSignatures(answer);
     setStatus("");
     return;
   }
@@ -1521,6 +1534,7 @@ function selectTab(button) {
   // A reference tab is not a tool: it is shown as soon as it is opened.
   $("run").classList.toggle("hidden", REFERENCE_TABS.includes(state.tab));
   if (state.tab === "cheatsheet") showCheatsheet();
+  if (state.tab === "docs") showDoc($("docs-pick").value);
   if (state.tab === "volatility") showVolatility();
 }
 
@@ -1545,6 +1559,29 @@ async function init() {
     tab.addEventListener("click", () => selectTab(tab));
   }
   $("tab-help").textContent = T("web_auto_help");
+
+  // Search: a regex over the bytes, or a flag hunt. Enter in the pattern box
+  // runs the regex; the button next to it hunts for a flag instead.
+  $("search-run").addEventListener("click", () => runSearch(false));
+  $("search-flags").addEventListener("click", () => runSearch(true));
+  $("search-pattern").addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      runSearch(false);
+    }
+  });
+
+  // Docs tab: the menu is filled from the server, and changing it reloads.
+  fetch("/api/docs").then((r) => r.json()).then((answer) => {
+    const select = $("docs-pick");
+    for (const doc of answer.docs || []) {
+      const option = el("option", "", doc.title);
+      option.value = doc.id;
+      if (doc.id === "how-it-works") option.selected = true;
+      select.append(option);
+    }
+    select.addEventListener("change", () => showDoc(select.value));
+  }).catch(() => {});
 
   // Files tab: the reader dropdown is filled from the server, so a reader added
   // to ctfc/web/formats.py appears here with no change to this file.
@@ -1618,6 +1655,14 @@ async function init() {
     if (event.key === "Enter") addNote();
   });
   $("session-report").addEventListener("click", downloadReport);
+  // The same session, as the script that re-does the solve (ctfc replay).
+  $("session-replay").addEventListener("click", () => {
+    if (!state.session) {
+      setStatus(T("web_session_pick_first"), true);
+      return;
+    }
+    window.location.href = "/api/sessions/" + encodeURIComponent(state.session) + "/replay";
+  });
 
   $("run").addEventListener("click", run);
   $("cancel").addEventListener("click", cancelJob);
@@ -1757,4 +1802,114 @@ function renderCrc(report) {
     results.append(buttons);
   }
   if (report.notes && report.notes.length) renderNotes(report.notes);
+}
+
+// ---------------------------------------------------------------------- Docs
+// The documents ship inside the package (ctfc/data/*.md), not in docs/, so this
+// works from an installed copy with no network and no repository - which is the
+// only state that matters on the day of a CTF.
+async function showDoc(name) {
+  try {
+    const answer = await (await fetch("/api/docs/" + encodeURIComponent(name || "how-it-works"))).json();
+    const root = el("div", "");
+    root.append(renderMarkdown(answer.markdown));
+    const terminal = el("p", "dim", T("web_docs_terminal"));
+    root.append(el("h3", "", T("web_tab_docs")), terminal);
+    $("results").replaceChildren(root);
+  } catch (error) {
+    setStatus(error.message, true);
+  }
+}
+
+// ---------------------------------------------------------------- Signatures
+function renderSignatures(report) {
+  const results = $("results");
+  const facts = el("table", "facts");
+  for (const [name, value] of [
+    ["signatures read", report.signatures],
+    ["group", report.curve || report.order],
+    ["reused nonces", (report.groups || []).length],
+  ]) {
+    if (value === undefined || value === null || value === "") continue;
+    const row = el("tr");
+    row.append(el("td", "dim", name), el("td", "", String(value)));
+    facts.append(row);
+  }
+  results.append(facts);
+  for (const recovery of report.recoveries || []) {
+    const card = el("div", "card good");
+    card.append(el("div", "label", "private key recovered"));
+    card.append(el("pre", "code", recovery.private_key));
+    if (recovery.nonce) card.append(el("div", "dim", "nonce k = " + recovery.nonce));
+    if (recovery.verified) card.append(el("div", "dim", "verified against the public key"));
+    card.append(copyButton(T("web_copy"), () => recovery.private_key));
+    results.append(card);
+  }
+  if (report.notes && report.notes.length) renderNotes(report.notes);
+  if (report.python) {
+    results.append(el("h3", "", "reproduce it"));
+    results.append(el("pre", "code", report.python));
+  }
+}
+
+// -------------------------------------------------------------------- Search
+// A regex over the bytes, or a flag hunt - which is deliberately not the same
+// request: a flag may be base64 at any of three alignments, so the server goes
+// through find_flags rather than matching the text you typed.
+async function runSearch(flagsOnly) {
+  const pattern = flagsOnly ? "" : $("search-pattern").value.trim();
+  const scope = $("search-scope").value;
+  const options = { pattern, ignore_case: $("search-case").checked };
+  if (scope === "result") {
+    const text = $("results").textContent || "";
+    if (!text.trim()) {
+      setStatus(T("web_search_none"), true);
+      return;
+    }
+    options.text = text;
+  }
+  setStatus("...");
+  try {
+    const answer = await post("/api/search", { ...currentPayload(), options });
+    renderSearch(answer);
+    setStatus("");
+  } catch (error) {
+    setStatus(error.message, true);
+  }
+}
+
+function renderSearch(answer) {
+  const results = $("results");
+  results.replaceChildren();
+  results.append(el("h3", "", T("web_search") + " — " + answer.source + " (" + answer.length + " bytes)"));
+  if (answer.searched && answer.searched.length) {
+    results.append(el("div", "dim", T("web_search_searched") + ": " + answer.searched.join("  |  ")));
+  }
+  if (!answer.matches.length) {
+    results.append(el("p", "", T("web_search_none")));
+  } else {
+    const table = el("table", "grid");
+    const header = el("tr");
+    for (const column of [T("web_search_offset"), "how", "match", "context"]) {
+      header.append(el("th", "", column));
+    }
+    table.append(header);
+    for (const match of answer.matches) {
+      const row = el("tr");
+      row.append(
+        el("td", "", match.hex_offset),
+        el("td", "dim", match.how),
+        el("td", "good", match.text),
+        el("td", "", match.context),
+      );
+      table.append(row);
+    }
+    results.append(table);
+    const first = answer.matches[0];
+    results.append(copyButton(T("web_copy"), () => answer.matches.map((m) => m.text).join("\n")));
+    const next = el("button", "small", T("web_next_input"));
+    next.addEventListener("click", () => useTextAsInput(first.text));
+    results.append(next);
+  }
+  if (answer.notes && answer.notes.length) renderNotes(answer.notes);
 }
