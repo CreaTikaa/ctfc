@@ -61,6 +61,9 @@
         <button class="tab" data-tab="sym" data-t="web_tab_sym">Symmetric</button>
         <button class="tab" data-tab="rsa" data-t="web_tab_rsa">RSA</button>
         <button class="tab" data-tab="lens" data-t="web_tab_lens">Code Lens</button>
+        <button class="tab" data-tab="file" data-t="web_tab_file">Files</button>
+        <button class="tab" data-tab="classical" data-t="web_tab_classical">Classical</button>
+        <button class="tab" data-tab="crc" data-t="web_tab_crc">CRC32</button>
         <button class="tab" data-tab="hash" data-t="web_tab_hash">Hash</button>
         <button class="tab" data-tab="keys" data-t="web_tab_keys">Keys</button>
         <button class="tab" data-tab="jwt" data-t="web_tab_jwt">JWT</button>
@@ -228,6 +231,42 @@
         </div>
       </div>
       <!-- Options of the JWT tab: the token goes in the input box on the left -->
+      <!-- Options of the Files tab: one reader per file format, sniffed by default -->
+      <div id="options-file" class="options hidden">
+        <label><span data-t="web_file_reader">reader (auto-detected from the file)</span>
+          <select id="file-reader">
+            <option value="" data-t="web_file_reader_auto">detect it</option>
+          </select></label>
+        <span class="dim wide" data-t="web_file_help"></span>
+      </div>
+      <!-- Options of the Classical tab -->
+      <div id="options-classical" class="options hidden">
+        <label><span data-t="web_classical_cipher">cipher (empty = try them all)</span>
+          <select id="classical-cipher">
+            <option value=""></option>
+            <option value="caesar">caesar</option>
+            <option value="affine">affine</option>
+            <option value="atbash">atbash</option>
+            <option value="vigenere">vigenere</option>
+            <option value="beaufort">beaufort</option>
+            <option value="railfence">railfence</option>
+          </select></label>
+        <label><span data-t="web_classical_key">key, when you have it</span>
+          <input id="classical-key" type="text" spellcheck="false"></label>
+        <label><span data-t="web_sym_seconds">time budget (s)</span>
+          <input id="classical-seconds" type="number" value="20" min="1" max="300"></label>
+      </div>
+      <!-- Options of the CRC32 tab: the checksum itself goes in the input box -->
+      <div id="options-crc" class="options hidden">
+        <label><span data-t="web_crc_length">length in bytes</span>
+          <input id="crc-length" type="number" min="1" max="64"></label>
+        <label><span data-t="web_crc_pattern">pattern, ? for the unknown characters</span>
+          <input id="crc-pattern" type="text" spellcheck="false" placeholder="CYBN{????}"></label>
+        <label><span data-t="web_sym_seconds">time budget (s)</span>
+          <input id="crc-seconds" type="number" value="20" min="1" max="300"></label>
+        <label class="checkbox"><input id="crc-solve" type="checkbox">
+          <span data-t="web_crc_solve">also solve a preimage over GF(2)</span></label>
+      </div>
       <div id="options-jwt" class="options hidden">
         <label class="checkbox"><input id="jwt-no-secrets" type="checkbox">
           <span data-t="web_jwt_no_secrets">do not try the embedded password list as the HMAC secret</span></label>

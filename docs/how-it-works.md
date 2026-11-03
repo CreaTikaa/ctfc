@@ -1841,3 +1841,58 @@ re-plumbing progress and cancellation through `Budget`. That is not a trade
 worth making here: a search big enough to need real parallelism is a search that
 belongs in hashcat, which `ctfc hash` already hands over to. The measurements
 are in `docs/ideas.md` so the question does not have to be reopened from scratch.
+
+## 29. One web tab for every file format (`ctfc/web/formats.py`)
+
+The terminal has a command per format - `ctfc archive`, `ctfc msg`, `ctfc pe`,
+`ctfc winartifact` - because that is how a terminal works: you already know what
+you have, and you type it. The browser starts from the opposite place. A file has
+been dropped into the input box and the question is "what *is* this, and what
+does it say?".
+
+So the page gets **one tab**, and `ctfc/web/formats.py` answers it: it sniffs
+which reader applies, runs it, and turns whatever report comes back into one
+display-agnostic shape:
+
+```json
+{"reader": "archive", "label": "...", "command": "ctfc archive", "sniffed": true,
+ "sections": [{"kind": "facts|table|text", "title": "...", "...": "..."}],
+ "flags": [], "notes": [], "commands": []}
+```
+
+That shape is the whole design. One JSON contract and one renderer in `app.js`
+means a reader added next month appears in the browser by writing a twenty-line
+adapter here - not by writing another tab, another option panel and another
+renderer. Sixteen readers go through it today: archive, zip, office, msg, msi,
+pdf, stego, pe, exe, winartifact, evtx, hive, sqlite, pcap, repair, time.
+
+Two things had to be got right.
+
+**Sniffing, when several formats share a container.** A `.doc`, a `.msg`, an
+`.msi` and a jump list are all OLE2 compound files; a `.docx`, a `.jar`, an
+`.apk` and a plain archive are all ZIPs. The registry's order matters less than
+each reader's own test: `office` claims a compound file only when the other three
+do not, and a ZIP only when it holds `word/`, `xl/` or `ppt/` parts - so a JAR
+goes to `ctfc exe` (which reads its constant pool, the useful answer) and an
+unknown ZIP falls through to `ctfc zip`.
+
+**Two readers are deliberately not sniffed.** `repair` is for a file that is
+broken, which by definition looks like nothing in particular, and `time` reads
+four or eight raw bytes, which could be anything. They are in the dropdown and
+reachable only by asking for them - the dropdown is not a fallback for a bad
+guess, it is how you say "I know what this is".
+
+The same commit added a **Classical** tab (Caesar, affine, Atbash, Vigenère,
+Beaufort, rail fence, solved blind or with a key you have) and a **CRC32** tab,
+which takes a checksum rather than a file and marks each candidate as the content
+or as a maybe, exactly as the terminal does.
+
+### What the error handling lost, and gained
+
+`web/app.py` used to carry a stack of nine `@app.errorhandler` lines, one per
+format reader, so that "this is not a PDF" came back as a clean 400 instead of a
+500. Now that every reader's error inherits `FormatError`, that stack is **one
+handler** - and it covers the readers added since, which the stack by definition
+did not. Two errors stayed named (`PrngError`, `HashExtError`): they mean "these
+numbers cannot be what you said they were", not "this file is not that format",
+and folding them in would have been tidier than it is true.

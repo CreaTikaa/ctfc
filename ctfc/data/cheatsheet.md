@@ -60,6 +60,9 @@ mirror the encryptor, do not guess.
 
 Not sure? `ctfc tools <file>` names the external tool that fits, with the command.
 
+In the browser (`ctfc serve`)? The **Files** tab reads every format this page lists -
+drop the file in and it picks the reader; the dropdown forces one.
+
 Files still arriving? `ctfc watch <folder>` triages each new one as it lands.
 Solved it? `ctfc report` writes it up, `ctfc replay` writes the script that re-does it.
 

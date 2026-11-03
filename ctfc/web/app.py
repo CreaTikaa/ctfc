@@ -38,6 +38,7 @@ from ctfc.core.auto import auto_decode
 from ctfc.core.budget import Budget
 from ctfc.core.cyberchef import deep_link
 from ctfc.core.detect import detect
+from ctfc.core.errors import FormatError
 from ctfc.core.flags import build_flagset
 from ctfc.core.hashes import identify as identify_hash
 from ctfc.core.inputs import InputError, decode_base64, decode_hex, parse_input
@@ -50,6 +51,7 @@ from ctfc.core.symmetric import solve_symmetric
 from ctfc.core.types import Candidate, Input
 from ctfc.core.xor import guess_key_lengths, solve_xor, xor_inputs
 from ctfc.strings import EN, t
+from ctfc.web import formats
 from ctfc.web.jobs import JobManager
 
 STATIC_DIR = Path(__file__).parent / "static"
@@ -277,6 +279,34 @@ def create_app(config: Config | None = None) -> Flask:
 
             return work_auto, budget
 
+        if kind == "classical":
+            from ctfc.core import classical
+
+            inp = input_from_payload(payload, decode_bare=False)
+            cipher = str(options.get("cipher") or "").strip() or None
+            key = str(options.get("key") or "").strip()
+            params = classical.parse_key(cipher, key) if cipher and key else None
+            budget = Budget(max_attempts=20_000, max_seconds=float(options.get("seconds") or 20))
+
+            def work_classical(budget: Budget) -> dict:
+                candidates = classical.solve_classical(
+                    inp.data,
+                    flagset=flagset,
+                    cipher=cipher,
+                    params=params,
+                    budget=budget,
+                    top_n=config.top_n,
+                )
+                stats = classical.analyse(inp.data)
+                return {
+                    "input": input_summary(inp),
+                    "budget": budget.summary(),
+                    "notes": classical.stats_notes(stats),
+                    "candidates": [candidate.to_dict() for candidate in candidates],
+                }
+
+            return work_classical, budget
+
         if kind == "xor":
             inp = input_from_payload(payload)
             key = option_bytes(options, "key")
@@ -487,6 +517,71 @@ def create_app(config: Config | None = None) -> Flask:
         options = payload.get("options") or {}
         report = identify_hash(value, try_passwords=not options.get("no_passwords"))
         return jsonify(report.to_dict())
+
+    @app.get("/api/file/readers")
+    def api_file_readers():
+        """The format readers, for the dropdown of the Files tab."""
+        return jsonify({"readers": formats.catalogue()})
+
+    @app.post("/api/file")
+    def api_file():
+        """Every file-format reader, behind one endpoint.
+
+        The terminal has a command per format because you already know what you
+        have; the page starts from "something was dropped in the box". So this
+        sniffs - or takes the reader the user picked - and answers in the one
+        display shape `ctfc/web/formats.py` defines.
+        """
+        payload = read_payload()
+        inp = input_from_payload(payload, decode_bare=False)
+        options = payload.get("options") or {}
+        reader = str(options.get("reader") or "").strip()
+        answer = formats.analyse(inp.data, reader, flagset)
+        answer["input"] = input_summary(inp)
+        record(payload, answer["reader"], inp, answer)
+        return jsonify(answer)
+
+    @app.post("/api/crc")
+    def api_crc():
+        """CRC32 run backwards: what content could have produced this checksum."""
+        from ctfc.core import crc32
+
+        payload = read_payload()
+        options = payload.get("options") or {}
+        value = str(payload.get("input", "")).strip().lower().removeprefix("0x")
+        if not value:
+            raise InputError(t("web_empty_input"))
+        try:
+            target = int(value, 16) if len(value) == 8 else int(value, 0)
+        except ValueError as exc:
+            raise InputError(
+                f"{value!r} is not a CRC32: give 8 hex digits or a decimal number"
+            ) from exc
+        if not 0 <= target <= 0xFFFFFFFF:
+            raise InputError(f"{target} does not fit in 32 bits: a CRC32 is 4 bytes")
+        length = str(options.get("length") or "").strip()
+        pattern = str(options.get("pattern") or "").strip()
+        budget = Budget(max_attempts=200_000_000, max_seconds=float(options.get("seconds") or 20))
+        if not length and not pattern:
+            report = crc32.recover_any_length(target, budget=budget)
+        else:
+            size = int(length) if length else len(pattern)
+            report = crc32.recover(
+                target,
+                size,
+                pattern.encode() if pattern else None,
+                budget,
+                solve=bool(options.get("solve")),
+            )
+        answer = report.to_dict()
+        record(payload, "crc", None, answer)
+        return jsonify(answer)
+
+    @app.post("/api/classical")
+    def api_classical():
+        """Classical ciphers: Caesar, affine, Atbash, Vigenere, Beaufort, rail fence."""
+        work, budget = prepare("classical")
+        return jsonify(work(budget))
 
     @app.post("/api/jwt")
     def api_jwt():
@@ -800,27 +895,20 @@ def create_app(config: Config | None = None) -> Flask:
     def bad_input(error: InputError):
         return jsonify({"error": str(error)}), 400
 
-    # The format readers each raise their own error for "this is not that kind of
-    # file". They all mean the same thing to the page: a 400 with the reason.
-    from ctfc.core.cfb import CfbError
-    from ctfc.core.gitrepo import GitError
+    # Every format reader raises its own error for "this is not that kind of
+    # file", and they all inherit `FormatError` - so one handler covers the
+    # eighteen readers that exist and the ones added later, which is the whole
+    # reason that base class exists. The two below are not format readers: they
+    # mean "these numbers cannot be what you said they were", so they are named
+    # rather than folded in.
+    from ctfc.core.classical import ClassicalError
     from ctfc.core.hashext import HashExtError
-    from ctfc.core.jwt import JwtError
-    from ctfc.core.office import OfficeError
-    from ctfc.core.pdf import PdfError
     from ctfc.core.prng import PrngError
-    from ctfc.core.sqlitedb import SqliteError
-    from ctfc.core.stego import StegoError
 
-    @app.errorhandler(CfbError)
-    @app.errorhandler(GitError)
+    @app.errorhandler(FormatError)
+    @app.errorhandler(ClassicalError)
     @app.errorhandler(HashExtError)
-    @app.errorhandler(JwtError)
-    @app.errorhandler(OfficeError)
-    @app.errorhandler(PdfError)
     @app.errorhandler(PrngError)
-    @app.errorhandler(SqliteError)
-    @app.errorhandler(StegoError)
     def bad_format(error: Exception):
         return jsonify({"error": str(error)}), 400
 

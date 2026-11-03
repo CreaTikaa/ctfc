@@ -35,6 +35,9 @@ const TOOLS = {
   jwt: "sync",
   prng: "sync",
   extend: "sync",
+  file: "sync",
+  crc: "sync",
+  classical: "job",
 };
 
 // API route of a tab, when it is not /api/<tab>.
@@ -43,6 +46,7 @@ const API_PATH = { pipeline: "/api/recipe" };
 // Tabs that have their own options panel (#options-<tab>).
 const OPTION_PANELS = [
   "xor", "sym", "rsa", "hash", "pipeline", "keys", "lens", "radius", "volatility", "jwt", "prng", "extend",
+  "file", "classical", "crc",
 ];
 
 // Tabs that are reference pages, not tools: opening them shows the page and
@@ -50,7 +54,7 @@ const OPTION_PANELS = [
 const REFERENCE_TABS = ["cheatsheet", "volatility"];
 
 // Tabs after which the "Suggested tools" strip is computed (data tabs, not scripts).
-const SUGGEST_TABS = ["auto", "detect", "xor", "sym", "hash"];
+const SUGGEST_TABS = ["auto", "detect", "xor", "sym", "hash", "file"];
 
 // "Add a step" buttons of the Pipeline tab. `args` is a template the user edits;
 // `ask` prompts for one argument (the XOR key) before adding the step, with the
@@ -195,6 +199,24 @@ function currentOptions() {
       secret_length: $("extend-length").value,
       algo: $("extend-algo").value,
       secret: $("extend-secret").value,
+    };
+  }
+  if (state.tab === "file") {
+    return { reader: $("file-reader").value };
+  }
+  if (state.tab === "classical") {
+    return {
+      cipher: $("classical-cipher").value,
+      key: $("classical-key").value,
+      seconds: $("classical-seconds").value,
+    };
+  }
+  if (state.tab === "crc") {
+    return {
+      length: $("crc-length").value,
+      pattern: $("crc-pattern").value,
+      seconds: $("crc-seconds").value,
+      solve: $("crc-solve").checked,
     };
   }
   if (state.tab === "prng") {
@@ -357,6 +379,16 @@ function showAnswer(tab, answer) {
     setStatus("");
     return;
   }
+  if (tab === "file") {
+    renderFile(answer);
+    setStatus("");
+    return;
+  }
+  if (tab === "crc") {
+    renderCrc(answer);
+    setStatus("");
+    return;
+  }
   if (tab === "rsa") {
     renderRsa(answer);
     setStatus(answer.budget || "");
@@ -477,6 +509,16 @@ function outputView(dataHex, dataText) {
     draw();
   });
   return { output, button, readable, currentText: () => (showingHex ? dataHex : dataText) };
+}
+
+// Put a block of text back into the input box. The sections of the Files tab
+// and the CRC candidates are plain text, not candidates with both views.
+function useTextAsInput(text) {
+  clearFile();
+  $("input-text").value = text;
+  $("format").value = "text";
+  schedulePreview();
+  $("input-text").focus();
 }
 
 // Put a result back into the input box, to keep working on it.
@@ -1504,6 +1546,17 @@ async function init() {
   }
   $("tab-help").textContent = T("web_auto_help");
 
+  // Files tab: the reader dropdown is filled from the server, so a reader added
+  // to ctfc/web/formats.py appears here with no change to this file.
+  fetch("/api/file/readers").then((r) => r.json()).then((answer) => {
+    const select = $("file-reader");
+    for (const reader of answer.readers || []) {
+      const option = el("option", "", reader.label + "  (" + reader.command + ")");
+      option.value = reader.name;
+      select.append(option);
+    }
+  }).catch(() => {});
+
   fetch("/api/health").then((r) => r.json()).then((health) => {
     $("version").textContent = "v" + health.version;
     $("offline-badge").classList.toggle("hidden", !health.offline);
@@ -1602,3 +1655,106 @@ async function init() {
 }
 
 init();
+
+// --------------------------------------------------------------------- Files
+// One renderer for every file-format reader. The server (ctfc/web/formats.py)
+// turns each report into the same shape - a list of sections, each a facts
+// table, a table or a block of text - so a reader added later shows up here
+// without a line of JavaScript.
+function renderFile(answer) {
+  const results = $("results");
+  const head = el("div", "file-head");
+  head.append(el("strong", "", answer.label || answer.reader));
+  head.append(
+    el("span", "dim", "  " + T("web_file_read_by") + " " + (answer.command || answer.reader)
+      + (answer.sniffed ? "" : " (forced)")),
+  );
+  results.append(head);
+
+  for (const flag of answer.flags || []) {
+    const line = el("div", "flag");
+    line.append(el("strong", "", "flag: "), el("span", "", flag));
+    line.append(copyButton(T("web_copy"), () => flag));
+    results.append(line);
+  }
+  for (const section of answer.sections || []) renderSection(section);
+  if (answer.notes && answer.notes.length) renderNotes(answer.notes);
+  for (const command of answer.commands || []) {
+    const line = el("div", "command");
+    line.append(el("code", "", command));
+    line.append(copyButton(T("web_copy"), () => command));
+    results.append(line);
+  }
+}
+
+function renderSection(section) {
+  const results = $("results");
+  if (section.title) results.append(el("h3", "", section.title));
+  if (section.kind === "facts") {
+    const facts = el("table", "facts");
+    for (const [name, value] of section.rows) {
+      const row = el("tr");
+      row.append(el("td", "dim", name), el("td", "", value));
+      facts.append(row);
+    }
+    results.append(facts);
+    return;
+  }
+  if (section.kind === "table") {
+    if (!section.rows.length) return;
+    const node = el("table", "grid");
+    const header = el("tr");
+    for (const column of section.columns) header.append(el("th", "", column));
+    node.append(header);
+    for (const cells of section.rows) {
+      const row = el("tr");
+      for (const cell of cells) row.append(el("td", "", cell));
+      node.append(row);
+    }
+    results.append(node);
+    if (section.total > section.rows.length) {
+      results.append(el("div", "dim", T("web_file_total")
+        .replace("{shown}", section.rows.length).replace("{total}", section.total)));
+    }
+    return;
+  }
+  // "text": a block, with the button that makes it the next input.
+  const block = el("pre", section.code ? "code" : "", section.text);
+  results.append(block);
+  const buttons = el("div", "row");
+  buttons.append(copyButton(T("web_copy"), () => section.text));
+  const next = el("button", "small", T("web_next_input"));
+  next.addEventListener("click", () => useTextAsInput(section.text));
+  buttons.append(next);
+  results.append(buttons);
+}
+
+// --------------------------------------------------------------------- CRC32
+function renderCrc(report) {
+  const results = $("results");
+  results.append(el("h3", "", "CRC32 " + report.target
+    + (report.length ? " of " + report.length + " byte(s)" : "")));
+  if (report.results && report.results.length) {
+    const node = el("table", "grid");
+    const header = el("tr");
+    for (const column of ["content", "hex", T("web_crc_found_by"), "why"]) {
+      header.append(el("th", "", column));
+    }
+    node.append(header);
+    for (const result of report.results) {
+      const row = el("tr");
+      const first = el("td", result.exact ? "good" : "maybe", result.text);
+      row.append(first, el("td", "", result.hex), el("td", "", result.method), el("td", "", result.note));
+      node.append(row);
+    }
+    results.append(node);
+    const best = report.results[0];
+    const buttons = el("div", "row");
+    buttons.append(copyButton(T("web_copy"), () => best.text));
+    const next = el("button", "small", T("web_next_input"));
+    next.addEventListener("click", () => useTextAsInput(best.text));
+    buttons.append(next);
+    results.append(buttons);
+  }
+  if (report.notes && report.notes.length) renderNotes(report.notes);
+}

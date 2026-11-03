@@ -399,6 +399,28 @@ EN: dict[str, str] = {
     "opt_prng_gen": "which generator to assume (default: auto, from how many values there are)",
     "opt_prng_forward": "how many future values to print (default: 10)",
     "opt_prng_backward": "how many values from before the capture to print (default: 10)",
+    "web_tab_file": "Files",
+    "web_tab_crc": "CRC32",
+    "web_tab_classical": "Classical",
+    "web_file_reader": "reader (auto-detected from the file)",
+    "web_file_reader_auto": "detect it",
+    "web_file_read_by": "read by",
+    "web_file_total": "{shown} of {total} shown",
+    "web_file_help": (
+        "drop a file on the left; the reader is chosen from what it is. The dropdown "
+        "forces one - `repair` and `time` are only reachable that way, because a broken "
+        "file and eight raw bytes look like nothing in particular."
+    ),
+    "web_crc_length": "length in bytes (a ZIP's listing has it; empty = try every length)",
+    "web_crc_pattern": "pattern, ? for the unknown characters (e.g. CYBN{????})",
+    "web_crc_solve": (
+        "also solve a preimage over GF(2) (a file with that checksum, not the original)"
+    ),
+    "web_crc_exact": "this is the content",
+    "web_crc_maybe": "a maybe: it may also be a collision",
+    "web_crc_found_by": "found by",
+    "web_classical_cipher": "cipher (empty = try them all)",
+    "web_classical_key": "key, when you have it (caesar 3, affine 5,8, vigenere/beaufort lemon)",
     "web_tab_prng": "PRNG",
     "web_prng_help": "Paste the numbers a generator handed out (one per line, or a list). "
     "624 consecutive full 32-bit outputs clone Python's random / MT19937 exactly - past and "

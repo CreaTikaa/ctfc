@@ -115,10 +115,13 @@ def test_hastad_says_when_the_root_is_not_exact():
     """Padding breaks the attack; the report must not pretend otherwise."""
     message = bytes_to_long(b"padded message, not a bare integer")
     messages = []
-    for _ in range(3):
+    for offset in range(1, 4):
         n = getPrime(256) * getPrime(256)
-        # Encrypt *different* messages: the CRT value is then not a cube.
-        messages.append(Message(n, 3, long_to_bytes(pow(message + n % 7, 3, n))))
+        # Encrypt *different* messages: the CRT value is then not a cube. The
+        # offsets have to be distinct by construction - deriving them from the
+        # modulus (`n % 7`) made them collide a few runs in a hundred, and the
+        # test then failed for the one reason it is not about.
+        messages.append(Message(n, 3, long_to_bytes(pow(message + offset, 3, n))))
     candidate = hastad(messages)
     assert candidate.params["exact_root"] is False
     assert any("not exact" in reason for reason in candidate.reasons)

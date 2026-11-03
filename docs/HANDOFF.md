@@ -702,6 +702,21 @@ tool that is not ours, wherever one exists on this machine:
   index reads the end of the file instead of failing), and `NotImplementedError` from `zipfile`,
   which is how it reports an unknown compression method rather than as `BadZipFile`.
 
+### The web UI reads every format too (same session)
+
+He asked: *"Il faut bien que tout ça soit faisable depuis la web ui aussi"* - and it was not.
+The page had fifteen tabs and **none** of the file-format commands, new or old. Rather than add
+one tab per command, `ctfc/web/formats.py` gives the page **one Files tab**: it sniffs the
+reader, runs it, and returns every report in one shape (`sections` of kind facts/table/text,
+plus flags, notes and commands), which one renderer in `app.js` draws. Sixteen readers go
+through it - archive, zip, office, msg, msi, pdf, stego, pe, exe, winartifact, evtx, hive,
+sqlite, pcap, repair, time - and adding the next one means writing an adapter, not a tab.
+
+Two more tabs came with it: **Classical** (the cipher family was CLI-only) and **CRC32**.
+`repair` and `time` are in the dropdown but deliberately not sniffed: a broken file and eight
+raw bytes look like nothing in particular. The whole thing was checked in a real headless
+Chromium, not only through the test client.
+
 ### What is left
 
 `docs/ideas.md` section 1, and only that: three readers that stop short until there is a real

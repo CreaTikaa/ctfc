@@ -287,3 +287,28 @@ button.vol-engine.active, button.vol-os.active {
   color: #000;
   border-color: var(--accent);
 }
+
+/* --- the Files tab: one generic renderer, so a few shared classes --------- */
+.file-head { margin-bottom: 0.6rem; }
+table.grid { border-collapse: collapse; margin-bottom: 0.8rem; width: 100%; }
+table.grid th {
+  text-align: left;
+  padding: 0.2rem 0.8rem 0.2rem 0;
+  color: var(--accent);
+  border-bottom: 1px solid var(--border);
+  font-weight: normal;
+}
+table.grid td {
+  padding: 0.15rem 0.8rem 0.15rem 0;
+  vertical-align: top;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  word-break: break-word;
+}
+table.grid td.good { color: var(--good); }
+table.grid td.maybe { color: var(--mid); }
+.flag { margin: 0.2rem 0; color: var(--good); }
+.flag button { margin-left: 0.6rem; }
+.command { margin: 0.2rem 0; }
+.command code { color: var(--good); }
+.command button { margin-left: 0.6rem; }
+.row { display: flex; gap: 0.5rem; margin-bottom: 0.8rem; }
