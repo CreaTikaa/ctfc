@@ -732,6 +732,10 @@ ctfc auto tests/fixtures/longtail_base45.txt       # RFC 9285 base45 -> the flag
 ctfc auto tests/fixtures/longtail_morse.txt        # Morse, Bacon, A1Z26, tap, Polybius
 ctfc auto tests/fixtures/longtail_uu.txt           # a uuencoded block
 ctfc classical tests/fixtures/classical_beaufort.txt   # Beaufort, key found blind
+ctfc watch /tmp/objs --once                        # triage a folder of extracted files
+ctfc watch /tmp/objs                               # ... and keep watching it
+ctfc session new demo; ctfc auto tests/fixtures/layers_b64_zlib_hex.txt
+ctfc replay --out /tmp/solve.py && python3 /tmp/solve.py   # the solve, re-run
 ctfc git <a folder with a .git>                    # the secret that was committed then removed
 ctfc jwt <token> --show-code                       # alg=none / weak HMAC secret
 ctfc time 133476575820000000                       # Windows FILETIME

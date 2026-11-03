@@ -1538,3 +1538,28 @@ def print_dex(console: Console, report) -> None:
     for line in report.notable:
         console.print(f"[yellow]![/] {safe(line, 140)}")
     print_notes(console, report.notes)
+
+
+def print_watch_header(console: Console, folder: str, found: int, once: bool) -> None:
+    """`ctfc watch`: say what is being watched before the lines start."""
+    what = "triaged" if once else "watching"
+    console.print(
+        f"[bold]{what} {escape(folder)}[/]"
+        + (f" - {found} file(s) already there" if found else "")
+        + ("" if once else " - Ctrl-C to stop")
+    )
+
+
+def print_watch_finding(console: Console, finding) -> None:
+    """One line per file: what it is, and the flag if there is one."""
+    name = safe(str(finding.path), 60)
+    if finding.flags:
+        console.print(f"[bold green]*[/] {name}  {safe(finding.summary, 160)}")
+        for flag in finding.flags:
+            console.print(f"    [bold green]flag:[/] {escape(flag)}")
+    elif finding.skipped:
+        console.print(f"[dim]-[/] {name}  [dim]{safe(finding.summary, 120)}[/]")
+    else:
+        console.print(f"[cyan]*[/] {name}  {safe(finding.summary, 160)}")
+    if finding.next_command:
+        console.print(f"    [green]$[/] {escape(finding.next_command[:200])}")

@@ -1776,3 +1776,68 @@ found by it getting the answer wrong first:
   **majority letter at each position** across the repeats, which matters:
   truncating to the first period inherits whatever stray letter a short text put
   in that copy, and gives `lemoe`.
+
+## 28. Workflow: watching a folder, and replaying a session
+
+Two small things from `docs/ideas.md` 3.4, plus the answer to the third.
+
+### `ctfc watch <folder>`
+
+For a challenge that drips files out: a capture is extracted, then the files it
+carried, then the archive one of those turns out to be - and each time the
+question is the same. `watch` asks it automatically: a `detect` fingerprint and
+a short `auto` run per file, one line of output each, plus the flag when there
+is one.
+
+Two details decide whether this is usable rather than merely clever.
+
+**A file being written is not a file yet.** A download or an extraction appears
+at size 0 and grows; triaging it then gives a confident "this is not a ZIP"
+about the first 4 KB of one. So a file is only read once its size and mtime have
+*stopped changing* between two passes - which is why `watch` reports a new file
+one pass after it appears. Files that were already in the folder when it started
+are not being written, so `catch_up()` triages them immediately instead of
+making the user wait for theatre.
+
+**The budget has to be small.** This runs while the user is doing something
+else, so each file gets two seconds and 400 attempts, not the thirty seconds a
+deliberate `ctfc auto` would take. A file that deserves more says so in its
+line, with the command to run on it.
+
+### `ctfc replay`
+
+A session already records every command and the standalone snippet that
+reproduces each result. `ctfc report` renders that as a write-up to read;
+`ctfc replay` renders it as **a program to run**.
+
+A write-up proves you solved it; a script proves it *stays* solved - which is
+what you want when the same ciphertext comes back in the next round with a
+different key, or when a teammate asks how.
+
+The blocks are simply concatenated in order, each preceded by the command that
+produced it, the input it ran on and the reasons it scored. That works because
+every snippet ctfc generates is self-contained: it defines its own `data` and
+its own helpers, so the file runs top to bottom with no editing. Re-defining a
+helper is legal in Python and each block uses its own, so the duplication is
+harmless rather than clever. The test proves the point by **executing the
+generated file** and checking the flags come out of it.
+
+### Parallel brute force: measured, and not built
+
+`docs/ideas.md` said to measure before parallelising anything. Measured, on this
+machine:
+
+| search | time |
+|---|---|
+| `solve_xor` on 289 bytes, including the hashed-key fallback | 0.4 s |
+| key hunt over a 64 KB memory dump | 0.04 s |
+| `ctfc crc` worst case (every searchable length and alphabet) | 4.5 s |
+| `ctfc sym --passwords`: the layout solver over the 10000-password list | 8.3 s |
+
+Nothing is felt as slow. The slowest is the password list, and it is slow for
+one honest reason - PBKDF2 is *meant* to be - so the gain from spreading it over
+four cores would be 8 seconds down to 2, bought with process pools, pickling and
+re-plumbing progress and cancellation through `Budget`. That is not a trade
+worth making here: a search big enough to need real parallelism is a search that
+belongs in hashcat, which `ctfc hash` already hands over to. The measurements
+are in `docs/ideas.md` so the question does not have to be reopened from scratch.

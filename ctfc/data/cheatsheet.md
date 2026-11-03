@@ -60,6 +60,9 @@ mirror the encryptor, do not guess.
 
 Not sure? `ctfc tools <file>` names the external tool that fits, with the command.
 
+Files still arriving? `ctfc watch <folder>` triages each new one as it lands.
+Solved it? `ctfc report` writes it up, `ctfc replay` writes the script that re-does it.
+
 ## 3. You have a key, an IV, a blob... but not the layout
 
 - `ctfc sym <ct> --key K` - modes, IV places (given, prefix, zeros, = key), paddings

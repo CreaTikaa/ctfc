@@ -277,6 +277,17 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--category", help=t("opt_session_category"))
     p.add_argument("--description", help=t("opt_session_description"))
 
+    p = add("replay")
+    p.add_argument("name", nargs="?", help=t("arg_session"))
+    p.add_argument("--out", help=t("opt_replay_out"))
+    p.add_argument("--all", action="store_true", help=t("opt_replay_all"))
+
+    p = add("watch")
+    p.add_argument("folder", help=t("arg_watch_folder"))
+    p.add_argument("--once", action="store_true", help=t("opt_watch_once"))
+    p.add_argument("--interval", type=float, default=1.0, help=t("opt_watch_interval"))
+    p.add_argument("--no-recursive", action="store_true", help=t("opt_watch_no_recursive"))
+
     p = add("report")
     p.add_argument("name", nargs="?", help=t("arg_session"))
     p.add_argument("--lang", choices=["en", "fr"], default="en", help=t("opt_report_lang"))
@@ -491,6 +502,52 @@ def cmd_report(args: argparse.Namespace, config: Config, console: Console) -> in
         print(t("report_written", path=args.out), file=sys.stderr)
     else:
         sys.stdout.write(text)
+    return 0
+
+
+def cmd_replay(args: argparse.Namespace, config: Config, console: Console) -> int:
+    """Turn a session into one script that re-does the whole solve."""
+    from ctfc.core.replay import build_script
+
+    base = sessions_dir(config)
+    name = args.name or sessions.current_session(base)
+    if not name:
+        raise sessions.SessionError(t("session_needs_name"))
+    session = sessions.Session.open(name, base, create=False)
+    text = build_script(session, include_empty=args.all)
+    if args.out:
+        Path(args.out).write_text(text, encoding="utf-8")
+        print(t("script_written", path=args.out), file=sys.stderr)
+    else:
+        sys.stdout.write(text)
+    return 0
+
+
+def cmd_watch(args: argparse.Namespace, config: Config, console: Console) -> int:
+    """Watch a folder and triage whatever lands in it."""
+    from ctfc.core.watch import Watcher
+
+    watcher = Watcher(
+        Path(args.folder), flagset=flagset_from(config), recursive=not args.no_recursive
+    )
+    findings = watcher.catch_up()
+    if not args.json:
+        render.print_watch_header(console, args.folder, len(findings), args.once)
+    collected = list(findings)
+    if not args.json:
+        for finding in findings:
+            render.print_watch_finding(console, finding)
+    if not args.once:
+        try:
+            for finding in watcher.run(seconds=args.interval):
+                collected.append(finding)
+                if not args.json:
+                    render.print_watch_finding(console, finding)
+        except KeyboardInterrupt:
+            if not args.json:
+                console.print("[dim]stopped[/]")
+    if args.json:
+        print(json.dumps([finding.to_dict() for finding in collected], indent=2))
     return 0
 
 
@@ -1691,6 +1748,8 @@ def main(argv: list[str] | None = None) -> int:
         "keys": cmd_keys,
         "session": cmd_session,
         "report": cmd_report,
+        "replay": cmd_replay,
+        "watch": cmd_watch,
         "cheatsheet": cmd_cheatsheet,
         "repair": cmd_repair,
         "rsa": cmd_rsa,

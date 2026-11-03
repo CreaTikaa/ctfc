@@ -238,6 +238,29 @@ EN: dict[str, str] = {
     "arg_hive": "the hive file (SAM, SYSTEM, SOFTWARE, NTUSER.DAT) - a path, or -",
     "opt_hive_key": "read one key by path instead of the usual report",
     "opt_hive_list": "print every key path in the hive",
+    "cmd_watch": "watch a folder and triage whatever lands in it",
+    "cmd_watch_ex": (
+        "examples: ctfc watch ./extracted  |  ctfc watch ./out --once  |  "
+        "ctfc watch . --interval 2 --json. "
+        "For a challenge that drips files out: every new file gets a fingerprint and a "
+        "short auto run, and only the answer is printed. A file is read one pass after "
+        "it appears, once its size has stopped changing - triaging half a file is worse "
+        "than not triaging it. Stop it with Ctrl-C."
+    ),
+    "arg_watch_folder": "the folder to watch",
+    "opt_watch_once": "triage what is there now and exit, instead of watching",
+    "opt_watch_interval": "seconds between passes (default 1)",
+    "opt_watch_no_recursive": "do not look in sub-folders",
+    "cmd_replay": "turn a session into one script that re-does the whole solve",
+    "cmd_replay_ex": (
+        "examples: ctfc replay  |  ctfc replay my-challenge --out solve.py. "
+        "A write-up proves you solved it; a script proves it stays solved. Every block "
+        "is the reproduce snippet of one step, in order, with the command that produced "
+        "it quoted above - and the file runs top to bottom with no editing."
+    ),
+    "opt_replay_out": "write the script to this file instead of standard output",
+    "script_written": "replay script written to {path}",
+    "opt_replay_all": "include the steps that produced no snippet, as comments",
     "cmd_exe": "triage an ELF, a Java class or JAR, or an Android DEX",
     "cmd_exe_ex": (
         "examples: ctfc exe ./challenge  |  ctfc exe app.jar  |  ctfc exe classes.dex  |  "
