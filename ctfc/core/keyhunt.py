@@ -45,6 +45,9 @@ SCHEDULE_SCAN_LIMIT = 2 * 1024**3  # bytes scanned for key schedules (~15 s per 
 FOUND = 0.9  # a decryption this convincing ends the hunt
 PER_KEY_SECONDS = 2.0  # time slice of the solver per candidate key
 MAX_ENTROPY_WINDOWS = 300
+# The second pass: isolated runs of random-looking bytes, at any offset. Only
+# on inputs small enough that sliding a window one byte at a time is cheap.
+FINE_SCAN_LIMIT = 256 * 1024
 NEAR_CONSTANT = 4096  # an ASCII key this close after a crypto constant is ranked higher
 
 # How much each kind of evidence is trusted, i.e. the order keys are tried in.
@@ -382,15 +385,22 @@ def find_ascii_keys(data: bytes) -> list[KeyCandidate]:
     return found
 
 
-def find_entropy_windows(data: bytes, limit: int = MAX_ENTROPY_WINDOWS) -> list[KeyCandidate]:
-    """16- and 32-byte windows (16-aligned) that look random: almost no repeated byte.
+def find_entropy_windows(
+    data: bytes, limit: int = MAX_ENTROPY_WINDOWS, step: int = 16
+) -> list[KeyCandidate]:
+    """16- and 32-byte windows that look random: almost no repeated byte.
 
     A random 32-byte key has ~30 distinct bytes, text or code far fewer.
     Compressed or encrypted data also looks random, hence the low strength.
+
+    `step` is the alignment. 16 is the default because a key that a program
+    allocated is aligned, and it keeps the candidate count down. A key that was
+    merely *written into a file* sits wherever the writer left it, so `hunt`
+    comes back with a finer step when the aligned pass found nothing.
     """
     found = []
     for size, minimum in ((32, 28), (16, 15)):
-        for offset in range(0, len(data) - size + 1, 16):
+        for offset in range(0, len(data) - size + 1, step):
             window = data[offset : offset + size]
             if len(set(window)) < minimum:
                 continue
@@ -409,6 +419,97 @@ def find_entropy_windows(data: bytes, limit: int = MAX_ENTROPY_WINDOWS) -> list[
             if len(found) >= limit:
                 return found
     return found
+
+
+def find_entropy_runs(data: bytes, limit: int = MAX_ENTROPY_WINDOWS) -> list[KeyCandidate]:
+    """Isolated stretches of random-looking bytes, at *any* offset.
+
+    `find_entropy_windows` walks a 16-byte grid, which is right for a key a
+    program allocated and wrong for a key someone wrote into a file at
+    whatever offset the writer happened to be at. Walking the grid one byte at
+    a time instead would produce thirty near-identical windows per key and hit
+    the candidate cap long before reaching the interesting part of a dump.
+
+    So this looks for the *shape* a key has in a file: a short run of
+    high-entropy bytes surrounded by things that are not - strings, zeroes,
+    structures. Each run yields the few readings that could be the key: the run
+    itself when it is key-sized, and its first and last 16/24/32 bytes.
+    """
+    size = 16
+    if len(data) < size:
+        return []
+    # Which 16-byte windows look random, one byte apart.
+    random_like = [
+        len(set(data[offset : offset + size])) >= 15
+        and sum(32 <= byte < 127 for byte in data[offset : offset + size]) <= 0.8 * size
+        for offset in range(len(data) - size + 1)
+    ]
+    found: list[KeyCandidate] = []
+    start = None
+    for offset, flag in enumerate([*random_like, False]):
+        if flag and start is None:
+            start = offset
+            continue
+        if flag or start is None:
+            continue
+        # A run of windows [start, offset) covers the bytes [start, offset+15].
+        # The edges are widened by RUN_MARGIN: the detector needs 15 distinct
+        # bytes in its window, so a window straddling the start of a key and
+        # the structured bytes before it falls just under the bar, and the run
+        # begins one to eight bytes *inside* the key. Measured on a dump whose
+        # key sat at offset 9997: the run started at 9998.
+        begin = max(0, start - RUN_MARGIN)
+        run = data[begin : min(len(data), offset - 1 + size + RUN_MARGIN)]
+        for key, where, why in _readings_of(run, begin):
+            found.append(KeyCandidate(key, where, "entropy", why, STRENGTH["entropy"]))
+            if len(found) >= limit:
+                return found
+        start = None
+    return found
+
+
+# A run this short is swept at every offset: the detector sees a key through a
+# 16-byte window, so the run it reports usually starts a few bytes early or
+# late, and "a few bytes off" means the key is missed entirely.
+SHORT_RUN = 160
+# How far outside a detected run the sweep still looks, in bytes.
+RUN_MARGIN = 8
+
+
+def _readings_of(run: bytes, offset: int) -> list[tuple[bytes, int, str]]:
+    """The key-sized readings of one high-entropy run.
+
+    For a short run, every position is read: the run's edges are fuzzy by a
+    byte or two because of how it was detected, and a key is only a key if it
+    starts on the right byte.
+    """
+    readings: list[tuple[bytes, int, str]] = []
+    length = len(run)
+    if length <= SHORT_RUN:
+        for size in (32, 16):
+            for start in range(0, length - size + 1):
+                readings.append(
+                    (
+                        run[start : start + size],
+                        offset + start,
+                        f"{size} bytes inside a {length}-byte run of random bytes",
+                    )
+                )
+        # AES-192 is rare enough that its readings are taken on a 4-byte grid
+        # rather than at every offset: all of these are tried one by one.
+        for start in range(0, length - 24 + 1, 4):
+            readings.append(
+                (run[start : start + 24], offset + start, f"24 bytes inside a {length}-byte run")
+            )
+        if length >= 48:
+            readings.append((run[:48], offset, "48 bytes: a key||iv pair, perhaps"))
+        return readings
+    readings.append((run[:32], offset, "the first 32 bytes of a long run of random bytes"))
+    readings.append((run[-32:], offset + length - 32, "the last 32 bytes of a long run"))
+    readings.append((run[:16], offset, "the first 16 bytes of a long run of random bytes"))
+    readings.append((run[-16:], offset + length - 16, "the last 16 bytes of a long run"))
+    readings.append((run[:48], offset, "48 bytes: a key||iv pair, perhaps"))
+    return readings
 
 
 def extract_candidates(data: bytes, include_windows: bool = True) -> list[KeyCandidate]:
@@ -473,9 +574,14 @@ def hunt(
         _hunt_luks(report, header, budget)
         return report
 
+    refined = False  # has the finer, unaligned window pass already run?
     ivs = [c.key for c in report.candidates if c.role == "iv"][:3]
     best: list[Candidate] = []
-    for candidate in report.candidates:
+    pool = list(report.candidates)
+    tried_keys: set[bytes] = set()
+    while pool:
+        candidate = pool.pop(0)
+        tried_keys.add(candidate.key)
         if candidate.role == "iv":
             continue
         if not budget.spend():
@@ -511,6 +617,26 @@ def hunt(
         if best and max(result.score for result in best) >= FOUND:
             report.winner = candidate
             break
+
+        if not pool and not report.winner:
+            # Second pass, finer. The windows above are 16-aligned, which is
+            # right for a key a program allocated and wrong for a key someone
+            # wrote into a file at an arbitrary offset. Only for small inputs,
+            # and only once: `refined` guards the re-entry.
+            if ciphertext is not None and not refined and len(dump) <= FINE_SCAN_LIMIT:
+                refined = True
+                extra = [
+                    candidate
+                    for candidate in find_entropy_runs(dump)
+                    if candidate.key not in tried_keys
+                ]
+                if extra:
+                    report.notes.append(
+                        f"nothing at a 16-byte alignment: {len(extra)} unaligned run(s) of "
+                        "random-looking bytes tried as well"
+                    )
+                    report.candidates += extra
+                    pool += extra
 
     best.sort(key=lambda result: -result.score)
     report.results = best[:top_n]

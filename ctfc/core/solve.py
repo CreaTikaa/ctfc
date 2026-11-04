@@ -171,145 +171,106 @@ def _describe(data: bytes) -> str:
     return "unknown"
 
 
-def solve(
+@dataclass
+class Visit:
+    """One piece, and everything the walk learned about it.
+
+    This is what `walk()` yields. `ctfc solve` turns a visit into flags and
+    leads; `ctfc workspace` turns the same visit into secrets, keys and
+    ciphertexts. Neither of them re-opens anything.
+    """
+
+    piece: Piece
+    reader: str = ""  # which reader claimed it, "" when none did
+    opened: readers.Opened | None = None  # what that reader found
+    carved: readers.Opened | None = None  # what the carver pulled out of it
+    candidates: list = field(default_factory=list)  # `auto` results, best first
+
+
+def walk(
     data: bytes,
     path: str = "file",
     flagset: FlagSet | None = None,
     budget: Budget | None = None,
     max_depth: int = MAX_DEPTH,
-    top_leads: int = 3,
-) -> SolveReport:
-    """Walk a file to the bottom and report the flag, or the best three leads."""
+    max_pieces: int = MAX_PIECES,
+    decode: bool = True,
+    notes: list[str] | None = None,
+):
+    """Yield every piece of a file, breadth first, under one shared budget.
+
+    One file is rarely one thing: it holds members, attachments, streams, an
+    overlay, a layer, or a payload behind a decoding chain. This generator is
+    the part that goes and gets them, and it is deliberately free of any
+    opinion about what matters - the caller decides that.
+
+    Stop early simply by not asking for the next piece: `for visit in walk(...):
+    ... break` leaves the rest unread, which is exactly what `solve` does when
+    it finds the flag.
+
+    `notes` is appended to (rather than returned) when the walk stops short, so
+    that a caller which breaks out early still has the reason.
+    """
     budget = budget or Budget(max_attempts=200_000, max_seconds=20)
-    report = SolveReport(path=path, size=len(data))
+    notes = notes if notes is not None else []
 
     root = Piece(name=safe_name(path, "input"), origin="the file itself", data=data, disk=path)
     queue: list[Piece] = [root]
     seen: set[bytes] = {hashlib.sha256(data).digest()}
-    leads: list[Lead] = []
+    count = 0
 
     while queue:
-        if report.pieces >= MAX_PIECES:
-            report.notes.append(
-                f"stopped after {MAX_PIECES} pieces: run the commands above on the one you want"
-            )
-            break
+        if count >= max_pieces:
+            notes.append(f"stopped after {max_pieces} pieces in {path}")
+            return
         if budget.stopped_reason or budget.elapsed() >= budget.max_seconds:
-            report.notes.append(
-                f"budget spent with {len(queue)} piece(s) still to look at "
-                "(raise --seconds, or run the command of a lead below)"
+            notes.append(
+                f"budget spent with {len(queue)} piece(s) of {path} still to look at "
+                "(raise --seconds)"
             )
-            break
+            return
 
         piece = queue.pop(0)
-        report.pieces += 1
-        reader_name = readers.sniff(piece.data)
-        if piece.depth == 0 and reader_name:
-            report.read_as = readers.READERS_BY_NAME[reader_name].label
-
-        # 1. Is the flag simply in there? This is the whole point of the walk.
-        hits = find_flags(piece.data, flagset)
-        for hit in hits:
-            if any(found.text == hit.text for found in report.flags):
-                continue
-            report.flags.append(
-                FlagFound(
-                    text=hit.text,
-                    where=piece.name,
-                    how=piece.origin,
-                    strength=hit.strength,
-                    trail=list(piece.trail),
-                )
-            )
-        if report.flags:
-            report.steps.append(f"{piece.name}: the flag is in there ({piece.origin})")
-            break
-
-        # 2. What does that reader hand back?
+        count += 1
+        visit = Visit(piece=piece, reader=readers.sniff(piece.data))
         # (child, how to put it on disk, what to run when it cannot be).
         children: list[tuple[readers.Child, str, str]] = []
-        if reader_name:
-            opened = readers.open_with(reader_name, piece.data, flagset, piece.disk)
-            if piece.depth == 0 and opened.detail:
-                report.read_as = f"{opened.label} ({opened.detail})"
-            budget.spend(10)
-            step = f"{piece.name}: read as {reader_name}"
-            if opened.detail:
-                step += f" - {opened.detail}"
-            if opened.error:
-                step += f" - could not be read: {opened.error}"
-            if opened.children:
-                step += f", {len(opened.children)} piece(s) came out"
-            report.steps.append(step)
-            for text in opened.flags:
-                if not any(found.text == text for found in report.flags):
-                    report.flags.append(
-                        FlagFound(
-                            text=text,
-                            where=piece.name,
-                            how=f"{reader_name} reader",
-                            strength=1.0,
-                            trail=[*piece.trail, opened.command.format(file=piece.disk)],
-                        )
-                    )
-            if report.flags:
-                break
-            # A reader that found nothing to hand over still has advice: an
-            # encrypted entry, a password-protected archive, a hash to crack.
-            for command in opened.commands[:2]:
-                leads.append(
-                    Lead(
-                        title=piece.name,
-                        # The reader's own note says why it suggests this; the
-                        # generic sentence is only the fallback.
-                        why=(opened.notes[0][:200] if opened.notes else "")
-                        or f"{reader_name}: what the reader suggests next",
-                        score=0.55,
-                        command=command.replace("{file}", piece.disk),
-                    )
-                )
-            children += [
-                (child, child.extract or opened.extract, opened.command)
-                for child in opened.children
-            ]
-        else:
-            report.steps.append(f"{piece.name}: {_describe(piece.data)}, no reader claims it")
 
-        # 3. The carver, for what is hidden after the end of a file.
-        if not reader_name or reader_name in CARVE_ALSO:
+        if visit.reader:
+            visit.opened = readers.open_with(visit.reader, piece.data, flagset, piece.disk)
+            budget.spend(10)
+            children += [
+                (child, child.extract or visit.opened.extract, visit.opened.command)
+                for child in visit.opened.children
+            ]
+
+        # The carver, for what hides after the end of a file. It runs on the
+        # formats that are routinely used as a wrapper too, not only on the
+        # files no reader claimed: a ZIP behind a PNG is the stock trick, and
+        # the PNG reader is perfectly happy with the PNG.
+        if not visit.reader or visit.reader in CARVE_ALSO:
             carved = readers.open_with("repair", piece.data, flagset, piece.disk)
             budget.spend(5)
             fresh = [child for child in carved.children if not child.name.startswith("repaired")]
             if fresh:
-                report.steps.append(
-                    f"{piece.name}: {len(fresh)} file(s) carved out of it ({carved.detail})"
-                )
+                carved.children = fresh
+                visit.carved = carved
                 children += [(child, carved.extract, carved.command) for child in fresh]
 
-        # 4. The decoding chains, for anything no reader claimed.
-        if not reader_name and piece.size <= AUTO_SIZE_LIMIT:
+        # The decoding chains, for anything no reader claimed.
+        if decode and not visit.reader and piece.size <= AUTO_SIZE_LIMIT:
             slice_budget = Budget(
                 max_attempts=2000,
                 max_seconds=max(0.5, min(4.0, budget.max_seconds - budget.elapsed())),
                 cancel_event=budget.cancel_event,
             )
-            candidates = auto_decode(piece.data, flagset=flagset, budget=slice_budget, top_n=2)
+            visit.candidates = auto_decode(
+                piece.data, flagset=flagset, budget=slice_budget, top_n=2
+            )
             budget.spend(slice_budget.attempts)
-            for candidate in candidates[:2]:
+            for candidate in visit.candidates[:2]:
                 if candidate.score < LEAD_SCORE:
                     continue
-                report.steps.append(
-                    f"{piece.name}: {candidate.label} (score {candidate.score:.2f})"
-                )
-                leads.append(
-                    Lead(
-                        title=f"{piece.name}: {candidate.label}",
-                        why="; ".join(candidate.reasons[:2]) or "the chains found something",
-                        score=candidate.score,
-                        command=f"ctfc auto {piece.disk} --show-code",
-                        preview=_preview(candidate.data),
-                    )
-                )
                 # A chain that produced a file (base64 -> gzip -> a tar) is
                 # followed: that is where the next container usually hides.
                 children.append(
@@ -323,21 +284,10 @@ def solve(
                         "ctfc auto {file}",
                     )
                 )
-            if not candidates:
-                # Nothing decoded: is it at least readable on its own?
-                plain, reasons = score(piece.data, flagset)
-                if plain >= 0.4:
-                    leads.append(
-                        Lead(
-                            title=piece.name,
-                            why="readable as it is: " + "; ".join(reasons[:2]),
-                            score=min(plain, PLAIN_TEXT_CAP),
-                            command=f"ctfc detect {piece.disk}",
-                            preview=_preview(piece.data),
-                        )
-                    )
 
-        # 5. Queue what came out, once each, and remember how to get at it.
+        yield visit
+
+        # Queue what came out, once each, and remember how to get at it.
         if piece.depth >= max_depth:
             continue
         out_dir = f"out{piece.depth + 1}"
@@ -369,6 +319,127 @@ def solve(
                     disk=disk,
                 )
             )
+
+
+def solve(
+    data: bytes,
+    path: str = "file",
+    flagset: FlagSet | None = None,
+    budget: Budget | None = None,
+    max_depth: int = MAX_DEPTH,
+    top_leads: int = 3,
+) -> SolveReport:
+    """Walk a file to the bottom and report the flag, or the best three leads."""
+    budget = budget or Budget(max_attempts=200_000, max_seconds=20)
+    report = SolveReport(path=path, size=len(data))
+    leads: list[Lead] = []
+
+    for visit in walk(
+        data,
+        path,
+        flagset=flagset,
+        budget=budget,
+        max_depth=max_depth,
+        notes=report.notes,
+    ):
+        piece, opened = visit.piece, visit.opened
+        report.pieces += 1
+        if piece.depth == 0 and visit.reader:
+            label = readers.READERS_BY_NAME[visit.reader].label
+            detail = opened.detail if opened else ""
+            report.read_as = f"{label} ({detail})" if detail else label
+
+        # 1. Is the flag simply in there? This is the whole point of the walk.
+        for hit in find_flags(piece.data, flagset):
+            if not any(found.text == hit.text for found in report.flags):
+                report.flags.append(
+                    FlagFound(
+                        text=hit.text,
+                        where=piece.name,
+                        how=piece.origin,
+                        strength=hit.strength,
+                        trail=list(piece.trail),
+                    )
+                )
+        if report.flags:
+            report.steps.append(f"{piece.name}: the flag is in there ({piece.origin})")
+            break
+
+        # 2. What the reader made of it - including the flags it found itself,
+        #    in places raw bytes do not show (a UTF-16 mail body, a registry
+        #    value, a .NET literal).
+        if opened is not None:
+            step = f"{piece.name}: read as {visit.reader}"
+            if opened.detail:
+                step += f" - {opened.detail}"
+            if opened.error:
+                step += f" - could not be read: {opened.error}"
+            if opened.children:
+                step += f", {len(opened.children)} piece(s) came out"
+            report.steps.append(step)
+            for text in opened.flags:
+                if not any(found.text == text for found in report.flags):
+                    report.flags.append(
+                        FlagFound(
+                            text=text,
+                            where=piece.name,
+                            how=f"{visit.reader} reader",
+                            strength=1.0,
+                            trail=[*piece.trail, opened.command.format(file=piece.disk)],
+                        )
+                    )
+            if report.flags:
+                break
+            # A reader that found nothing to hand over still has advice: an
+            # encrypted entry, a password-protected archive, a hash to crack.
+            for command in opened.commands[:2]:
+                leads.append(
+                    Lead(
+                        title=piece.name,
+                        # The reader's own note says why it suggests this; the
+                        # generic sentence is only the fallback.
+                        why=(opened.notes[0][:200] if opened.notes else "")
+                        or f"{visit.reader}: what the reader suggests next",
+                        score=0.55,
+                        command=command.replace("{file}", piece.disk),
+                    )
+                )
+        else:
+            report.steps.append(f"{piece.name}: {_describe(piece.data)}, no reader claims it")
+
+        if visit.carved is not None:
+            report.steps.append(
+                f"{piece.name}: {len(visit.carved.children)} file(s) carved out of it "
+                f"({visit.carved.detail})"
+            )
+
+        # 3. The decoding chains.
+        for candidate in visit.candidates[:2]:
+            if candidate.score < LEAD_SCORE:
+                continue
+            report.steps.append(f"{piece.name}: {candidate.label} (score {candidate.score:.2f})")
+            leads.append(
+                Lead(
+                    title=f"{piece.name}: {candidate.label}",
+                    why="; ".join(candidate.reasons[:2]) or "the chains found something",
+                    score=candidate.score,
+                    command=f"ctfc auto {piece.disk} --show-code",
+                    preview=_preview(candidate.data),
+                )
+            )
+        if not visit.reader and not visit.candidates and piece.size <= AUTO_SIZE_LIMIT:
+            # Nothing decoded: is it at least readable on its own?
+            plain, reasons = score(piece.data, flagset)
+            if plain >= 0.4:
+                leads.append(
+                    Lead(
+                        title=piece.name,
+                        why="readable as it is: " + "; ".join(reasons[:2]),
+                        score=min(plain, PLAIN_TEXT_CAP),
+                        command=f"ctfc detect {piece.disk}",
+                        preview=_preview(piece.data),
+                    )
+                )
 
     report.flags = _dedupe_flags(report.flags)
     report.budget = budget.summary()

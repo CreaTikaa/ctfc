@@ -2007,3 +2007,76 @@ this feature. Each opener is defensive on purpose (`open_with` turns any
 exception into a note): a file that will not parse is the normal case here, not
 an error, because half the pieces being opened were carved out of something else
 and may well be garbage.
+
+
+## 32. `ctfc workspace`: the cross product of a folder (`ctfc/core/workspace.py`)
+
+One file in, one answer out is the shape of every other command here. A
+forensics challenge is not shaped like that: the password is in a mail, the
+config or a note, and the archive it opens is three files away. Doing it by
+hand means reading everything, writing the candidates down, and trying them one
+at a time.
+
+The command does three things.
+
+**Read everything once.** Each file goes through `solve.walk()` - the same
+generator `ctfc solve` uses - so a password inside an attachment inside a ZIP
+counts as found, not just the ones lying at the top level.
+
+**Fill three pools.**
+
+- *secrets*: `find_secrets` for the config shapes (`password = ...`, XML, JSON)
+  and the new `find_prose_secrets` for the sentence shapes ("the password is
+  hunter2", "mdp : azerty"). The prose finder is deliberately a separate
+  function: it is looser, and a looser rule is fine for a caller that is going
+  to *test* every candidate, while `find_secrets` has to be right on screen.
+  Whatever a reader printed as a note is scanned too, which is how a ZIP
+  comment, a Docker `ENV` line or a shortcut's arguments become candidates.
+- *keys*: the named ones (an AES key schedule, a hex or base64 string of the
+  right length) are listed for the report. The raw high-entropy windows are
+  not pooled at all - there are hundreds per dump - because `keyhunt.hunt`
+  already finds and ranks them *per ciphertext*. So what the pool holds is a
+  list of **files to search**, not keys.
+- *ciphertexts*: encrypted ZIP entries, `openssl enc` files, Fernet tokens,
+  block-shaped high-entropy blobs, and the archives whose password only an
+  external tool can try.
+
+**Try the cross product, cheapest first, under one budget.** Not one budget per
+pair: 40 secrets x 12 ciphertexts with an allowance each is an afternoon.
+Phase 1 is the ZIP entries (a key schedule and twelve bytes per attempt, and
+`zipfile` checks the CRC so a hit is a hit). Phase 2 is `keyhunt.hunt` of every
+file against every blob. Phase 3 is the passphrases, which cost a KDF each -
+about a second per wrong PBKDF2 guess, which is why they go last.
+
+### Two decisions worth keeping
+
+**What counts as a ciphertext.** The first version called any high-entropy,
+block-aligned run a ciphertext, and promptly spent sixty seconds throwing keys
+at a 40 KB memory dump. Three rules fixed it: entropy is compared with the most
+a sample that *short* could have (96 random bytes cannot exceed log2(96) = 6.6
+bits per byte, so a flat threshold of 7.0 rejects exactly the sizes a challenge
+payload has); anything over 64 KB needs a name that says it is encrypted; and
+`.raw`, `.dmp`, `.mem`, `.img` are key *sources*, never targets.
+
+**Unaligned keys** (`keyhunt.find_entropy_runs`). The window scan that `ctfc
+keys` has always used walks a 16-byte grid, which is right for a key a program
+allocated and wrong for a key someone *wrote into a file*. Scanning every byte
+instead is not the answer either: it yields thirty near-identical windows per
+key and hits the 300-candidate cap in the first kilobyte of a dump. So the hunt
+now has a second pass, used only when the aligned one found nothing: it looks
+for the shape a key has in a file - a short run of random-looking bytes
+surrounded by strings, zeroes and structures - and sweeps every offset inside
+each short run. Two details were measured rather than guessed: the run is
+widened by 8 bytes at each end (the detector needs 15 distinct bytes in its
+window, so the window straddling the start of a key falls just under the bar
+and the run begins *inside* the key - on one dump the key was at 9997 and the
+run started at 9998), and 32- and 16-byte readings are taken at every offset
+while 24-byte ones (AES-192) are taken on a 4-byte grid. A key at offset 12345
+of a 30 KB dump is now found in about a second.
+
+### What it will not do
+
+It never invents a password: only what the folder gave up is tried. It cannot
+open a 7z or a RAR either - Python does not decrypt them - so those are
+reported with the exact `7z x -p...` line instead of being skipped quietly,
+and the report always ends with what it did *not* get to.

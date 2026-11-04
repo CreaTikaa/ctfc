@@ -507,6 +507,15 @@ EN: dict[str, str] = {
     "opt_solve_depth": "how deep to follow what comes out of a file (default 5)",
     "opt_solve_leads": "how many leads to print when no flag was found (default 3)",
     "opt_solve_steps": "print every step of the walk, not just the answer",
+    "cmd_workspace": (
+        "a whole folder at once: pool every password, key and ciphertext it holds, "
+        "then try each secret against each ciphertext (the key is never in the same file)"
+    ),
+    "cmd_workspace_ex": (
+        "examples: ctfc workspace ./challenge  |  ctfc workspace ./dump --seconds 300  |  "
+        "ctfc workspace . --json"
+    ),
+    "opt_workspace_read": "seconds spent reading the folder before trying pairs (default: half)",
     "cmd_scan": "run detect + auto on every file of a folder and rank them",
     "cmd_scan_ex": (
         "examples: ctfc scan _dump.bin.extracted  |  ctfc scan ./objects --seconds 300  |  "

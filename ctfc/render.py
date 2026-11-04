@@ -355,6 +355,77 @@ def print_hash(console: Console, report) -> None:
         console.print(f"[cyan]*[/] {safe(note)}")
 
 
+def print_workspace(console: Console, report) -> None:
+    """`ctfc workspace`: what the folder holds, and which pairs worked."""
+    console.print(
+        f"[bold]{safe(report.root)}[/]  ({report.files} file(s), {report.pieces} piece(s) read)"
+    )
+    for flag in report.flags:
+        console.print(f"[bold green]{safe(flag)}[/]")
+
+    if report.hits:
+        table = Table(title="pairs that worked", expand=True)
+        table.add_column("secret", ratio=2)
+        table.add_column("found in", ratio=2)
+        table.add_column("opens", ratio=2)
+        table.add_column("how", ratio=3)
+        for hit in report.hits:
+            table.add_row(
+                safe(hit.secret, 40),
+                safe(hit.secret_where, 50),
+                safe(hit.target, 50),
+                safe(hit.how, 70),
+            )
+        console.print(table)
+        for hit in report.hits:
+            console.print(f"[green]$[/] {escape(hit.command)}")
+            if hit.preview:
+                console.print(f"  [dim]{safe(hit.preview, 110)}[/]")
+    else:
+        console.print(
+            f"[yellow]No pair worked[/] ({report.tried} tried). "
+            "What was found is below: the secret may be outside this folder."
+        )
+
+    # The pools are what you read when nothing worked. When a pair did work,
+    # listing forty candidate keys only buries the answer.
+    if not report.hits and report.secrets:
+        table = Table(title=f"{len(report.secrets)} candidate secret(s)", expand=True)
+        table.add_column("value", ratio=2)
+        table.add_column("found in", ratio=2)
+        table.add_column("why", ratio=3)
+        for found in report.secrets[:20]:
+            table.add_row(safe(found.value, 40), safe(found.where, 50), safe(found.why, 60))
+        console.print(table)
+    if not report.hits and report.keys:
+        table = Table(title=f"{len(report.keys)} named key candidate(s)", expand=True)
+        table.add_column("key (hex)", ratio=2)
+        table.add_column("found in", ratio=2)
+        table.add_column("why", ratio=3)
+        for found in report.keys[:10]:
+            table.add_row(safe(found.value, 48), safe(found.where, 46), safe(found.why, 60))
+        console.print(table)
+    if report.ciphertexts:
+        table = Table(title=f"{len(report.ciphertexts)} thing(s) that are encrypted", expand=True)
+        table.add_column("what", ratio=3)
+        table.add_column("kind", width=12)
+        table.add_column("tried here?", ratio=3)
+        for target in report.ciphertexts:
+            table.add_row(
+                safe(target.name, 60),
+                safe(target.kind),
+                "yes" if target.testable else safe(target.command or "no", 70),
+            )
+        console.print(table)
+
+    for skipped in report.skipped:
+        console.print(f"[yellow]not tried:[/] {safe(skipped, 140)}")
+    for note in report.notes:
+        console.print(f"[cyan]*[/] {safe(note)}")
+    if report.budget:
+        console.print(f"[dim]{safe(report.budget)}[/]")
+
+
 def print_solve(console: Console, report, show_steps: bool = False) -> None:
     """`ctfc solve`: the answer first, the walk only if asked for.
 

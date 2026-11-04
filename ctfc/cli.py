@@ -38,6 +38,7 @@ from ctfc.core.scan import scan as scan_folder
 from ctfc.core.solve import solve as solve_file
 from ctfc.core.symmetric import CryptoError, SolveReport, solve_symmetric
 from ctfc.core.types import Input
+from ctfc.core.workspace import analyse as analyse_workspace
 from ctfc.core.xor import guess_key_lengths, solve_xor, xor_inputs
 from ctfc.strings import t
 
@@ -257,6 +258,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--depth", type=int, default=5, help=t("opt_solve_depth"))
     p.add_argument("--leads", type=int, default=3, help=t("opt_solve_leads"))
     p.add_argument("--steps", action="store_true", help=t("opt_solve_steps"))
+
+    p = add("workspace")
+    p.add_argument("folder", help=t("arg_folder"))
+    p.add_argument("--no-recursive", action="store_true", help=t("opt_scan_no_recursive"))
+    p.add_argument("--seconds", type=float, default=90.0, help=t("opt_seconds"))
+    p.add_argument("--read-seconds", type=float, default=None, help=t("opt_workspace_read"))
 
     p = add("scan")
     p.add_argument("folder", help=t("arg_folder"))
@@ -1600,6 +1607,25 @@ def cmd_solve(args: argparse.Namespace, config: Config, console: Console) -> int
     return 0 if report.flags else 1
 
 
+def cmd_workspace(args: argparse.Namespace, config: Config, console: Console) -> int:
+    """Pool the secrets, keys and ciphertexts of a folder, then try the pairs."""
+    budget = Budget(max_attempts=5_000_000, max_seconds=args.seconds)
+    report = analyse_workspace(
+        Path(args.folder),
+        flagset=flagset_from(config),
+        budget=budget,
+        recursive=not args.no_recursive,
+        read_seconds=args.read_seconds,
+    )
+    summary = report.flags or [f"{hit.secret} opens {hit.target}" for hit in report.hits]
+    remember(args, config, None, args.folder, summary=summary)
+    if args.json:
+        print(json.dumps(report.to_dict(), indent=2))
+        return 0 if report.hits or report.flags else 1
+    render.print_workspace(console, report)
+    return 0 if report.hits or report.flags else 1
+
+
 def cmd_scan(args: argparse.Namespace, config: Config, console: Console) -> int:
     """Run detect + auto on every file of a folder and rank them."""
     budget = Budget(max_attempts=10_000_000, max_seconds=args.seconds)
@@ -1785,6 +1811,7 @@ def main(argv: list[str] | None = None) -> int:
         "hash": cmd_hash,
         "scan": cmd_scan,
         "solve": cmd_solve,
+        "workspace": cmd_workspace,
         "office": cmd_office,
         "pdf": cmd_pdf,
         "stego": cmd_stego,

@@ -575,3 +575,23 @@ def test_solve_exits_nonzero_without_a_flag(tmp_path):
     target.write_bytes(bytes(range(256)) * 8)
     result = run_ctfc("solve", str(target))
     assert result.returncode == 1
+
+
+def test_workspace_finds_the_password_in_another_file(tmp_path):
+    """`ctfc workspace`: the mail holds the password, the archive is elsewhere."""
+    import subprocess as sp
+
+    (tmp_path / "mail.txt").write_bytes(b"Hi. The password is correct-horse for the backup.\n")
+    (tmp_path / "flag.txt").write_bytes(b"CYBN{cli_workspace}")
+    sp.run(
+        ["zip", "-q", "-e", "-P", "correct-horse", "backup.zip", "flag.txt"],
+        cwd=tmp_path,
+        check=True,
+    )
+    (tmp_path / "flag.txt").unlink()
+
+    result = run_ctfc("workspace", str(tmp_path), "--seconds", "30")
+    assert result.returncode == 0
+    out = result.stdout.decode()
+    assert "CYBN{cli_workspace}" in out
+    assert "correct-horse" in out

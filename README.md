@@ -22,6 +22,7 @@ Or without installing: `python -m ctfc ...` from this folder.
 ```sh
 ctfc --help              # list commands (each has an example in its --help)
 ctfc solve <file>        # no idea what it is? read it, follow what comes out, print the flag
+ctfc workspace <folder>  # a whole challenge folder: which secret opens which ciphertext
 ctfc detect <input>      # fingerprint + ranked guesses
 ctfc auto <input>        # try decoding chains until something readable appears
 ctfc xor <input>         # XOR: single byte, repeating key, known plaintext, two inputs

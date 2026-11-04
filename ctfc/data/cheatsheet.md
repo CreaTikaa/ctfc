@@ -12,6 +12,14 @@ flag - with the commands that reproduce it - or the three best leads. It never
 guesses a password or a key: when one is needed it prints the command that
 cracks it. Everything below is what it does, step by step, when you want control.
 
+### A folder, not a file?
+
+`ctfc workspace <folder>` reads everything once, pools every password, key and
+ciphertext it finds, and tries each secret against each ciphertext - because the
+key is never in the same file as the thing it opens. It prints the pairs that
+worked ("the password in mail.eml opens backup.zip"), and names what it could
+not try. `ctfc scan <folder>` stays the one to rank a folder of carved files.
+
 ## 1. Do you have the code that encrypted it?
 
 **Yes** (a script, a decompiled .pyc, a .NET method, PowerShell from event logs):

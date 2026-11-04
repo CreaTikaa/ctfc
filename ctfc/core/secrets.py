@@ -145,3 +145,52 @@ def find_secrets(data: bytes) -> list[Secret]:
 
     found.sort(key=lambda secret: secret.line)
     return found
+
+
+# A password written in a sentence rather than in a config: a mail, a note, a
+# README, a chat log. Configs are the common case, which is why this is kept
+# apart - it is looser, so it belongs to the caller that wants the noise
+# (`ctfc workspace`, which tries every candidate it is given) rather than to
+# `find_secrets`, whose job is to point at a value and be right.
+PROSE_RE = re.compile(
+    r"""(?ix)
+    \b(?:the\s+|le\s+|mon\s+)?
+    (password|passphrase|pass|mot\ de\ passe|mdp|pwd)
+    \s*(?:is|was|:|=|est|:=)\s*
+    ["'`]?([^\s"'`<>,;]{3,64})
+    """
+)
+
+
+def find_prose_secrets(data: bytes) -> list[Secret]:
+    """Passwords written in a sentence: "the password is hunter2", "mdp : azerty".
+
+    Deliberately separate from `find_secrets`: this one is meant to be fed to a
+    search that will test every candidate, so a false positive costs an attempt,
+    not a wrong answer on screen.
+    """
+    text = data.decode("utf-8", "replace")
+    found: list[Secret] = []
+    seen: set[str] = set()
+    for match in PROSE_RE.finditer(text):
+        raw = match.group(2).strip()
+        # "the password is hunter2." - the full stop belongs to the sentence,
+        # but "!" is a perfectly ordinary last character of a password. Both
+        # readings are returned: the caller is going to test them anyway.
+        readings = [raw]
+        trimmed = raw.rstrip(".!?,;:")
+        if trimmed != raw and trimmed:
+            readings.append(trimmed)
+        for value in readings:
+            if not _plausible(value) or value in seen:
+                continue
+            seen.add(value)
+            found.append(
+                Secret(
+                    name=match.group(1).lower(),
+                    value=value,
+                    line=_line_of(text, match.start()),
+                    kind="prose",
+                )
+            )
+    return found
