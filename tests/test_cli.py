@@ -537,3 +537,41 @@ def test_sig_without_a_curve_explains_what_is_missing():
     result = run_ctfc("sig", "tests/fixtures/ecdsa_nonce_reuse.txt")
     assert result.returncode == 2
     assert "--curve" in result.stderr.decode()
+
+
+def test_solve_prints_the_flag_and_the_commands_that_reproduce_it(tmp_path):
+    """`ctfc solve` on a nested archive: the flag, then a runnable trail."""
+    import io
+    import zipfile
+
+    inner = io.BytesIO()
+    with zipfile.ZipFile(inner, "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("deep.txt", "CYBN{cli_solve}" + " padding" * 20)
+    outer = tmp_path / "outer.zip"
+    with zipfile.ZipFile(outer, "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("inner.zip", inner.getvalue())
+
+    result = run_ctfc("solve", str(outer))
+    assert result.returncode == 0
+    out = result.stdout.decode()
+    assert "CYBN{cli_solve}" in out
+    assert "unzip -j -d out1" in out
+
+
+def test_solve_json_has_the_walk(tmp_path):
+    import json
+
+    target = tmp_path / "note.txt"
+    target.write_bytes(b"nothing but CYBN{cli_solve_json} here")
+    result = run_ctfc("solve", str(target), "--json")
+    assert result.returncode == 0
+    payload = json.loads(result.stdout.decode())
+    assert payload["flags"][0]["text"] == "CYBN{cli_solve_json}"
+    assert payload["steps"] == [] or isinstance(payload["steps"], list)
+
+
+def test_solve_exits_nonzero_without_a_flag(tmp_path):
+    target = tmp_path / "noise.bin"
+    target.write_bytes(bytes(range(256)) * 8)
+    result = run_ctfc("solve", str(target))
+    assert result.returncode == 1

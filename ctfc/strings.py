@@ -496,6 +496,17 @@ EN: dict[str, str] = {
     "arg_radius_input": "the encrypted User-Password attribute (file, hex:..., b64:...)",
     "opt_radius_authenticator": "the 16-byte Request Authenticator (hex:... or b64:...)",
     "opt_radius_secret": "the shared secret, if you know it (else common secrets are tried)",
+    "cmd_solve": (
+        "one file in, the answer out: read it with whatever reader claims it, follow "
+        "everything that comes out of it, and print the flag or the three best leads"
+    ),
+    "cmd_solve_ex": (
+        "examples: ctfc solve chal.tar.gz  |  ctfc solve dump.pcap --seconds 60  |  "
+        "ctfc solve weird.png --json"
+    ),
+    "opt_solve_depth": "how deep to follow what comes out of a file (default 5)",
+    "opt_solve_leads": "how many leads to print when no flag was found (default 3)",
+    "opt_solve_steps": "print every step of the walk, not just the answer",
     "cmd_scan": "run detect + auto on every file of a folder and rank them",
     "cmd_scan_ex": (
         "examples: ctfc scan _dump.bin.extracted  |  ctfc scan ./objects --seconds 300  |  "

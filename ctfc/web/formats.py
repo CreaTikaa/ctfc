@@ -43,6 +43,7 @@ from ctfc.core import (
     winartifact,
     zipinfo,
 )
+from ctfc.core import readers as core_readers
 from ctfc.core.budget import Budget
 from ctfc.core.errors import FormatError
 from ctfc.core.flags import FlagSet, find_flags
@@ -81,17 +82,6 @@ def text(title: str, body: str, code: bool = True) -> dict:
 
 def _preview(data: bytes, limit: int = 200) -> str:
     return data[:limit].decode("utf-8", "replace")
-
-
-@dataclass(frozen=True)
-class Reader:
-    """One format reader, as the web tab sees it."""
-
-    name: str  # the id the browser sends back
-    label: str  # what the dropdown shows
-    command: str  # the terminal command that does the same thing
-    sniff: Callable[[bytes], bool]  # cheap "is this mine?"
-    run: Callable[[bytes, FlagSet | None], dict]  # -> {sections, flags, notes, commands}
 
 
 # ---------------------------------------------------------------------------
@@ -729,119 +719,52 @@ def _time(data: bytes, flagset: FlagSet | None) -> dict:
 # ---------------------------------------------------------------------------
 # The registry
 # ---------------------------------------------------------------------------
+#
+# Which reader claims which file is decided once, in `ctfc/core/readers.py`,
+# because the terminal asks the same question (`ctfc solve` walks a file with
+# exactly this table). What is left here is one display adapter per reader -
+# and `time`, which is display-only: four bytes could be anything, so it is
+# never sniffed, only chosen by hand in the dropdown.
 
-READERS: tuple[Reader, ...] = (
-    Reader(
-        "archive",
-        "archive (tar, 7z, RAR, cabinet, Docker image)",
-        "ctfc archive",
-        lambda data: bool(archive.sniff(data)),
-        _archive,
-    ),
-    Reader(
-        "office",
-        "Office document with macros (.doc, .docm)",
-        "ctfc office",
-        lambda data: office_sniff(data),
-        _office,
-    ),
-    Reader("msg", "Outlook message (.msg)", "ctfc msg", msg.looks_like_msg, _msg),
-    Reader("msi", "Windows Installer package (.msi)", "ctfc msi", msi.looks_like_msi, _msi),
-    Reader("pdf", "PDF", "ctfc pdf", lambda data: data[:1024].find(b"%PDF-") >= 0, _pdf),
-    Reader(
-        "stego",
-        "image, for a message in its low bits",
-        "ctfc stego",
-        lambda data: data[:8] == b"\x89PNG\r\n\x1a\n" or data[:2] == b"BM",
-        _stego,
-    ),
-    Reader("pe", "Windows executable (PE)", "ctfc pe", lambda data: data[:2] == b"MZ", _pe),
-    Reader(
-        "exe",
-        "ELF, Java class/JAR, Android DEX",
-        "ctfc exe",
-        lambda data: executable.sniff(data) in ("elf", "class", "jar", "dex"),
-        _exe,
-    ),
-    Reader(
-        "winartifact",
-        "Windows artefact (.lnk, prefetch, jump list)",
-        "ctfc winartifact",
-        lambda data: winartifact.sniff(data) in ("lnk", "prefetch", "jumplist"),
-        _winartifact,
-    ),
-    Reader(
-        "evtx",
-        "Windows event log (.evtx)",
-        "ctfc evtx",
-        lambda data: data[:8] == b"ElfFile\x00",
-        _evtx,
-    ),
-    Reader(
-        "hive",
-        "registry hive (SAM, SYSTEM, NTUSER.DAT, Amcache)",
-        "ctfc hive",
-        lambda data: data[:4] == b"regf",
-        _hive,
-    ),
-    Reader(
-        "sqlite",
-        "SQLite database",
-        "ctfc sqlite",
-        lambda data: data[:15] == b"SQLite format 3",
-        _sqlite,
-    ),
-    Reader(
-        "pcap",
-        "capture (pcap, pcapng)",
-        "ctfc pcap",
-        lambda data: (
-            data[:4] in (b"\xd4\xc3\xb2\xa1", b"\xa1\xb2\xc3\xd4", b"\x0a\x0d\x0d\x0a")
-            or data[:4] == b"\x4d\x3c\xb2\xa1"
-        ),
-        _pcap,
-    ),
-    # Not sniffed: by definition you reach for it when the file is broken.
-    Reader(
-        "repair",
-        "repair a broken file (magic, trailing data, pasted header)",
-        "ctfc repair",
-        lambda data: False,
-        _repair,
-    ),
-    # Not sniffed either: four or eight bytes could be anything.
-    Reader("time", "read 4 or 8 bytes as a timestamp", "ctfc time", lambda data: False, _time),
-    Reader(
-        "zip",
-        "ZIP archive (also .docx, .jar, .apk)",
-        "ctfc zip",
-        lambda data: data[:4] in (b"PK\x03\x04", b"PK\x01\x02"),
-        _zip,
-    ),
-)
+ADAPTERS: dict[str, Callable[[bytes, FlagSet | None], dict]] = {
+    "archive": _archive,
+    "office": _office,
+    "msg": _msg,
+    "msi": _msi,
+    "pdf": _pdf,
+    "stego": _stego,
+    "pe": _pe,
+    "exe": _exe,
+    "winartifact": _winartifact,
+    "evtx": _evtx,
+    "hive": _hive,
+    "sqlite": _sqlite,
+    "pcap": _pcap,
+    "repair": _repair,
+    "zip": _zip,
+}
+
+
+@dataclass(frozen=True)
+class Reader:
+    """One format reader, as the web tab sees it."""
+
+    name: str  # the id the browser sends back
+    label: str  # what the dropdown shows
+    command: str  # the terminal command that does the same thing
+    sniff: Callable[[bytes], bool]  # cheap "is this mine?"
+    run: Callable[[bytes, FlagSet | None], dict]  # -> {sections, flags, notes, commands}
+
+
+READERS: tuple[Reader, ...] = tuple(
+    Reader(reader.name, reader.label, reader.command, reader.sniff, ADAPTERS[reader.name])
+    for reader in core_readers.READERS
+) + (Reader("time", "read 4 or 8 bytes as a timestamp", "ctfc time", lambda data: False, _time),)
 READERS_BY_NAME = {reader.name: reader for reader in READERS}
 
-
-def office_sniff(data: bytes) -> bool:
-    """An OLE2 document or an OOXML one - but not a .msg, an .msi or a jump list.
-
-    Four formats share the compound-file container and two share the ZIP one, so
-    this test, not the order of the registry, is what keeps them apart: `office`
-    claims a compound file the other three readers do not, and a ZIP only when
-    it holds the parts of an Office document.
-    """
-    if data[:8] == b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1":
-        return (
-            not msg.looks_like_msg(data)
-            and not msi.looks_like_msi(data)
-            and winartifact.sniff(data) != "jumplist"
-        )
-    if data[:4] == b"PK\x03\x04":
-        # An OOXML file names its parts: word/, xl/ or ppt/. A .jar or an .apk
-        # does not, and goes to `ctfc exe` or `ctfc zip`.
-        head = data[:4096]
-        return any(part in head for part in (b"word/", b"xl/", b"ppt/"))
-    return False
+# Kept under this name because the browser dropdown and the web tests have
+# always known it so; the rule itself now lives in core.
+office_sniff = core_readers.office_sniff
 
 
 def catalogue() -> list[dict]:
@@ -853,14 +776,8 @@ def catalogue() -> list[dict]:
 
 
 def sniff(data: bytes) -> str:
-    """Which reader claims these bytes, or "" when none does."""
-    for reader in READERS:
-        try:
-            if reader.sniff(data):
-                return reader.name
-        except Exception:  # noqa: BLE001 - a sniff must never decide the request
-            continue
-    return ""
+    """Which reader claims these bytes, or "" when none does (decided in core)."""
+    return core_readers.sniff(data)
 
 
 def analyse(data: bytes, name: str = "", flagset: FlagSet | None = None) -> dict:

@@ -1941,3 +1941,69 @@ need a path to walk. Rather than pretend, the Docs tab names them with their
 command lines. The rest of the CLI is reachable from the page: every format
 reader through the Files tab, and `ctfc sig` and `ctfc replay` added here as a
 Signatures tab and a button in the session bar.
+
+
+## 31. `ctfc solve`: the cheat sheet, executed (`ctfc/core/solve.py`)
+
+Every other command answers a question you already know how to ask. `solve`
+answers the one you ask at two in the morning: *what is in this file?*
+
+It walks the file like a tree, breadth first:
+
+1. **look for the flag in the bytes as they are.** Cheapest test there is, and
+   it is the answer surprisingly often - a tar stores its members uncompressed,
+   a stored ZIP entry is plaintext, a PNG with a comment chunk is plaintext.
+2. **ask which reader claims the file** (`ctfc/core/readers.py`), run it, and
+   take everything it hands back that is itself a file: archive members, a
+   mail's attachments, a PDF's embedded files and decoded streams, VBA modules,
+   a capture's objects, an executable's overlay, the .NET string literals, a
+   Docker layer (which is a tar, so the tar reader reads it next), and the files
+   a later layer deleted.
+3. **carve** what hides after the end of a file, for the polyglots - and not
+   only when no reader claimed it: the stock trick is a ZIP behind a PNG, and
+   the PNG reader is perfectly happy with the PNG.
+4. **run the decoding chains** (`auto`) on anything no reader claimed, and push
+   what comes out *back into step 2*. `base64 -> gzip -> a tar -> the member
+   that holds the flag` is one command, where it used to be four.
+5. **stop at the first flag.** Otherwise print the three best leads, each with
+   one command.
+
+### The three rules that keep it from being `auto` with extra steps
+
+- **Nothing new is brute-forced.** Only operations that are already
+  deterministic are chained. A password, a key, a cipher layout: `solve` prints
+  the command (`bkcrack`, `zip2john`, `ctfc sym --passwords`, `ctfc keys`) and
+  stops. That is also why it is fast: the walk above costs milliseconds per
+  piece, and the only budgeted search in it is `auto`.
+- **One budget for the whole walk**, not one per piece, plus a cap on the number
+  of pieces and on the depth. When it runs out it says so and names what it did
+  not get to - a report that quietly stopped early is a lie.
+- **Every piece carries the commands that reproduce it.** The flag is printed
+  with its trail:
+
+  ```
+  CYBN{fixture_vba_macro}
+    found in audit_macro.docm > word_vbaProject.bin_VBA_Module1.vbs > decoded: extract_hex -> xor(key='K')
+    $ ctfc office audit_macro.docm --save-macros out1
+    $ ctfc auto out1/word_vbaProject.bin_VBA_Module1.vbs
+  ```
+
+  Those two lines really run, in that order, and the file name in the second is
+  the name the first one writes. That is why the ZIP branch prints
+  `unzip -j -d out1 chal.zip`: `-j` flattens the paths, so the member's name is
+  the name it lands under. A trail nobody can replay would be decoration.
+
+### Where the reader table went
+
+Choosing *which reader claims a file* used to live in `ctfc/web/formats.py`,
+for the browser's Files tab. `solve` asks the identical question, so the table
+moved to `ctfc/core/readers.py` and the web module now imports it and keeps only
+its display adapters. One place to register a reader, two front-ends that get
+it: the browser tab and the walk.
+
+The table answers a second question the browser never asked - *what did this
+reader produce that is itself worth reading?* - and that is the only new code in
+this feature. Each opener is defensive on purpose (`open_with` turns any
+exception into a note): a file that will not parse is the normal case here, not
+an error, because half the pieces being opened were carved out of something else
+and may well be garbage.

@@ -35,6 +35,7 @@ from ctfc.core.pipeline import RecipeError
 from ctfc.core.report import build_report
 from ctfc.core.rsa import RsaError, build_key, keys_match, parse_key, solve_rsa
 from ctfc.core.scan import scan as scan_folder
+from ctfc.core.solve import solve as solve_file
 from ctfc.core.symmetric import CryptoError, SolveReport, solve_symmetric
 from ctfc.core.types import Input
 from ctfc.core.xor import guess_key_lengths, solve_xor, xor_inputs
@@ -249,6 +250,13 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("input", help=t("arg_radius_input"))
     p.add_argument("--authenticator", required=True, help=t("opt_radius_authenticator"))
     p.add_argument("--secret", help=t("opt_radius_secret"))
+
+    p = add("solve")
+    p.add_argument("input", help=t("arg_input"))
+    p.add_argument("--seconds", type=float, default=20.0, help=t("opt_seconds"))
+    p.add_argument("--depth", type=int, default=5, help=t("opt_solve_depth"))
+    p.add_argument("--leads", type=int, default=3, help=t("opt_solve_leads"))
+    p.add_argument("--steps", action="store_true", help=t("opt_solve_steps"))
 
     p = add("scan")
     p.add_argument("folder", help=t("arg_folder"))
@@ -1571,6 +1579,27 @@ def cmd_radius(args: argparse.Namespace, config: Config, console: Console) -> in
     return 0 if found else 1
 
 
+def cmd_solve(args: argparse.Namespace, config: Config, console: Console) -> int:
+    """Read a file with whatever claims it, follow what comes out, print the answer."""
+    inp = parse_input(args.input, decode_bare=False)
+    budget = Budget(max_attempts=1_000_000, max_seconds=args.seconds)
+    report = solve_file(
+        inp.data,
+        path=args.input,
+        flagset=flagset_from(config),
+        budget=budget,
+        max_depth=args.depth,
+        top_leads=args.leads,
+    )
+    summary = [flag.text for flag in report.flags] or [lead.title for lead in report.leads[:3]]
+    remember(args, config, inp.data, args.input, summary=summary)
+    if args.json:
+        print(json.dumps(report.to_dict(), indent=2))
+        return 0 if report.flags else 1
+    render.print_solve(console, report, show_steps=args.steps)
+    return 0 if report.flags else 1
+
+
 def cmd_scan(args: argparse.Namespace, config: Config, console: Console) -> int:
     """Run detect + auto on every file of a folder and rank them."""
     budget = Budget(max_attempts=10_000_000, max_seconds=args.seconds)
@@ -1755,6 +1784,7 @@ def main(argv: list[str] | None = None) -> int:
         "rsa": cmd_rsa,
         "hash": cmd_hash,
         "scan": cmd_scan,
+        "solve": cmd_solve,
         "office": cmd_office,
         "pdf": cmd_pdf,
         "stego": cmd_stego,

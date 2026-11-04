@@ -355,6 +355,56 @@ def print_hash(console: Console, report) -> None:
         console.print(f"[cyan]*[/] {safe(note)}")
 
 
+def print_solve(console: Console, report, show_steps: bool = False) -> None:
+    """`ctfc solve`: the answer first, the walk only if asked for.
+
+    The whole point of the command is that it prints one thing when it worked.
+    So: the flag, with the commands that reproduce it - and when there is no
+    flag, the leads, each with the single command to run next.
+    """
+    header = f"{safe(report.path)}  ({report.size} bytes"
+    header += f", {safe(report.read_as)})" if report.read_as else ")"
+    console.print(f"[bold]{header}[/]")
+
+    if show_steps:
+        for step in report.steps:
+            console.print(f"  [dim]-[/] {safe(step, 160)}")
+
+    if report.flags:
+        for flag in report.flags:
+            console.print(f"\n[bold green]{safe(flag.text)}[/]")
+            console.print(f"  [dim]found in[/] {safe(flag.where)}  [dim]({safe(flag.how)})[/]")
+            for command in flag.trail:
+                console.print(f"  [green]$[/] {escape(command)}")
+    elif report.leads:
+        console.print(
+            f"\n[yellow]No flag.[/] {report.pieces} piece(s) looked at; "
+            "the most promising, best first:"
+        )
+        table = Table(expand=True)
+        table.add_column("score", justify="right", width=6)
+        table.add_column("piece", ratio=2)
+        table.add_column("why", ratio=3)
+        for lead in report.leads:
+            table.add_row(
+                f"[{score_style(lead.score)}]{lead.score:.2f}[/]",
+                safe(lead.title, 60),
+                safe(lead.why, 110),
+            )
+        console.print(table)
+        for lead in report.leads:
+            console.print(f"[green]$[/] {escape(lead.command)}")
+            if lead.preview:
+                console.print(f"  [dim]{safe(lead.preview, 110)}[/]")
+    else:
+        console.print(f"\n[yellow]Nothing came out[/] of {report.pieces} piece(s).")
+
+    for note in report.notes:
+        console.print(f"[cyan]*[/] {safe(note)}")
+    if report.budget:
+        console.print(f"[dim]{safe(report.budget)}[/]")
+
+
 def print_scan(
     console: Console, report, min_interest: float = 0.4, show_code: bool = False
 ) -> None:

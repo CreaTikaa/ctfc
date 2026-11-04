@@ -3,6 +3,15 @@
 One page, for the day of the CTF. Start a session first, the write-up writes itself:
 `ctfc session new <chall> --title "..."` then `ctfc report --lang fr` at the end.
 
+## 0. No idea at all? One command.
+
+`ctfc solve <file>` reads the file with whatever reader claims it, follows
+everything that comes out of it (archive members, a mail's attachments, a
+capture's objects, an overlay, a Docker layer, a decoding chain), and prints the
+flag - with the commands that reproduce it - or the three best leads. It never
+guesses a password or a key: when one is needed it prints the command that
+cracks it. Everything below is what it does, step by step, when you want control.
+
 ## 1. Do you have the code that encrypted it?
 
 **Yes** (a script, a decompiled .pyc, a .NET method, PowerShell from event logs):
