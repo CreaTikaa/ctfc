@@ -2271,3 +2271,40 @@ but a wait. So the report says, every time, that the spectrum was not looked at
 and names Audacity's spectrogram view and Sonic Visualiser. A compressed WAV
 (ADPCM, mu-law) has no raw samples at all, and is refused with the `ffmpeg -i
 in.ext out.wav` line rather than a guess.
+
+
+## 38. Code Lens reads PHP (`ctfc/data/lens_rules.toml`)
+
+The one language of the web category that was missing. A PHP sample in a
+forensics challenge is almost always one of two things, and the thirty rules
+added here name both:
+
+- a **web shell**: it reads `$_GET` / `$_POST` / `$_COOKIE` and hands it to
+  `eval`, `assert`, `create_function`, `preg_replace` with the `/e` modifier,
+  or straight to `system` / `shell_exec` / `passthru`. The rule that captures
+  the request parameter name is worth its line on its own: it tells you what to
+  send if the shell is still live, and it is what to grep the access log for.
+- a **crypter**: `eval(gzinflate(base64_decode(str_rot13(base64_decode($p)))))`,
+  sometimes four layers deep, with the payload sitting in a variable above.
+  That variable is now captured as the blob, so the layers get peeled and the
+  payload is printed.
+
+Two details that took a measurement rather than a guess:
+
+**`gzinflate` is raw DEFLATE, not zlib.** PHP's `gzinflate` takes a headerless
+stream, which in Python is `zlib.decompress(data, -15)`. The rule first pointed
+at the `zlib` step, the generated recovery script therefore died on
+`incorrect header check`, and running that script is what showed it. The rule
+now points at the `deflate` step, and the test runs the generated program as a
+program and reads the flag out of its output - which is the only way to know a
+code generator works.
+
+**Nested calls execute inside-out.** The regex engine orders operations by
+position in the file, which is right for a script that does one thing per line
+and exactly backwards for `eval(gzinflate(base64_decode(...)))` - and that one
+line *is* the shape of a PHP or JavaScript crypter. `_order_nested` now checks,
+for each pair of operations on the same line, whether the text between them
+opens more brackets than it closes and holds no `;`. When every pair on the
+line is nested the group is reversed and the report says so; when one pair is
+not, the line is left alone, because then it is a sequence rather than a chain.
+Both cases have a test.

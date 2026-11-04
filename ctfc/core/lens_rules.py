@@ -1,4 +1,4 @@
-"""Regex rules for the languages we do not parse: PowerShell, JavaScript, bash, VBS.
+"""Regex rules for the languages we do not parse: PowerShell, JavaScript, bash, VBS, PHP.
 
 Python gets a real parser (`lens_python.py`). For the others, writing a parser
 would be a project of its own, so we use a **table of rules** kept in
@@ -232,6 +232,7 @@ def apply_rules(source: str, language: str, report: LensReport) -> None:
     # A rule with a captured blob and a generic one both fire: keep the specific
     # operation and drop the generic duplicate of the same kind on the same line.
     found.sort(key=lambda item: item[0])
+    found, nested_lines = _order_nested(source, found)
     report.operations += [operation for _, operation in found]
 
     # Follow `-bxor $k` back to `$k = 0x3b` and `.Key = $k` back to its value,
@@ -244,6 +245,54 @@ def apply_rules(source: str, language: str, report: LensReport) -> None:
             "operations are ordered by position in the file (regex rules cannot "
             "follow calls), so check the order against the source"
         )
+    if nested_lines:
+        lines = ", ".join(str(line) for line in sorted(nested_lines))
+        report.notes.append(
+            f"line(s) {lines} nest their calls - eval(gzinflate(base64_decode(...))) - "
+            "so the operations there were reversed: the innermost call runs first"
+        )
+
+
+def _order_nested(
+    source: str, found: list[tuple[int, Operation]]
+) -> tuple[list[tuple[int, Operation]], set[int]]:
+    """Reverse the operations of a line whose calls are nested inside each other.
+
+    Position order is execution order for a script that does one thing per
+    line. It is exactly backwards for a nested call chain - PHP's
+    `eval(gzinflate(base64_decode(str_rot13($p))))` executes from the inside
+    out - and that single line *is* the shape of a PHP or JavaScript crypter.
+
+    The test is cheap and local: two matches on the same line are nested when
+    the text between them opens more brackets than it closes and holds no
+    statement separator. When every consecutive pair on the line is nested, the
+    whole group is reversed; when any pair is not, the line is left alone,
+    because then it is a sequence rather than a chain.
+    """
+    by_line: dict[int, list[tuple[int, Operation]]] = {}
+    for item in found:
+        by_line.setdefault(item[1].line, []).append(item)
+
+    reversed_lines: set[int] = set()
+    out: list[tuple[int, Operation]] = []
+    for line in sorted(by_line):
+        group = by_line[line]
+        if len(group) > 1 and all(
+            _is_inside(source, group[index][0], group[index + 1][0])
+            for index in range(len(group) - 1)
+        ):
+            reversed_lines.add(line)
+            group = list(reversed(group))
+        out += group
+    return out, reversed_lines
+
+
+def _is_inside(source: str, outer: int, inner: int) -> bool:
+    """Is the match at `inner` inside the call that starts at `outer`?"""
+    between = source[outer:inner]
+    if ";" in between or "\n" in between:
+        return False
+    return between.count("(") > between.count(")")
 
 
 # Per language: how an XOR names its key, and how that name is assigned a value.

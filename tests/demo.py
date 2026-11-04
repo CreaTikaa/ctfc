@@ -82,6 +82,7 @@ def commands(scratch: Path) -> list[Demo]:
         # --- code lens --------------------------------------------------------
         Demo(["lens", f("lens_dropper.ps1"), "--show-code"], "AES", why="a PowerShell dropper"),
         Demo(["lens", f("lens_layers.py")], "base64", why="layered Python"),
+        Demo(["lens", f("lens_webshell.php")], "CYBN{", why="a PHP web shell"),
         Demo(
             [
                 "lens",

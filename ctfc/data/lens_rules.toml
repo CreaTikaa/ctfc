@@ -543,3 +543,262 @@ languages = ["powershell", "javascript", "bash", "vbs", "unknown"]
 regex = '''(?i)\$?(?:key|iv|salt|passphrase|password|secret)\w*\s*=\s*['"]([^'"\n]{4,64})['"]'''
 explain = "a variable named like a key / IV / salt / password, with a literal value"
 capture = "key"
+
+# ---------------------------------------------------------------------------
+# PHP
+# ---------------------------------------------------------------------------
+#
+# The web category's language, and the one that was missing here. A PHP sample
+# in a forensics challenge is almost always one of two things: a **web shell**
+# (it reads $_GET/$_POST/$_COOKIE and hands it to eval or a shell) or a
+# **crypter** (a payload wrapped in base64 -> gzinflate -> str_rot13, sometimes
+# four layers deep). Both are exactly what these rules name.
+
+[[rule]]
+id = "php.base64.literal"
+languages = ["php"]
+regex = '''base64_decode\(\s*['"]([A-Za-z0-9+/=\s]{16,})['"]'''
+explain = "decodes an embedded base64 string (base64_decode)"
+operation = "base64"
+direction = "decode"
+capture = "blob"
+
+[[rule]]
+id = "php.base64"
+languages = ["php"]
+regex = '''base64_decode\('''
+explain = "decodes base64 (base64_decode)"
+operation = "base64"
+direction = "decode"
+
+[[rule]]
+id = "php.base64.encode"
+languages = ["php"]
+regex = '''base64_encode\('''
+explain = "encodes to base64 (base64_encode)"
+operation = "base64"
+direction = "encode"
+
+[[rule]]
+id = "php.gzinflate"
+languages = ["php"]
+regex = '''gzinflate\('''
+explain = "inflates a raw DEFLATE stream (gzinflate) - the classic crypter layer"
+# "deflate", not "zlib": PHP's gzinflate takes a *headerless* stream, which is
+# zlib.decompress(data, -15) and not zlib.decompress(data). Getting this wrong
+# makes the generated script fail on the one line that matters.
+operation = "deflate"
+direction = "decode"
+
+[[rule]]
+id = "php.gzuncompress"
+languages = ["php"]
+regex = '''gzuncompress\('''
+explain = "inflates a zlib stream (gzuncompress)"
+operation = "zlib"
+direction = "decode"
+
+[[rule]]
+id = "php.gzdecode"
+languages = ["php"]
+regex = '''gzdecode\('''
+explain = "decompresses a gzip stream (gzdecode)"
+operation = "gzip"
+direction = "decode"
+
+[[rule]]
+id = "php.rot13"
+languages = ["php"]
+regex = '''str_rot13\('''
+explain = "rotates the letters by 13 (str_rot13)"
+operation = "rot13"
+direction = "both"
+
+[[rule]]
+id = "php.strrev"
+languages = ["php"]
+regex = '''strrev\('''
+explain = "reverses the string (strrev)"
+operation = "reverse"
+direction = "both"
+
+[[rule]]
+id = "php.hex2bin"
+languages = ["php"]
+regex = '''hex2bin\(\s*['"]([0-9a-fA-F]{16,})['"]'''
+explain = "decodes a hex string (hex2bin)"
+operation = "hex"
+direction = "decode"
+capture = "blob"
+capture_as = "hex"
+
+[[rule]]
+id = "php.pack.hex"
+languages = ["php"]
+regex = '''pack\(\s*['"]H\*?['"]\s*,\s*['"]([0-9a-fA-F]{16,})['"]'''
+explain = "decodes a hex string (pack('H*', ...))"
+operation = "hex"
+direction = "decode"
+capture = "blob"
+capture_as = "hex"
+
+[[rule]]
+id = "php.urldecode"
+languages = ["php"]
+regex = '''(?:raw)?urldecode\('''
+explain = "undoes percent-encoding (urldecode)"
+operation = "url"
+direction = "decode"
+
+[[rule]]
+id = "php.openssl.decrypt"
+languages = ["php"]
+regex = '''openssl_decrypt\('''
+explain = "decrypts with OpenSSL (openssl_decrypt): the cipher name is its second argument"
+operation = "cipher"
+cipher = "aes"
+mode = "cbc"
+direction = "decode"
+
+[[rule]]
+id = "php.openssl.encrypt"
+languages = ["php"]
+regex = '''openssl_encrypt\('''
+explain = "encrypts with OpenSSL (openssl_encrypt)"
+operation = "cipher"
+cipher = "aes"
+mode = "cbc"
+direction = "encode"
+
+[[rule]]
+id = "php.openssl.cipher"
+languages = ["php"]
+regex = '''openssl_(?:de|en)crypt\(\s*[^,]+,\s*['"]([A-Za-z0-9-]{3,20})['"]'''
+explain = "the OpenSSL cipher and mode named in the call"
+capture = "command"
+
+[[rule]]
+id = "php.mcrypt"
+languages = ["php"]
+regex = '''mcrypt_(?:de|en)crypt\(\s*MCRYPT_([A-Z0-9_]+)'''
+explain = "uses the old mcrypt extension; RIJNDAEL_128 is AES-128 (block size, not key size)"
+operation = "cipher"
+cipher = "aes"
+direction = "both"
+capture = "command"
+
+[[rule]]
+id = "php.key.literal"
+languages = ["php"]
+regex = '''\$(?:key|k|secret|passphrase)\s*=\s*['"]([^'"\n]{4,64})['"]'''
+explain = "a key or passphrase written in the script"
+capture = "key"
+
+[[rule]]
+id = "php.iv.literal"
+languages = ["php"]
+regex = '''\$(?:iv|nonce)\s*=\s*['"]([^'"\n]{4,64})['"]'''
+explain = "an IV or nonce written in the script"
+capture = "iv"
+
+[[rule]]
+id = "php.password.literal"
+languages = ["php"]
+regex = '''\$(?:pass|password|pwd|mdp)\s*=\s*['"]([^'"\n]{3,64})['"]'''
+explain = "a password written in the script"
+capture = "password"
+
+[[rule]]
+id = "php.xor.loop"
+languages = ["php"]
+regex = '''\^\s*(?:ord\(\s*)?\$[A-Za-z_][A-Za-z0-9_]*\s*[\[{]'''
+explain = "XORs the data byte by byte against a key (the ^ operator inside a loop)"
+operation = "xor"
+direction = "both"
+
+[[rule]]
+id = "php.md5.key"
+languages = ["php"]
+regex = '''(?:md5|sha1|hash)\(\s*['"]?(?:sha\d+['"]\s*,\s*)?[^)]*\)'''
+explain = "derives the key by hashing something (md5/sha1/hash) - try the same digest in `ctfc sym --pass`"
+
+[[rule]]
+id = "php.eval"
+languages = ["php"]
+regex = '''\beval\s*\('''
+explain = "runs the decoded string as PHP (eval): whatever came before it is the payload"
+behaviour = "execute"
+
+[[rule]]
+id = "php.assert"
+languages = ["php"]
+regex = '''\bassert\s*\('''
+explain = "runs its argument as PHP (assert, the quiet eval)"
+behaviour = "execute"
+
+[[rule]]
+id = "php.create_function"
+languages = ["php"]
+regex = '''create_function\s*\('''
+explain = "builds a function from a string and runs it (create_function - an eval in disguise)"
+behaviour = "execute"
+
+[[rule]]
+id = "php.preg.e"
+languages = ["php"]
+# The /e modifier lives *inside* the pattern string - preg_replace('/(.*)/e', ...)
+# - so the regex has to look for it before the closing quote, not after.
+regex = '''preg_replace\s*\(\s*['"][^'"\n]*[/#~][a-zA-Z]{0,6}e[a-zA-Z]{0,6}['"]'''
+explain = "preg_replace with the /e modifier: the replacement is executed as PHP"
+behaviour = "execute"
+
+[[rule]]
+id = "php.shell"
+languages = ["php"]
+regex = '''\b(?:system|shell_exec|passthru|popen|proc_open|exec)\s*\('''
+explain = "runs a system command"
+behaviour = "process"
+
+[[rule]]
+id = "php.request"
+languages = ["php"]
+regex = '''\$_(?:GET|POST|REQUEST|COOKIE|FILES)\s*\[\s*['"]?([A-Za-z0-9_]{1,32})'''
+explain = "takes its input from the HTTP request: this is a web shell, and the captured name is the parameter it expects"
+behaviour = "network"
+capture = "command"
+
+[[rule]]
+id = "php.file.read"
+languages = ["php"]
+regex = '''file_get_contents\(\s*['"]([^'"\n]{3,200})['"]'''
+explain = "reads a file or a URL (file_get_contents)"
+capture = "path"
+
+[[rule]]
+id = "php.file.write"
+languages = ["php"]
+regex = '''(?:file_put_contents|fwrite|fputs)\s*\('''
+explain = "writes a file"
+behaviour = "filesystem"
+
+[[rule]]
+id = "php.curl"
+languages = ["php"]
+regex = '''curl_(?:exec|setopt|init)\s*\('''
+explain = "makes an HTTP request with cURL"
+behaviour = "network"
+
+[[rule]]
+id = "php.url"
+languages = ["php"]
+regex = '''['"](https?://[^'"\s]{6,200})['"]'''
+explain = "a URL written in the script"
+capture = "url"
+
+[[rule]]
+id = "php.blob.variable"
+languages = ["php"]
+regex = '''\$[A-Za-z_][A-Za-z0-9_]*\s*=\s*['"]([A-Za-z0-9+/=]{40,})['"]\s*;'''
+explain = "a long base64 string assigned to a variable: the payload the chain below decodes"
+capture = "blob"
+capture_as = "base64"

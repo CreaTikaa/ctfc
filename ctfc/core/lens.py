@@ -210,6 +210,11 @@ EXTENSIONS = {
     ".bash": "bash",
     ".vbs": "vbs",
     ".vbe": "vbs",
+    ".php": "php",
+    ".php5": "php",
+    ".php7": "php",
+    ".phtml": "php",
+    ".inc": "php",
 }
 
 # (language, regex-free marker, points). Simple and readable on purpose.
@@ -247,6 +252,16 @@ MARKERS: tuple[tuple[str, str, int], ...] = (
     ("vbs", "WScript", 4),
     ("vbs", "End Function", 3),
     ("vbs", "End Sub", 3),
+    # PHP: the opening tag is decisive, the rest are the web-shell staples.
+    ("php", "<?php", 6),
+    ("php", "<?=", 4),
+    ("php", "$_POST", 4),
+    ("php", "$_GET", 4),
+    ("php", "base64_decode(", 3),
+    ("php", "gzinflate(", 4),
+    ("php", "->", 1),
+    ("php", "echo ", 1),
+    ("php", "function ", 1),
 )
 
 

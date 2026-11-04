@@ -34,7 +34,7 @@ the future is kept and flagged, not dropped: a forged timestamp is evidence.
 mirror the encryptor, do not guess.
 
 - `ctfc lens script.ps1` - what it does, in order, with the keys it hardcodes, and a
-  Python script that undoes it. Python, PowerShell, JS, bash, VBS. Nothing is executed.
+  Python script that undoes it. Python, PowerShell, JS, bash, VBS, PHP. Nothing is executed.
 - `ctfc lens script.ps1 --against file.secured` - the encrypted file too: the script's
   own literals are tried as its keys (obfuscated names, keys passed through 3 functions,
   two XOR keys at once: Cave Expedition).
