@@ -145,6 +145,29 @@ def from_bytes(data: bytes) -> list[tuple[str, list[Reading]]]:
     return results
 
 
+def from_unix(value: int | float) -> str:
+    """A Unix timestamp as text, for a field a structure *declares* to be one.
+
+    Same contract as `from_filetime`: zero or absurd means "not recorded" and
+    comes back empty, rather than as 1970-01-01.
+    """
+    if not value or value <= 0:
+        return ""
+    try:
+        when = UNIX_EPOCH + timedelta(seconds=float(value))
+    except (OverflowError, OSError, ValueError):
+        return ""
+    if not _plausible(when):
+        return ""
+    return when.strftime("%Y-%m-%d %H:%M:%S UTC")
+
+
+def from_dos(date: int, time: int) -> str:
+    """An MS-DOS date/time pair (ZIP, cabinet) as text. Two-second resolution."""
+    reading = decode_dos((date << 16) | time)
+    return reading.text if reading is not None else ""
+
+
 def from_filetime(value: int) -> str:
     """A Windows FILETIME as text, for the readers that already know it is one.
 

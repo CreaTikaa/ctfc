@@ -516,6 +516,17 @@ EN: dict[str, str] = {
         "ctfc workspace . --json"
     ),
     "opt_workspace_read": "seconds spent reading the folder before trying pairs (default: half)",
+    "cmd_timeline": (
+        "every timestamp in a file or a folder, merged into one table in UTC: "
+        "prefetch runs, shortcut dates, event records, archive entries, build stamps"
+    ),
+    "cmd_timeline_ex": (
+        "examples: ctfc timeline ./evidence  |  ctfc timeline app.lnk  |  "
+        "ctfc timeline ./evidence --since 2023-11-14 --until 2023-11-15"
+    ),
+    "opt_timeline_since": "drop the dates before this one (YYYY-MM-DD)",
+    "opt_timeline_until": "drop the dates after this one (YYYY-MM-DD, that day included)",
+    "opt_timeline_no_fs": "leave out each file's own modification time",
     "cmd_scan": "run detect + auto on every file of a folder and rank them",
     "cmd_scan_ex": (
         "examples: ctfc scan _dump.bin.extracted  |  ctfc scan ./objects --seconds 300  |  "

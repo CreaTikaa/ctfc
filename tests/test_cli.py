@@ -595,3 +595,21 @@ def test_workspace_finds_the_password_in_another_file(tmp_path):
     out = result.stdout.decode()
     assert "CYBN{cli_workspace}" in out
     assert "correct-horse" in out
+
+
+def test_timeline_merges_the_dates_of_a_folder(tmp_path):
+    """`ctfc timeline`: a shortcut and an event log, sorted into one table."""
+    from pathlib import Path as _Path
+
+    fixtures = _Path(__file__).resolve().parent / "fixtures"
+    (tmp_path / "dropper.lnk").write_bytes((fixtures / "winartifact_dropper.lnk").read_bytes())
+    (tmp_path / "log.evtx").write_bytes((fixtures / "audit_security.evtx").read_bytes())
+
+    result = run_ctfc("timeline", str(tmp_path), "--no-filesystem", "--json")
+    assert result.returncode == 0
+    import json
+
+    payload = json.loads(result.stdout.decode())
+    whens = [entry["when"] for entry in payload["entries"]]
+    assert whens == sorted(whens)
+    assert any(entry["kind"] == "event log record" for entry in payload["entries"])

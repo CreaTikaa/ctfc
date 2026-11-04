@@ -2112,3 +2112,43 @@ height that would be wrong. If fewer rows inflate than the header claims, the
 IDAT is truncated - a damaged file, not a cropped one - and again nothing is
 changed. A healthy PNG comes back byte for byte identical, which is what the
 tests check after every repair.
+
+
+## 34. `ctfc timeline`: every date in one table (`ctfc/core/timeline.py`)
+
+"What happened, and in which order" is the question a forensics challenge
+usually asks, and the answer is spread over six commands. The dates themselves
+were already being read - a prefetch run time, a shortcut's created/written/
+accessed trio, an event log record, a ZIP or cabinet entry, a PE build stamp,
+a Docker build step, a mail header - so this feature is mostly plumbing, and
+the work went into making the plumbing honest.
+
+**One shape.** Every reader hands its dates back as `readers.Event`, whose
+`when` is always `YYYY-MM-DD HH:MM:SS UTC`. That is both what a human wants to
+read and a string that sorts chronologically, so merging six formats is a
+`sort()` and no date is ever parsed twice. Two conversions were added to
+`core/timestamps.py` for the formats that store raw numbers - `from_unix` and
+`from_dos` - both with the same contract as the existing `from_filetime`: a
+zero or absurd value means "not recorded" and comes back empty, never
+1970-01-01.
+
+**Two readers had to start keeping what they already parsed.** `zipinfo` now
+reads the MS-DOS date and time at offsets 12 and 14 of each central-directory
+header, and `archive` carries a `modified` field on every member (filled from
+tar's `mtime` and from a cabinet's DOS pair). Both were being skipped because
+nothing had asked for them yet.
+
+**What the table refuses to hide.**
+
+- A **date in the future** is kept and flagged. So is anything a format stored
+  without a time zone - a ZIP or cabinet stamp is the writer's local clock, and
+  comparing it with a UTC row deserves a second of doubt. Dropping either would
+  hide exactly what a challenge is built on.
+- The **file's own mtime** is included (and `--no-filesystem` removes it). It
+  is the weakest evidence on the table - copying a folder rewrites it - but
+  leaving it out silently is worse than showing it labelled.
+- `--since` / `--until` compare the date strings, and `--until 2024-05-01`
+  means the whole of that day rather than its first second.
+
+The walk is `solve.walk()` with `decode=False`: a decoding chain has nothing to
+say about time, and turning it off keeps a folder of payloads fast.

@@ -28,7 +28,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from ctfc.core import cab as cab_module
-from ctfc.core import dockerimg, rar, sevenzip, tarfmt
+from ctfc.core import dockerimg, rar, sevenzip, tarfmt, timestamps
 from ctfc.core.errors import FormatError
 from ctfc.core.flags import FlagSet, find_flags
 
@@ -59,6 +59,10 @@ class ArchiveEntry:
     encrypted: bool = False
     directory: bool = False
     crc: int | None = None
+    # The member's modification time, as text ("YYYY-MM-DD HH:MM:SS UTC"), when
+    # the format records one. tar and cab do; 7z's is in an optional header
+    # ctfc does not read, and RAR's listing here does not carry it.
+    modified: str = ""
     notes: list[str] = field(default_factory=list)
     data: bytes | None = None  # filled when the format and codec allowed it
     # False for the members that have no content of their own (directories,
@@ -97,6 +101,7 @@ class ArchiveReport:
                     "encrypted": entry.encrypted,
                     "directory": entry.directory,
                     "crc": None if entry.crc is None else f"{entry.crc:08x}",
+                    "modified": entry.modified,
                     "extracted": entry.data is not None,
                     "notes": list(entry.notes),
                 }
@@ -194,6 +199,7 @@ def _from_tar(data: bytes, read_contents: bool) -> ArchiveReport:
             packed=entry.size,
             method="stored",
             directory=entry.kind == "directory",
+            modified=timestamps.from_unix(entry.mtime),
             notes=list(entry.problems),
         )
         if entry.kind not in ("file", "directory"):
@@ -301,6 +307,10 @@ def _from_cab(data: bytes, read_contents: bool) -> ArchiveReport:
                 size=file.size,
                 method=folder.method if folder else "?",
                 data=file.data,
+                # from_dos, not the cabinet's own text: every event in ctfc
+                # carries the same "... UTC" shape so that sorting is a string
+                # comparison (a DOS stamp has no zone - it is the writer's clock).
+                modified=timestamps.from_dos(file.date, file.time),
                 notes=[f"modified {file.dos_timestamp}"],
             )
         )

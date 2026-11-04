@@ -27,6 +27,7 @@ import re
 import zipfile
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from datetime import UTC
 
 from ctfc.core import (
     archive,
@@ -71,6 +72,20 @@ class Child:
     extract: str = ""
 
 
+@dataclass(frozen=True)
+class Event:
+    """One timestamp a reader found, already read as a date.
+
+    `when` is always "YYYY-MM-DD HH:MM:SS UTC", which is both what a human
+    wants and a string that sorts chronologically - so `ctfc timeline` can
+    merge events from six formats without reparsing anything.
+    """
+
+    when: str
+    kind: str  # "tar mtime", "prefetch run", "shortcut written"...
+    what: str  # the member, the program, the record
+
+
 @dataclass
 class Opened:
     """What one reader made of one file."""
@@ -83,10 +98,37 @@ class Opened:
     flags: list[str] = field(default_factory=list)  # flags the reader found itself
     notes: list[str] = field(default_factory=list)
     commands: list[str] = field(default_factory=list)  # what the reader suggests next
+    events: list[Event] = field(default_factory=list)  # the timestamps it carries
     # How to put the children on disk, so that a report can print a command the
     # user can actually run. "" when the reader has no --extract.
     extract: str = ""
     error: str = ""
+
+
+def _iso(value: str) -> str:
+    """Any date string a format wrote, as "YYYY-MM-DD HH:MM:SS UTC", or "".
+
+    Docker writes RFC 3339, a mail header writes RFC 2822; both are turned into
+    the one shape every event uses so that sorting is a string comparison.
+    """
+    text = value.strip()
+    if not text:
+        return ""
+    from datetime import datetime
+    from email.utils import parsedate_to_datetime
+
+    for parse in (
+        lambda item: datetime.fromisoformat(item.replace("Z", "+00:00")),
+        parsedate_to_datetime,
+    ):
+        try:
+            when = parse(text)
+        except (ValueError, TypeError, IndexError):
+            continue
+        if when.tzinfo is None:
+            when = when.replace(tzinfo=UTC)
+        return when.astimezone(UTC).strftime("%Y-%m-%d %H:%M:%S UTC")
+    return ""
 
 
 def _keep(children: list[Child]) -> list[Child]:
@@ -143,12 +185,24 @@ def _open_archive(data: bytes, flagset: FlagSet | None, path: str) -> Opened:
                 children.append(
                     Child(deleted.name, "deleted by a later layer", deleted.content),
                 )
+    events = [
+        Event(entry.modified, f"{report.format} member modified", entry.name)
+        for entry in report.entries
+        if entry.modified
+    ]
+    if report.docker is not None:
+        for item in report.docker.config.get("history", [])[:60]:
+            when = _iso(str(item.get("created", "")))
+            if when:
+                step = str(item.get("created_by", ""))[:120]
+                events.append(Event(when, "Docker build step", step))
     return Opened(
         detail=f"{report.format}, {len(report.entries)} entr(ies)",
         children=_keep(children),
         flags=list(report.flags),
         notes=list(report.notes),
         commands=list(report.commands),
+        events=events,
         extract="ctfc archive {file} --extract {dir}",
     )
 
@@ -169,6 +223,11 @@ def _open_zip(data: bytes, flagset: FlagSet | None, path: str) -> Opened:
     return Opened(
         detail=f"ZIP, {len(report.entries)} entr(ies)",
         children=_keep(children),
+        events=[
+            Event(entry.modified, "ZIP entry modified (local clock)", entry.name)
+            for entry in report.entries
+            if entry.modified
+        ],
         notes=notes,
         commands=list(report.commands),
         # -j flattens the paths, which is what makes the file name printed next
@@ -232,7 +291,14 @@ def _open_msg(data: bytes, flagset: FlagSet | None, path: str) -> Opened:
     body = report.body or report.html_body
     if body:
         children.append(Child("body.txt", "mail body", body.encode()))
+    events: list[Event] = []
+    for name in ("Date", "date", "Delivery time", "Creation time"):
+        when = _iso(report.headers.get(name, ""))
+        if when:
+            events.append(Event(when, f"mail {name.lower()}", report.headers.get("Subject", "")))
+            break
     return Opened(
+        events=events,
         detail=f"Outlook message, {len(report.attachments)} attachment(s)",
         children=_keep(children),
         flags=list(report.flags),
@@ -309,7 +375,11 @@ def _open_pe(data: bytes, flagset: FlagSet | None, path: str) -> Opened:
                 "\n".join(report.dotnet_literals).encode(),
             )
         )
+    events = (
+        [Event(report.timestamp_text, "PE build stamp", "linked")] if report.timestamp_text else []
+    )
     return Opened(
+        events=events,
         detail=f"PE {report.bits}-bit {report.machine}" + (", .NET" if report.is_dotnet else ""),
         children=_keep(children),
         flags=list(report.flags),
@@ -339,7 +409,26 @@ def _open_exe(data: bytes, flagset: FlagSet | None, path: str) -> Opened:
 
 def _open_winartifact(data: bytes, flagset: FlagSet | None, path: str) -> Opened:
     report = winartifact.analyse(data, "", flagset)
+    events: list[Event] = []
+    if report.lnk is not None:
+        target = report.lnk.local_path or report.lnk.relative_path or "the target"
+        for when, label in (
+            (report.lnk.created, "shortcut target created"),
+            (report.lnk.written, "shortcut target written"),
+            (report.lnk.accessed, "shortcut target accessed"),
+        ):
+            if when:
+                events.append(Event(when, label, target))
+    if report.prefetch is not None:
+        for run in report.prefetch.runs:
+            if run.when:
+                events.append(Event(run.when, "program run (prefetch)", report.prefetch.name))
+    if report.jumplist is not None:
+        for entry in report.jumplist.entries:
+            if entry.accessed:
+                events.append(Event(entry.accessed, "jump list entry opened", entry.path))
     return Opened(
+        events=events,
         detail=report.kind,
         flags=list(report.flags),
         notes=list(report.notes),
@@ -360,6 +449,11 @@ def _open_evtx(data: bytes, flagset: FlagSet | None, path: str) -> Opened:
                 Child(f"record{record.number}.ps1", "decoded command", record.command.encode())
             )
     return Opened(
+        events=[
+            Event(record.when, "event log record", f"record {record.number}")
+            for record in report.records
+            if record.when
+        ],
         detail=f"{len(report.records)} record(s) read",
         children=_keep(children),
         flags=flags,

@@ -355,6 +355,37 @@ def print_hash(console: Console, report) -> None:
         console.print(f"[cyan]*[/] {safe(note)}")
 
 
+def print_timeline(console: Console, report) -> None:
+    """`ctfc timeline`: one table, oldest first, with the source of every row."""
+    title = f"{report.root} ({report.files} file(s))"
+    if report.span:
+        title += f"  {report.span}"
+    if not report.entries:
+        console.print(f"[yellow]No timestamp[/] in {safe(report.root)}.")
+    else:
+        table = Table(title=title, expand=True)
+        table.add_column("when (UTC)", width=19, no_wrap=True)
+        table.add_column("what happened", width=26)
+        table.add_column("to what", ratio=3)
+        table.add_column("from", ratio=1)
+        for entry in report.entries:
+            when = safe(entry.when.replace(" UTC", ""))
+            table.add_row(
+                f"[yellow]{when}[/]" if entry.note else when,
+                safe(entry.kind, 40),
+                safe(entry.what, 70),
+                safe(entry.source.split(" > ")[-1], 40),
+            )
+        console.print(table)
+        for entry in report.entries:
+            if entry.note:
+                console.print(f"[yellow]*[/] {safe(entry.when)} {safe(entry.kind)}: {entry.note}")
+    for note in report.notes:
+        console.print(f"[cyan]*[/] {safe(note)}")
+    if report.budget:
+        console.print(f"[dim]{safe(report.budget)}[/]")
+
+
 def print_workspace(console: Console, report) -> None:
     """`ctfc workspace`: what the folder holds, and which pairs worked."""
     console.print(

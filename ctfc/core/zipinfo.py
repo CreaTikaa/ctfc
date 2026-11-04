@@ -28,7 +28,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from ctfc.core import crc32
+from ctfc.core import crc32, timestamps
 from ctfc.core.budget import Budget
 from ctfc.core.errors import FormatError
 
@@ -79,6 +79,7 @@ class Entry:
     uncompressed_size: int
     local_offset: int
     comment: str = ""
+    modified: str = ""  # the DOS date/time the central directory records
     aes_strength: str = ""
     real_method: int | None = None  # the method hidden behind WinZip AES
     recovered: bytes | None = None  # plaintext recovered from the CRC32
@@ -182,6 +183,10 @@ def read_central_directory(data: bytes) -> tuple[list[Entry], str]:
             compressed_size=_u32(data, position + 20),
             uncompressed_size=_u32(data, position + 24),
             local_offset=_u32(data, position + 42),
+            # Offsets 12 and 14 of the central header: the MS-DOS time and
+            # date. Two-second resolution and no time zone - that is the
+            # format, not a loss here.
+            modified=timestamps.from_dos(_u16(data, position + 14), _u16(data, position + 12)),
         )
         extra_at = position + 46 + name_length
         _parse_extra(entry, data[extra_at : extra_at + extra_length])
@@ -266,6 +271,7 @@ class ZipReport:
                     "encrypted": entry.encrypted,
                     "zipcrypto": entry.zipcrypto,
                     "crc": f"{entry.crc:08x}",
+                    "modified": entry.modified,
                     "compressed_size": entry.compressed_size,
                     "uncompressed_size": entry.uncompressed_size,
                     "comment": entry.comment,

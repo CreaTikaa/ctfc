@@ -20,6 +20,14 @@ key is never in the same file as the thing it opens. It prints the pairs that
 worked ("the password in mail.eml opens backup.zip"), and names what it could
 not try. `ctfc scan <folder>` stays the one to rank a folder of carved files.
 
+### "What happened, and in which order?"
+
+`ctfc timeline <file-or-folder>` merges every date the files carry - prefetch
+runs, a shortcut's three stamps, event records, archive entries, a PE build
+stamp, a Docker build step, a mail's Date - into one table in UTC, each row
+naming where it came from. `--since` / `--until` narrow the window. A date in
+the future is kept and flagged, not dropped: a forged timestamp is evidence.
+
 ## 1. Do you have the code that encrypted it?
 
 **Yes** (a script, a decompiled .pyc, a .NET method, PowerShell from event logs):

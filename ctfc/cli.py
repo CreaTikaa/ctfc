@@ -37,6 +37,7 @@ from ctfc.core.rsa import RsaError, build_key, keys_match, parse_key, solve_rsa
 from ctfc.core.scan import scan as scan_folder
 from ctfc.core.solve import solve as solve_file
 from ctfc.core.symmetric import CryptoError, SolveReport, solve_symmetric
+from ctfc.core.timeline import build as build_timeline
 from ctfc.core.types import Input
 from ctfc.core.workspace import analyse as analyse_workspace
 from ctfc.core.xor import guess_key_lengths, solve_xor, xor_inputs
@@ -258,6 +259,14 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--depth", type=int, default=5, help=t("opt_solve_depth"))
     p.add_argument("--leads", type=int, default=3, help=t("opt_solve_leads"))
     p.add_argument("--steps", action="store_true", help=t("opt_solve_steps"))
+
+    p = add("timeline")
+    p.add_argument("path", help=t("arg_folder"))
+    p.add_argument("--since", default="", help=t("opt_timeline_since"))
+    p.add_argument("--until", default="", help=t("opt_timeline_until"))
+    p.add_argument("--no-filesystem", action="store_true", help=t("opt_timeline_no_fs"))
+    p.add_argument("--no-recursive", action="store_true", help=t("opt_scan_no_recursive"))
+    p.add_argument("--seconds", type=float, default=60.0, help=t("opt_seconds"))
 
     p = add("workspace")
     p.add_argument("folder", help=t("arg_folder"))
@@ -1607,6 +1616,26 @@ def cmd_solve(args: argparse.Namespace, config: Config, console: Console) -> int
     return 0 if report.flags else 1
 
 
+def cmd_timeline(args: argparse.Namespace, config: Config, console: Console) -> int:
+    """Merge every timestamp of a file or a folder into one table."""
+    budget = Budget(max_attempts=1_000_000, max_seconds=args.seconds)
+    report = build_timeline(
+        Path(args.path),
+        flagset=flagset_from(config),
+        budget=budget,
+        recursive=not args.no_recursive,
+        since=args.since,
+        until=args.until,
+        filesystem=not args.no_filesystem,
+    )
+    remember(args, config, None, args.path, summary=[report.span] if report.entries else [])
+    if args.json:
+        print(json.dumps(report.to_dict(), indent=2))
+        return 0 if report.entries else 1
+    render.print_timeline(console, report)
+    return 0 if report.entries else 1
+
+
 def cmd_workspace(args: argparse.Namespace, config: Config, console: Console) -> int:
     """Pool the secrets, keys and ciphertexts of a folder, then try the pairs."""
     budget = Budget(max_attempts=5_000_000, max_seconds=args.seconds)
@@ -1812,6 +1841,7 @@ def main(argv: list[str] | None = None) -> int:
         "scan": cmd_scan,
         "solve": cmd_solve,
         "workspace": cmd_workspace,
+        "timeline": cmd_timeline,
         "office": cmd_office,
         "pdf": cmd_pdf,
         "stego": cmd_stego,
