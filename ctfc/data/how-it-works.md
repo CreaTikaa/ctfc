@@ -2308,3 +2308,44 @@ opens more brackets than it closes and holds no `;`. When every pair on the
 line is nested the group is reversed and the report says so; when one pair is
 not, the line is left alone, because then it is a sequence rather than a chain.
 Both cases have a test.
+
+
+## 39. Fuzzing the web API (`tests/fuzz_web.py`)
+
+`tests/fuzz_formats.py` proves that `pdf.analyse` on broken bytes raises
+`PdfError` rather than `IndexError`. But the page is the part a stranger's file
+reaches **through Flask**, and between the socket and the reader there is a
+layer of its own: the body has to be a JSON object, an input string has to
+parse, an option has to be a dict when the code calls `.get()` on it, a session
+name ends up in a path. So the rule here is about the *answer*, not the
+exception:
+
+> any body at all -> a JSON response with a 2xx or 4xx status. Never 5xx.
+
+Bodies are built by a seeded RNG from the keys the API really uses, filled with
+values chosen to break assumptions - a mutated fixture, 2**63, a list where an
+object belongs, `hex:` followed by non-hex, a 200 KB string, `null`, and one in
+eight requests is not JSON at all. Path parameters get their own pass with
+`..`, absolute paths, URL-encoded separators and NUL bytes, and an answer that
+both succeeds *and* contains a real `/etc/passwd` line counts as a failure
+(rule 5 of `CLAUDE.md`: the server sanitises paths).
+
+### What it found, within minutes
+
+Three 500s, all the same shape - **a JSON type assumed rather than checked**:
+
+- `data_b64` as an object went straight into `base64.b64decode`, which is a
+  `TypeError`, not a `binascii.Error`, so the `except` clause missed it;
+- `input` as a list reached `str()` and then the parser, which is harmless, but
+  as a dict it produced nonsense rather than a clear refusal;
+- `options` as a string or a list met `.get()`, an `AttributeError`, in
+  fifteen different routes - now one `options_of()` helper that insists on an
+  object and raises `InputError`, which the error handlers already turn into a
+  400 with a readable message.
+
+None of these is dramatic - the server binds to 127.0.0.1 - but each one is a
+traceback in the terminal at the worst moment of a CTF, and a 500 hides the
+real answer ("this is not valid base64") behind a wall of HTML.
+
+`make fuzz-web` is the long sweep, and `tests/test_fuzz_web.py` runs sixty
+rounds inside `make test`, the same arrangement the reader fuzzer has.

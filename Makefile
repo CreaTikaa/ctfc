@@ -3,13 +3,14 @@
 
 PY := .venv/bin/python
 
-.PHONY: help venv test demo fuzz lint fmt serve fixtures vendor bundle
+.PHONY: help venv test demo fuzz fuzz-web lint fmt serve fixtures vendor bundle
 
 help:
 	@echo "make venv      create .venv and install ctfc + dev tools"
 	@echo "make test      run the test suite"
 	@echo "make demo      run every command of docs/HANDOFF.md section 7 and check it"
 	@echo "make fuzz      throw broken files at every format reader (long sweep)"
+	@echo "make fuzz-web  throw random JSON at every web route (long sweep)"
 	@echo "make lint      check the code with ruff"
 	@echo "make fmt       auto-format the code with ruff"
 	@echo "make fixtures  regenerate tests/fixtures/"
@@ -37,6 +38,11 @@ ROUNDS ?= 800
 
 fuzz:
 	$(PY) tests/fuzz_formats.py --rounds $(ROUNDS) --seed $(SEED)
+
+# The same idea one layer up: the page is what a stranger's file reaches
+# *through* Flask, and a 500 there is a bug of its own.
+fuzz-web:
+	$(PY) tests/fuzz_web.py --rounds $(ROUNDS) --seed $(SEED)
 
 lint:
 	$(PY) -m ruff check .

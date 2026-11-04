@@ -59,16 +59,30 @@ PREVIEW_BYTES = 4096  # how much of the input is sent back for the hexdump view
 
 
 def input_from_payload(payload: dict, decode_bare: bool = True) -> Input:
-    """Build an `Input` from the JSON body sent by the browser."""
+    """Build an `Input` from the JSON body sent by the browser.
+
+    Every field is checked for its *type* before it is used: JSON lets a caller
+    send a list or an object where a string belongs, and handing that to
+    `b64decode` is a TypeError, which Flask turns into a 500. Found by
+    `tests/fuzz_web.py`, which is exactly what it is for.
+    """
     if "data_b64" in payload:
+        raw = payload["data_b64"]
+        if not isinstance(raw, str):
+            raise InputError(
+                f"data_b64 must be a string, not {type(raw).__name__}"
+            )
         try:
-            data = base64.b64decode(payload["data_b64"], validate=True)
+            data = base64.b64decode(raw, validate=True)
         except (binascii.Error, ValueError) as exc:
             raise InputError(f"uploaded file is not valid base64 ({exc})") from exc
         name = str(payload.get("name", "upload"))[:100]
         return Input(data=data, source=f"upload:{name}")
 
-    text = str(payload.get("input", ""))
+    given = payload.get("input", "")
+    if not isinstance(given, (str, int, float)) or isinstance(given, bool):
+        raise InputError(f"input must be a string, not {type(given).__name__}")
+    text = str(given)
     if not text:
         raise InputError(t("web_empty_input"))
     fmt = payload.get("format", "auto")
@@ -79,6 +93,21 @@ def input_from_payload(payload: dict, decode_bare: bool = True) -> Input:
     if fmt == "b64":
         return Input(data=decode_base64(text), source="b64")
     return parse_input(text, allow_files=False, decode_bare=decode_bare)
+
+
+def options_of(payload: dict) -> dict:
+    """The `options` object of a request body, insisting that it *is* an object.
+
+    JSON lets a caller send `"options": "hex:41"` or a list, and `.get()` on
+    that is an AttributeError - a 500 for what is really a bad request. Found
+    by `tests/fuzz_web.py`.
+    """
+    options = payload.get("options")
+    if options is None or options == "":
+        return {}
+    if not isinstance(options, dict):
+        raise InputError(f"options must be an object, not {type(options).__name__}")
+    return options
 
 
 def _number(value: object) -> int | None:
@@ -146,7 +175,7 @@ def web_command(tool: str, payload: dict) -> str:
         text = str(payload.get("input") or "")
         name = "text:" + (text[:40] + "..." if len(text) > 40 else text)
     words = ["ctfc", tool, name]
-    options = payload.get("options") or {}
+    options = options_of(payload)
     for option, flag in WEB_OPTIONS.get(tool, ()):
         value = str(options.get(option) or "").strip()
         if value:
@@ -258,7 +287,7 @@ def create_app(config: Config | None = None) -> Flask:
 
     def prepare_work(kind: str, payload: dict) -> tuple[Callable[[Budget], dict], Budget]:
         """Read the request now; return the work to run (maybe in a thread) and its budget."""
-        options = payload.get("options") or {}
+        options = options_of(payload)
         if kind == "auto":
             inp = input_from_payload(payload, decode_bare=False)
             budget = Budget(max_attempts=config.auto_budget, max_seconds=30)
@@ -514,7 +543,7 @@ def create_app(config: Config | None = None) -> Flask:
         value = str(payload.get("input", "")).strip()
         if not value:
             raise InputError(t("web_empty_input"))
-        options = payload.get("options") or {}
+        options = options_of(payload)
         report = identify_hash(value, try_passwords=not options.get("no_passwords"))
         return jsonify(report.to_dict())
 
@@ -534,7 +563,7 @@ def create_app(config: Config | None = None) -> Flask:
         """
         payload = read_payload()
         inp = input_from_payload(payload, decode_bare=False)
-        options = payload.get("options") or {}
+        options = options_of(payload)
         reader = str(options.get("reader") or "").strip()
         answer = formats.analyse(inp.data, reader, flagset)
         answer["input"] = input_summary(inp)
@@ -547,7 +576,7 @@ def create_app(config: Config | None = None) -> Flask:
         from ctfc.core import crc32
 
         payload = read_payload()
-        options = payload.get("options") or {}
+        options = options_of(payload)
         value = str(payload.get("input", "")).strip().lower().removeprefix("0x")
         if not value:
             raise InputError(t("web_empty_input"))
@@ -592,7 +621,7 @@ def create_app(config: Config | None = None) -> Flask:
         token = str(payload.get("input", "")).strip()
         if not token:
             raise InputError(t("web_empty_input"))
-        options = payload.get("options") or {}
+        options = options_of(payload)
         report = jwt_module.analyse(
             token, flagset=flagset, try_secrets=not options.get("no_secrets")
         )
@@ -608,7 +637,7 @@ def create_app(config: Config | None = None) -> Flask:
         payload = read_payload()
         # The message we already have a digest for: text, never auto-decoded.
         inp = input_from_payload(payload, decode_bare=False)
-        options = payload.get("options") or {}
+        options = options_of(payload)
         digest_text = str(options.get("digest") or "").strip()
         if not digest_text:
             raise hashext.HashExtError(t("web_extend_no_digest"))
@@ -643,7 +672,7 @@ def create_app(config: Config | None = None) -> Flask:
         payload = read_payload()
         # Numbers, not bytes: never auto-decode the pasted text as hex/base64.
         inp = input_from_payload(payload, decode_bare=False)
-        options = payload.get("options") or {}
+        options = options_of(payload)
         integers, floats = prng_mod.parse_numbers(inp.data.decode("utf-8", "replace"))
         report = prng_mod.solve(
             integers,
@@ -663,7 +692,7 @@ def create_app(config: Config | None = None) -> Flask:
 
         payload = read_payload()
         inp = input_from_payload(payload, decode_bare=False)  # the encrypted User-Password
-        options = payload.get("options") or {}
+        options = options_of(payload)
         authenticator = option_bytes(options, "authenticator", decode_bare=False) or b""
         if len(authenticator) != 16:
             raise InputError(t("web_radius_bad_auth"))
@@ -701,7 +730,7 @@ def create_app(config: Config | None = None) -> Flask:
         inp = input_from_payload(payload, decode_bare=False)
         name = str(payload.get("name", ""))[:100]
         report = analyse_script(inp.data, filename=name, flagset=flagset)
-        options = payload.get("options") or {}
+        options = options_of(payload)
         encrypted = option_bytes(options, "against", decode_bare=False)
         mirrored = []
         if encrypted:
@@ -738,7 +767,7 @@ def create_app(config: Config | None = None) -> Flask:
         payload = read_payload()
         # The recipe says which decodings to do: do not decode bare hex/base64 first.
         inp = input_from_payload(payload, decode_bare=False)
-        options = payload.get("options") or {}
+        options = options_of(payload)
         name, steps = recipe_from_option(options.get("recipe"))
         result = pipeline.run(inp.data, steps, name, flagset)
         answer = {"input": input_summary(inp), **result.to_dict()}
@@ -752,7 +781,7 @@ def create_app(config: Config | None = None) -> Flask:
         """Deep link for a result card's CyberChef recipe and the current input."""
         payload = read_payload()
         inp = input_from_payload(payload, decode_bare=False)
-        recipe = str((payload.get("options") or {}).get("recipe") or "")
+        recipe = str(options_of(payload).get("recipe") or "")
         link = cyberchef_link(recipe, inp.data)
         if link is None:
             raise InputError("no CyberChef recipe for this result")
@@ -778,7 +807,7 @@ def create_app(config: Config | None = None) -> Flask:
         """Run one local tool from tools.toml on the input (argument list, no shell)."""
         payload = read_payload()
         inp = input_from_payload(payload, decode_bare=False)
-        options = payload.get("options") or {}
+        options = options_of(payload)
         try:
             tool = toolbox.tool_by_id(str(options.get("tool") or ""))
         except ValueError as exc:
@@ -827,7 +856,7 @@ def create_app(config: Config | None = None) -> Flask:
         from ctfc.core.search import search_flags, search_pattern
 
         payload = read_payload()
-        options = payload.get("options") or {}
+        options = options_of(payload)
         text = options.get("text")
         if isinstance(text, str) and text:
             data, source = text.encode("utf-8", "surrogateescape"), "result"
@@ -853,7 +882,7 @@ def create_app(config: Config | None = None) -> Flask:
         from ctfc.core import signatures
 
         payload = read_payload()
-        options = payload.get("options") or {}
+        options = options_of(payload)
         # The signatures may be typed in, pasted with a `text:` prefix, or
         # dropped as a file: all three go through the same input parsing.
         text = input_from_payload(payload, decode_bare=False).data.decode("utf-8", "replace")
