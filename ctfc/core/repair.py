@@ -30,6 +30,7 @@ from __future__ import annotations
 import zlib
 from dataclasses import dataclass, field
 
+from ctfc.core import pngfix
 from ctfc.core.magic import Signature, find_trailing_data, load_signatures, match_signature
 
 MIN_MAGIC = 4  # shorter magics give too many coincidences
@@ -316,6 +317,20 @@ def carve(data: bytes, limit: int = 8) -> list[Carved]:
 def repair(data: bytes) -> RepairReport:
     """Fix what can be fixed, then carve what the file was hiding."""
     report = RepairReport(repaired=data)
+
+    # A PNG gets its own treatment first: its chunks carry their own CRCs and
+    # their own declared size, so "is this file broken, and how" has an exact
+    # answer rather than a heuristic one. See `core/pngfix.py`.
+    if pngfix.looks_like_png(data):
+        png = pngfix.analyse(data)
+        for offset, old, new, why in png.fixes:
+            report.fixes.append(Fix(offset=offset, old=old, new=new, why=why))
+        report.notes += png.notes
+        for keyword, text in png.texts:
+            report.notes.append(f"text chunk {keyword!r}: {text[:200]}")
+        if png.fixes:
+            report.repaired = png.repaired
+            data = png.repaired
 
     miss = near_miss(data)
     if miss is not None:

@@ -2080,3 +2080,35 @@ It never invents a password: only what the folder gave up is tried. It cannot
 open a 7z or a RAR either - Python does not decrypt them - so those are
 reported with the exact `7z x -p...` line instead of being skipped quietly,
 and the report always ends with what it did *not* get to.
+
+
+## 33. PNG surgery: the height that lies (`ctfc/core/pngfix.py`)
+
+A PNG whose IHDR height was reduced is a stock challenge: the file opens, the
+image looks complete, and the flag written across the bottom is simply never
+drawn. No decoding is needed to catch it, only arithmetic.
+
+A PNG stores its pixels as `height` scanlines of `1 + ceil(width * channels *
+depth / 8)` bytes each - the extra byte per row is the filter type. Inflate the
+IDAT stream, divide by the row length, and that is how many rows the file
+really holds. When the division is **exact** and the answer is larger than the
+header's height, the header was edited; the fix is four bytes, plus the IHDR
+CRC that those four bytes invalidate.
+
+The three other PNG tampering tricks are checked on the way past: a chunk whose
+CRC32 does not match its own data, a bit depth the colour type does not allow,
+and the `tEXt` / `zTXt` / `iTXt` chunks, where an author leaves a note.
+
+### Two details
+
+**When the stored CRC already matches the restored height**, it is not fixed -
+it is reported, because it is the proof: whoever shrank the image edited the
+height and never recomputed the checksum, which is also why every viewer still
+opens the file.
+
+**Nothing is corrected on a guess.** If the division leaves a remainder, the
+width was probably edited too, and the report says so instead of writing a
+height that would be wrong. If fewer rows inflate than the header claims, the
+IDAT is truncated - a damaged file, not a cropped one - and again nothing is
+changed. A healthy PNG comes back byte for byte identical, which is what the
+tests check after every repair.

@@ -44,6 +44,7 @@ mirror the encryptor, do not guess.
 | base64 / hex / base32 / charcodes text | `ctfc auto <file>` peels the layers |
 | Morse, Bacon, A1Z26, a 5x5 square, Base45/basE91/Z85, uuencode | `ctfc auto <file>` tries all of them: none has a key |
 | a known file type, or data after the end of one | `binwalk -e`, `ctfc scan <folder>` |
+| a PNG that opens but looks too short | `ctfc repair img.png --out fixed/` - the height is put back |
 | `Salted__` | `openssl enc` file: `ctfc sym <file> --passwords` or `--pass <pw>` |
 | `gAAAA...` | Fernet: `ctfc sym <file> --key <fernet key>` |
 | repeating pattern, period N | repeating-key XOR: `ctfc xor <file> --keylen N` |
