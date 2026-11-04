@@ -260,6 +260,40 @@ def _msg(data: bytes, flagset: FlagSet | None) -> dict:
     return {"sections": sections, "flags": report.flags, "notes": report.notes, "commands": []}
 
 
+def _mail(data: bytes, flagset: FlagSet | None) -> dict:
+    from ctfc.core import mail as mail_module
+
+    messages = mail_module.read_file(data)
+    sections = [
+        facts(
+            f"message {index + 1}",
+            [(name, value) for name, value in message.headers.items()],
+        )
+        for index, message in enumerate(messages[:20])
+    ]
+    rows = []
+    flags: list[str] = []
+    for index, message in enumerate(messages):
+        for part in message.parts:
+            rows.append(
+                [
+                    index + 1,
+                    part.filename or ("(body)" if part.is_body else "(part)"),
+                    part.content_type,
+                    len(part.data),
+                    _preview(part.data, 80),
+                ]
+            )
+            flags += [hit.text for hit in find_flags(part.data, flagset)]
+    sections.append(table("parts", ["message", "name", "type", "size", "preview"], rows))
+    return {
+        "sections": sections,
+        "flags": flags,
+        "notes": [f"{len(messages)} message(s)"],
+        "commands": [],
+    }
+
+
 def _msi(data: bytes, flagset: FlagSet | None) -> dict:
     report = msi.analyse(data, flagset)
     sections = [
@@ -730,6 +764,7 @@ ADAPTERS: dict[str, Callable[[bytes, FlagSet | None], dict]] = {
     "archive": _archive,
     "office": _office,
     "msg": _msg,
+    "mail": _mail,
     "msi": _msi,
     "pdf": _pdf,
     "stego": _stego,

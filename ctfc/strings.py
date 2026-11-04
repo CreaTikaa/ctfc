@@ -21,6 +21,11 @@ EN: dict[str, str] = {
         "Bare hex/base64 text is auto-detected."
     ),
     "opt_json": "print machine-readable JSON instead of tables",
+    "opt_wordlist": (
+        "a password file to try instead of the embedded list "
+        "(example: --wordlist ~/Documents/rockyou.txt)"
+    ),
+    "opt_wordlist_limit": "how many entries of --wordlist to read (default 100000)",
     "opt_show_code": "print the Python snippet that reproduces the best result",
     "opt_offline": "never contact a third party (overrides the config file)",
     "opt_config": "path to a config.toml (default: ~/.ctfc/config.toml)",
@@ -516,6 +521,16 @@ EN: dict[str, str] = {
         "ctfc workspace . --json"
     ),
     "opt_workspace_read": "seconds spent reading the folder before trying pairs (default: half)",
+    "cmd_mail": (
+        "read an .eml or .mbox file: headers, body, attachments - and write the "
+        "attachments out with --extract"
+    ),
+    "cmd_mail_ex": (
+        "examples: ctfc mail message.eml  |  ctfc mail inbox.mbox --extract out/  "
+        "(a capture goes to `ctfc pcap` instead)"
+    ),
+    "arg_mail": "the .eml / .mbox file ('-' for stdin)",
+    "opt_mail_extract": "write every attachment into this folder, then run `ctfc scan` on it",
     "cmd_timeline": (
         "every timestamp in a file or a folder, merged into one table in UTC: "
         "prefetch runs, shortcut dates, event records, archive entries, build stamps"

@@ -2152,3 +2152,46 @@ nothing had asked for them yet.
 
 The walk is `solve.walk()` with `decode=False`: a decoding chain has nothing to
 say about time, and turning it off keeps a folder of payloads fast.
+
+
+## 35. Mail files, and a wordlist of your own
+
+### `ctfc mail` (`core/mail.py`)
+
+The mail reader was written for a reassembled TCP stream, where the hard part
+is finding where a message begins among the IMAP and SMTP framing. A `.eml` or
+`.mbox` on disk is the easier case and had no command at all, which was a
+strange gap once `.msg` had one. Two entry points were added - `looks_like_mail`
+and `read_file` (which splits an mbox on its `From ` envelope lines and falls
+back to the stream reader if the file turns out to be a capture after all).
+
+The interesting part is that it was registered in `core/readers.py` rather than
+only in the CLI. One entry there gives four things at once: `ctfc mail` in the
+terminal, the mail in the browser's Files tab, `ctfc solve` walking into an
+attachment, and the `Date` header as a row in `ctfc timeline`. And because
+`ctfc workspace` pools the text of every piece, "the password is hunter2" in a
+mail body became a candidate secret for free.
+
+`looks_like_mail` is strict about *where* a header appears: a `From:` in the
+middle of a text file is a quoted mail, not a mail, so a header name has to be
+in the first forty lines and either appear twice or sit among four
+header-shaped lines.
+
+### `--wordlist` (`datafiles.load_wordlist`)
+
+`ctfc sym`, `ctfc hash` and `ctfc jwt` can now be pointed at a real password
+file instead of the embedded 10000. The design question was what to do about
+size: rockyou.txt is 14 344 391 lines, and loading it whole would be a gigabyte
+of Python bytes objects for a tool that is explicitly not a cracker.
+
+The answer is a cap (`--wordlist-limit`, 100000 by default) **plus a note that
+says exactly what was used**: "the first 100000 unique of 14344391 line(s).
+Raise --wordlist-limit, or use hashcat for the whole list". A search that
+silently looked at 0.7% of a list would be worse than no search at all. Order
+is preserved and duplicates dropped, because a real list is sorted by how
+common a password is and that order is most of its value.
+
+Worth knowing what it costs: a wrong password against an `openssl enc` file is
+a PBKDF2 derivation, about a millisecond per variant and several variants per
+guess, so 2000 passwords is about 30 seconds. That is the honest reason the
+embedded list is 10000 entries and not a million.

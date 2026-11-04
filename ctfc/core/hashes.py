@@ -155,7 +155,9 @@ def load_formats() -> tuple[HashFormat, ...]:
     return tuple(formats)
 
 
-def identify(value: str, try_passwords: bool = True) -> HashReport:
+def identify(
+    value: str, try_passwords: bool = True, passwords: tuple[bytes, ...] | None = None
+) -> HashReport:
     """Identify `value` and rank the possible formats, best first."""
     cleaned = value.strip()
     report = HashReport(value=cleaned)
@@ -196,7 +198,7 @@ def identify(value: str, try_passwords: bool = True) -> HashReport:
     _explain_dump_line(report)
     _note_length_extension(report)
     if try_passwords:
-        _try_the_password_list(report)
+        _try_the_password_list(report, passwords)
     return report
 
 
@@ -280,11 +282,13 @@ def _match_format(value: str, candidate: HashFormat, charset: str) -> Match | No
     return None
 
 
-def _try_the_password_list(report: HashReport) -> None:
-    """A free try: is it one of the 10000 embedded passwords?
+def _try_the_password_list(report: HashReport, passwords: tuple[bytes, ...] | None = None) -> None:
+    """A free try: is it one of the 10000 embedded passwords (or a given list)?
 
     Only for unsalted formats, where one hash per password is enough. This is not
-    a cracker, it is the thirty-second check you would do by hand anyway.
+    a cracker, it is the thirty-second check you would do by hand anyway - and
+    `--wordlist` only widens that check, which is why the report still prints
+    the hashcat command either way.
     """
     targets = {
         match.format.id: match for match in report.matches if match.format.id in INSTANT_FORMATS
@@ -292,7 +296,7 @@ def _try_the_password_list(report: HashReport) -> None:
     if not targets:
         return
     lowered = report.value.lower()
-    for password in load_passwords():
+    for password in passwords or load_passwords():
         for format_id, match in targets.items():
             compute = INSTANT_FORMATS[format_id]
             try:

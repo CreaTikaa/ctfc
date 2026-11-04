@@ -36,6 +36,7 @@ from ctfc.core import (
     evtx,
     executable,
     hive,
+    mail,
     msg,
     msi,
     office,
@@ -307,6 +308,37 @@ def _open_msg(data: bytes, flagset: FlagSet | None, path: str) -> Opened:
     )
 
 
+def _open_mail(data: bytes, flagset: FlagSet | None, path: str) -> Opened:
+    messages = mail.read_file(data)
+    children: list[Child] = []
+    events: list[Event] = []
+    notes: list[str] = []
+    for index, message in enumerate(messages):
+        label = message.subject or f"message {index + 1}"
+        when = _iso(message.headers.get("Date", ""))
+        if when:
+            events.append(Event(when, "mail date", label))
+        header_line = ", ".join(f"{name}: {value}" for name, value in message.headers.items())
+        if header_line:
+            notes.append(header_line[:300])
+        for part in message.parts:
+            name = part.filename or ("body.txt" if part.is_body else "part.bin")
+            children.append(
+                Child(
+                    f"{index + 1}_{name}" if len(messages) > 1 else name,
+                    "mail body" if part.is_body else f"attachment ({part.content_type})",
+                    part.data,
+                )
+            )
+    return Opened(
+        detail=f"{len(messages)} message(s), {len(children)} part(s)",
+        children=_keep(children),
+        notes=notes,
+        events=events,
+        extract="ctfc mail {file} --extract {dir}",
+    )
+
+
 def _open_msi(data: bytes, flagset: FlagSet | None, path: str) -> Opened:
     report = msi.analyse(data, flagset)
     children: list[Child] = []
@@ -565,6 +597,13 @@ READERS: tuple[Reader, ...] = (
         _open_office,
     ),
     Reader("msg", "Outlook message (.msg)", "ctfc msg", msg.looks_like_msg, _open_msg),
+    Reader(
+        "mail",
+        "e-mail file (.eml, .mbox)",
+        "ctfc mail",
+        mail.looks_like_mail,
+        _open_mail,
+    ),
     Reader("msi", "Windows Installer package (.msi)", "ctfc msi", msi.looks_like_msi, _open_msi),
     Reader("pdf", "PDF", "ctfc pdf", lambda data: data[:1024].find(b"%PDF-") >= 0, _open_pdf),
     Reader(

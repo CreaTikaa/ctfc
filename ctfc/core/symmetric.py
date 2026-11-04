@@ -873,6 +873,7 @@ def solve_symmetric(
     blob: bytes | None = None,
     passphrase: bytes | None = None,
     try_passwords: bool = False,
+    passwords: tuple[bytes, ...] | None = None,
     budget: Budget | None = None,
     top_n: int = 10,
 ) -> SolveReport:
@@ -902,7 +903,7 @@ def solve_symmetric(
             f"{len(container.ciphertext)} bytes of ciphertext"
             + (" (the file was base64)" if container.was_base64 else "")
         )
-        if passphrase is None and not try_passwords:
+        if passphrase is None and not try_passwords and not passwords:
             report.notes.append(
                 "this file needs the password: add --pass <password>, or --passwords "
                 "to try the embedded list"
@@ -920,7 +921,16 @@ def solve_symmetric(
             )
 
     password_list: tuple[bytes, ...] = ()
-    if try_passwords:
+    if passwords:
+        # A list the user pointed at (--wordlist): used instead of the embedded
+        # one, in the order it came in - a real list is sorted by how common a
+        # password is, and that order is most of its value.
+        password_list = passwords
+        report.notes.append(
+            f"trying {len(password_list)} password(s) from the given list with the "
+            "openssl KDFs, cheapest first"
+        )
+    elif try_passwords:
         password_list = load_passwords()
         report.notes.append(
             f"trying the embedded password list ({len(password_list)} entries) with the "

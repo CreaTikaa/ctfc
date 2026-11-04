@@ -355,6 +355,36 @@ def print_hash(console: Console, report) -> None:
         console.print(f"[cyan]*[/] {safe(note)}")
 
 
+def print_mail(console: Console, messages, flags: list[str], written: list) -> None:
+    """`ctfc mail`: the headers, then every part with a preview."""
+    for index, message in enumerate(messages, start=1):
+        header = Table(title=f"message {index}: {safe(message.subject, 70)}", expand=True)
+        header.add_column("header", width=10)
+        header.add_column("value", ratio=4)
+        for name, value in message.headers.items():
+            header.add_row(safe(name), safe(value, 160))
+        console.print(header)
+
+        parts = Table(expand=True)
+        parts.add_column("name", ratio=2)
+        parts.add_column("type", ratio=2)
+        parts.add_column("size", justify="right", width=8)
+        parts.add_column("preview", ratio=4)
+        for part in message.parts:
+            parts.add_row(
+                safe(part.filename or ("(body)" if part.is_body else "(part)"), 40),
+                safe(part.content_type, 36),
+                str(len(part.data)),
+                safe(preview(part.data, 70)),
+            )
+        console.print(parts)
+
+    for flag in flags:
+        console.print(f"[bold green]{safe(flag)}[/]")
+    for path in written:
+        console.print(f"[green]*[/] wrote {escape(str(path))}")
+
+
 def print_timeline(console: Console, report) -> None:
     """`ctfc timeline`: one table, oldest first, with the source of every row."""
     title = f"{report.root} ({report.files} file(s))"

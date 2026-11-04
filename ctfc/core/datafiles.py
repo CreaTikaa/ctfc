@@ -30,6 +30,43 @@ def load_passwords() -> tuple[bytes, ...]:
     return tuple(line.encode() for line in lines if line and not line.startswith("#"))
 
 
+def load_wordlist(path: str | Path, limit: int = 100_000) -> tuple[tuple[bytes, ...], str]:
+    """The first `limit` entries of a password file on disk, and a note about it.
+
+    `ctfc` is not a cracker - that is what the hashcat command every hash report
+    prints is for - so a 14-million-line rockyou.txt is read up to a cap rather
+    than loaded whole. The note says exactly how much was used, because a search
+    that silently looked at 0.7% of a list would be worse than no search.
+
+    Duplicates and blank lines are dropped, order is kept (a real list is sorted
+    by how common the password is, and that order is the whole value of it).
+    """
+    file = Path(path)
+    if not file.is_file():
+        raise FileNotFoundError(f"{file} is not a file")
+    seen: set[bytes] = set()
+    words: list[bytes] = []
+    total = 0
+    with file.open("rb") as handle:
+        for line in handle:
+            total += 1
+            word = line.rstrip(b"\r\n")
+            if not word or word in seen:
+                continue
+            if len(words) < limit:
+                seen.add(word)
+                words.append(word)
+    note = f"{file.name}: {len(words)} password(s) used"
+    if len(words) >= limit:
+        note += (
+            f" - the first {limit} unique of {total} line(s). "
+            "Raise --wordlist-limit, or use hashcat for the whole list"
+        )
+    elif total > len(words):
+        note += f" ({total} line(s), duplicates and blanks dropped)"
+    return tuple(words), note
+
+
 @lru_cache(maxsize=1)
 def load_words() -> frozenset[str]:
     """Return the EN+FR word list used to recognise natural language."""

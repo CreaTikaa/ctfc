@@ -70,6 +70,7 @@ mirror the encryptor, do not guess.
 | the *same message* under several keys | `ctfc rsa --key a.pem --decrypt a.bin --also b.pem=b.bin` (common modulus, Hastad) |
 | two signatures (ECDSA/DSA) | `ctfc sig sigs.txt --curve secp256k1` - the same r means the key is already yours |
 | a pcap / pcapng | `ctfc pcap cap.pcap --extract out/` then `ctfc scan out/` |
+| a .eml / .mbox | `ctfc mail message.eml --extract out/` - headers, body, attachments |
 | a ZIP (or .docx/.jar/.apk) | `ctfc zip <file>` - which encryption, and tiny files from their CRC32 |
 | a tar / 7z / rar / cab | `ctfc archive <file>` - the listing, the encryption, the contents |
 | a CRC32 of a short file (a ZIP prints them) | `ctfc crc <crc32>` - the content itself, with no password |
@@ -126,5 +127,8 @@ In the web UI (`ctfc serve`): **Show Python**, **Open in CyberChef** (embedded c
 
 - Flags: the generic `XXX{...}` shape plus `CYBN{...}`, also searched in base64.
   Add yours in `~/.ctfc/config.toml` (`flag_regexes`, `flag_prefixes`).
+- `--wordlist ~/Documents/rockyou.txt` on `ctfc sym`, `ctfc hash` and `ctfc jwt` replaces the
+  embedded 10000-password list. It says how much of the file it read; the whole of a real list
+  belongs to hashcat, whose command every hash report prints.
 - `--offline` (or `offline = true`) hides everything that would send data anywhere.
 - `--json` on every command; `ctfc <command> --help` has examples.

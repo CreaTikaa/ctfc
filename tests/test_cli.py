@@ -613,3 +613,36 @@ def test_timeline_merges_the_dates_of_a_folder(tmp_path):
     whens = [entry["when"] for entry in payload["entries"]]
     assert whens == sorted(whens)
     assert any(entry["kind"] == "event log record" for entry in payload["entries"])
+
+
+def test_mail_reads_an_eml_and_extracts_the_attachment(tmp_path):
+    import base64
+
+    message = tmp_path / "m.eml"
+    message.write_bytes(
+        b"From: a@b.c\r\nSubject: hi\r\nMIME-Version: 1.0\r\n"
+        b'Content-Type: multipart/mixed; boundary="xx"\r\n\r\n'
+        b"--xx\r\nContent-Type: text/plain\r\n\r\nthe password is hunter2\r\n"
+        b"--xx\r\nContent-Type: application/octet-stream\r\n"
+        b'Content-Disposition: attachment; filename="flag.txt"\r\n'
+        b"Content-Transfer-Encoding: base64\r\n\r\n"
+        + base64.b64encode(b"CYBN{cli_mail}")
+        + b"\r\n--xx--\r\n"
+    )
+    out = tmp_path / "parts"
+    result = run_ctfc("mail", str(message), "--extract", str(out))
+
+    assert result.returncode == 0
+    assert "CYBN{cli_mail}" in result.stdout.decode()
+    assert (out / "flag.txt").read_bytes() == b"CYBN{cli_mail}"
+
+
+def test_sym_wordlist_states_how_much_of_the_list_it_used(tmp_path):
+    words = tmp_path / "list.txt"
+    words.write_bytes(b"\n".join(f"pw{index}".encode() for index in range(30)))
+    blob = tmp_path / "vault.enc"
+    blob.write_bytes(b"Salted__" + bytes(range(64)))
+
+    result = run_ctfc("sym", str(blob), "--wordlist", str(words), "--wordlist-limit", "5")
+    out = result.stdout.decode()
+    assert "the first 5 unique of 30 line(s)" in out

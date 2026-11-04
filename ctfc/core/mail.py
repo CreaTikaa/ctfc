@@ -176,3 +176,83 @@ def extract(stream: bytes) -> list[Mail]:
         if mail is not None and mail.parts:
             mails.append(mail)
     return mails
+
+
+# ---------------------------------------------------------------------------
+# A mail *file* on disk, rather than a stream out of a capture
+# ---------------------------------------------------------------------------
+#
+# The module above was written for a reassembled TCP stream, where the hard part
+# is finding where a message begins. A `.eml` or a `.mbox` on disk is easier:
+# one message, or several separated by a "From " line in the first column. The
+# two entry points below are what `ctfc mail`, the Files tab and `ctfc solve`
+# use, so an attachment inside a mail is followed like any other container.
+
+# Headers whose presence at the top of a file says "this is a message".
+_FILE_MARKERS = (
+    b"From:",
+    b"Received:",
+    b"Return-Path:",
+    b"Message-ID:",
+    b"Subject:",
+    b"MIME-Version:",
+    b"Delivered-To:",
+    b"X-Original-To:",
+)
+MBOX_SEPARATOR = b"\nFrom "
+
+
+def looks_like_mail(data: bytes) -> bool:
+    """Does this file start with a mail header block (or an mbox "From " line)?
+
+    Deliberately strict about *where*: a header name has to appear in the first
+    few lines, because "From:" somewhere in the middle of a text file is a
+    quoted mail, not a mail. One header is enough on its own only when it is
+    followed by more header-shaped lines, which is what the count below checks.
+    """
+    if data[:5] == b"From " and b"\n" in data[:200]:
+        return True
+    head = data[:4096]
+    if not head:
+        return False
+    lines = head.split(b"\n")[:40]
+    seen = sum(1 for line in lines if line[:40].startswith(_FILE_MARKERS))
+    if not seen:
+        return False
+    header_shaped = sum(
+        1 for line in lines if b":" in line[:60] and not line[:1].isspace() and line.strip()
+    )
+    return seen >= 2 or header_shaped >= 4
+
+
+def split_mbox(data: bytes) -> list[bytes]:
+    """One mbox into its messages. A single message comes back as one item."""
+    if data[:5] != b"From ":
+        return [data]
+    messages: list[bytes] = []
+    position = 0
+    while position < len(data):
+        nxt = data.find(MBOX_SEPARATOR, position + 1)
+        end = len(data) if nxt < 0 else nxt + 1
+        chunk = data[position:end]
+        # Drop the "From sender date" envelope line: it is not a header.
+        newline = chunk.find(b"\n")
+        messages.append(chunk[newline + 1 :] if newline >= 0 else chunk)
+        if nxt < 0:
+            break
+        position = end
+    return [item for item in messages if item.strip()]
+
+
+def read_file(data: bytes) -> list[Mail]:
+    """Every message in a `.eml` or `.mbox` file, with its parts decoded."""
+    mails: list[Mail] = []
+    for raw in split_mbox(data):
+        mail = parse_message(raw)
+        if mail is not None:
+            mails.append(mail)
+    if not mails:
+        # Not a plain file after all: fall back to the stream reader, which
+        # knows the IMAP/SMTP framing.
+        mails = extract(data)
+    return mails

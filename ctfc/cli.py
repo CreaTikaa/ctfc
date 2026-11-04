@@ -25,6 +25,7 @@ from ctfc.core.budget import Budget
 from ctfc.core.cyberchef import PUBLIC_URL, deep_link
 from ctfc.core.detect import detect
 from ctfc.core.flags import FlagSet, build_flagset
+from ctfc.core.flags import find_flags as find_flags_in
 from ctfc.core.hashes import identify as identify_hash
 from ctfc.core.inputs import InputError, parse_input
 from ctfc.core.lens import analyse as analyse_script
@@ -96,6 +97,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--blob", help=t("opt_sym_blob"))
     p.add_argument("--pass", dest="passphrase", help=t("opt_sym_pass"))
     p.add_argument("--passwords", action="store_true", help=t("opt_sym_passwords"))
+    p.add_argument("--wordlist", help=t("opt_wordlist"))
+    p.add_argument("--wordlist-limit", type=int, default=100_000, help=t("opt_wordlist_limit"))
     p.add_argument("--seconds", type=float, default=30.0, help=t("opt_seconds"))
 
     p = add("blob")
@@ -130,6 +133,8 @@ def build_parser() -> argparse.ArgumentParser:
     p = add("hash")
     p.add_argument("hash", help=t("arg_hash"))
     p.add_argument("--no-passwords", action="store_true", help=t("opt_hash_no_passwords"))
+    p.add_argument("--wordlist", help=t("opt_wordlist"))
+    p.add_argument("--wordlist-limit", type=int, default=100_000, help=t("opt_wordlist_limit"))
 
     p = add("classical")
     p.add_argument("input", help=t("arg_input"))
@@ -229,6 +234,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("token", help=t("arg_token"))
     p.add_argument("--secret", help=t("opt_jwt_secret"))
     p.add_argument("--no-secrets", action="store_true", help=t("opt_jwt_no_secrets"))
+    p.add_argument("--wordlist", help=t("opt_wordlist"))
+    p.add_argument("--wordlist-limit", type=int, default=100_000, help=t("opt_wordlist_limit"))
 
     p = add("keys")
     p.add_argument("dump", help=t("arg_dump"))
@@ -259,6 +266,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--depth", type=int, default=5, help=t("opt_solve_depth"))
     p.add_argument("--leads", type=int, default=3, help=t("opt_solve_leads"))
     p.add_argument("--steps", action="store_true", help=t("opt_solve_steps"))
+
+    p = add("mail")
+    p.add_argument("input", help=t("arg_mail"))
+    p.add_argument("--extract", help=t("opt_mail_extract"))
 
     p = add("timeline")
     p.add_argument("path", help=t("arg_folder"))
@@ -753,6 +764,23 @@ def print_sym_report(
     return 0 if report.candidates else 1
 
 
+def wordlist_from(args: argparse.Namespace, console: Console) -> tuple[bytes, ...] | None:
+    """The passwords of --wordlist, or None when the flag was not given.
+
+    The note it prints matters: a search over the first 100000 lines of a
+    14-million-line list must not look like a search over the whole list.
+    """
+    path = getattr(args, "wordlist", None)
+    if not path:
+        return None
+    from ctfc.core.datafiles import load_wordlist
+
+    words, note = load_wordlist(path, getattr(args, "wordlist_limit", 100_000))
+    if not getattr(args, "json", False):
+        console.print(f"[cyan]*[/] {note}")
+    return words
+
+
 def cmd_sym(args: argparse.Namespace, config: Config, console: Console) -> int:
     """Symmetric ciphers, with the unknown-layout solver."""
     inp = parse_input(args.input)
@@ -767,6 +795,7 @@ def cmd_sym(args: argparse.Namespace, config: Config, console: Console) -> int:
         blob=_material(args.blob),
         passphrase=args.passphrase.encode() if args.passphrase else None,
         try_passwords=args.passwords,
+        passwords=wordlist_from(args, console),
         budget=budget,
         top_n=config.top_n,
     )
@@ -964,6 +993,9 @@ def cmd_jwt(args: argparse.Namespace, config: Config, console: Console) -> int:
     from ctfc.core import jwt as jwt_module
 
     secrets = [args.secret.encode()] if args.secret else None
+    if secrets is None:
+        words = wordlist_from(args, console)
+        secrets = list(words) if words else None
     report = jwt_module.analyse(
         args.token,
         flagset=flagset_from(config),
@@ -1506,7 +1538,11 @@ def _rsa_multi(
 
 def cmd_hash(args: argparse.Namespace, config: Config, console: Console) -> int:
     """Identify a hash and print the hashcat / john command for it."""
-    report = identify_hash(args.hash, try_passwords=not args.no_passwords)
+    report = identify_hash(
+        args.hash,
+        try_passwords=not args.no_passwords,
+        passwords=wordlist_from(args, console),
+    )
     found = []
     for match in report.matches[:4]:
         line = match.format.name
@@ -1614,6 +1650,68 @@ def cmd_solve(args: argparse.Namespace, config: Config, console: Console) -> int
         return 0 if report.flags else 1
     render.print_solve(console, report, show_steps=args.steps)
     return 0 if report.flags else 1
+
+
+def cmd_mail(args: argparse.Namespace, config: Config, console: Console) -> int:
+    """Read an .eml / .mbox file: headers, body, attachments."""
+    from ctfc.core import mail as mail_module
+
+    inp = parse_input(args.input, decode_bare=False)
+    messages = mail_module.read_file(inp.data)
+    if not messages:
+        print(
+            f"{t('error_prefix')}: no message found in this file. A capture goes to "
+            "`ctfc pcap`, an Outlook .msg to `ctfc msg`",
+            file=sys.stderr,
+        )
+        return 1
+
+    flagset = flagset_from(config)
+    written: list[Path] = []
+    if args.extract:
+        folder = Path(args.extract)
+        folder.mkdir(parents=True, exist_ok=True)
+        for index, message in enumerate(messages, start=1):
+            for part in message.parts:
+                if part.is_body and not part.filename:
+                    continue
+                name = re.sub(r"[^A-Za-z0-9._-]", "_", part.filename) or f"part{index}.bin"
+                target = folder / (f"{index}_{name}" if len(messages) > 1 else name)
+                target.write_bytes(part.data)
+                written.append(target)
+
+    hits = []
+    for message in messages:
+        for part in message.parts:
+            hits += [hit.text for hit in find_flags_in(part.data, flagset)]
+    remember(args, config, inp.data, args.input, summary=hits[:4])
+    if args.json:
+        payload = {
+            "messages": [
+                {
+                    "headers": dict(message.headers),
+                    "parts": [
+                        {
+                            "filename": part.filename,
+                            "content_type": part.content_type,
+                            "size": len(part.data),
+                            "is_body": part.is_body,
+                            "preview": part.data[:400].decode("utf-8", "replace"),
+                        }
+                        for part in message.parts
+                    ],
+                }
+                for message in messages
+            ],
+            "flags": hits,
+            "extracted": [str(path) for path in written],
+        }
+        print(json.dumps(payload, indent=2))
+        return 0
+    render.print_mail(console, messages, hits, written)
+    if args.extract:
+        console.print(f"[green]$[/] ctfc scan {args.extract}")
+    return 0
 
 
 def cmd_timeline(args: argparse.Namespace, config: Config, console: Console) -> int:
@@ -1842,6 +1940,7 @@ def main(argv: list[str] | None = None) -> int:
         "solve": cmd_solve,
         "workspace": cmd_workspace,
         "timeline": cmd_timeline,
+        "mail": cmd_mail,
         "office": cmd_office,
         "pdf": cmd_pdf,
         "stego": cmd_stego,
