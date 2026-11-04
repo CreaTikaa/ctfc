@@ -873,6 +873,50 @@ order of value against effort:
   `git -c credential.helper='!gh auth git-credential' push https://github.com/CreaTikaa/ctfc.git main`.
   GitHub answered `Internal Server Error` twice; resending the same push worked.
 
+
+### Web UI coverage of lot H (audited 2026-11-04, at the user's request)
+
+He asked, at the end of the session: is everything added here reachable from the page too?
+Checked by driving the API, not by reading the code. **Three of the twelve are not**, and he
+said they are the next session's priority.
+
+**In the browser already**
+
+| feature | where |
+|---|---|
+| `ctfc solve` | its own **Solve** tab (second, after Auto), as a background job |
+| EXIF, WAV LSB, `.eml`/`.mbox` | the **Files** tab claims them by itself (`exif`, `wav`, `mail`), each with its own sections and the flag |
+| PNG surgery | the **Files** tab, `repair` reader: the "what was wrong, and what was done" table plus the notes ("the image is really 16x24, not 16x6: 18 row(s) were never drawn") |
+| PHP in Code Lens | the **Code Lens** tab. The language is detected from the source alone, so no filename is needed, and the layers are peeled |
+| `keyhunt`'s unaligned pass | the **Keys** tab, automatically: it calls the same `hunt()` |
+| the three 500s the web fuzzer found | fixed in the API itself |
+
+**Not in the browser - in priority order**
+
+1. **The Go / Rust toolchain report is invisible.** `ctfc exe` and `ctfc pe` print the version,
+   the module path, the program's own functions and the exact string literals; the Files tab's
+   `_exe` / `_pe` adapters still show only ELF / segments / sections. The data is already in
+   `report.toolchain`, so this is **one `facts` section and one `table` section per adapter** in
+   `ctfc/web/formats.py` - the cheapest of the three and the most annoying to miss, because the
+   literals are the whole point of that reader.
+2. **`ctfc timeline` has no route at all.** Every event is already in `readers.Opened.events`
+   (`Event(when, kind, what)`), so a single dropped file is a small adapter plus a tab; a *folder*
+   is the same problem as `workspace` below. Worth doing for one file: a `.lnk`, a prefetch or an
+   `.evtx` dropped in the page should show its dates.
+3. **`ctfc workspace` cannot be reached**, because it takes a folder and a browser file picker
+   hands over bytes, not a path. It is the same class as `ctfc scan`, `ctfc watch` and `ctfc git`,
+   which the **Docs** tab names with their command lines. Two honest options, and it is a design
+   decision rather than a task: accept a **multi-file drop** in the page and run the cross
+   product over those files (the pools do not care where the bytes came from), or leave it in the
+   terminal and name it in the Docs tab like the other three. The multi-file drop is the better
+   answer if the page is where he works.
+4. **`--wordlist` has no field** in the Symmetric, Hash and JWT tabs. The server is local, so a
+   path field would work exactly as the flag does (`~/Documents/rockyou.txt`), with the same note
+   about how much of the file was read.
+5. **`secrets.find_prose_secrets`** ("the password is hunter2") is only reached through
+   `workspace`, so the page never benefits from it. It would fit the **Keys** tab as a second
+   list beside the key candidates.
+
 ### What is left
 
 `docs/ideas.md` section 1 (three readers that need a real sample: SAM hashes, EVTX binary XML,

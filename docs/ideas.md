@@ -293,8 +293,33 @@ Recorded so the question does not have to be reopened each time.
 
 ## 2.7 What is left, and what I would do next (2026-11-04)
 
-Everything in section 2 is built. What remains is short, and the first entry is
-the only one that measures the thing he actually cares about.
+Everything in section 2 is built. **The first entry is what he asked for
+explicitly at the end of that session**, the second is the one that measures the
+thing he actually cares about.
+
+### 2.7.0 Put the rest of lot H in the browser (his stated priority)
+
+He asked whether everything added in lot H is reachable from the web UI. It was
+audited by driving the API (`HANDOFF.md` §5nonies, "Web UI coverage"), and three
+things are missing, cheapest first:
+
+- **The Go / Rust report does not show.** `ctfc exe` / `ctfc pe` print the
+  version, the module, the program's own functions and the exact literals; the
+  Files tab's `_exe` / `_pe` adapters show only ELF / segments / sections,
+  although `report.toolchain` is right there. One `facts` section and one
+  `table` section each, in `ctfc/web/formats.py`. Start here.
+- **`ctfc timeline` has no route.** The events already exist on every reader
+  (`readers.Opened.events`), so one dropped file is an adapter plus a tab.
+- **`ctfc workspace` cannot be reached at all**, because it takes a folder. The
+  design decision to make first: accept a **multi-file drop** in the page and
+  run the cross product over those files (the pools do not care where the bytes
+  came from), or leave it in the terminal beside `scan`, `watch` and `git`,
+  which the Docs tab names. If the page is where he works, the drop is the
+  answer.
+- Then the two small ones: a **`--wordlist` path field** in the Symmetric, Hash
+  and JWT tabs (the server is local, so a path works), and
+  **`find_prose_secrets`** in the Keys tab as a second list beside the key
+  candidates - today it only runs inside `workspace`.
 
 ### 2.7.1 A regression corpus from his own challenges (the one that matters)
 
