@@ -313,9 +313,7 @@ def create_app(config: Config | None = None) -> Flask:
 
             inp = input_from_payload(payload, decode_bare=False)
             depth = int(options.get("depth") or 5)
-            budget = Budget(
-                max_attempts=1_000_000, max_seconds=float(options.get("seconds") or 20)
-            )
+            budget = Budget(max_attempts=1_000_000, max_seconds=float(options.get("seconds") or 20))
 
             def work_solve(budget: Budget) -> dict:
                 report = solve_file(
