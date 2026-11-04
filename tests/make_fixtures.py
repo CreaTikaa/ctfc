@@ -3119,7 +3119,6 @@ def write_longtail_fixtures() -> None:
     write("classical_beaufort.txt", beaufort_decrypt(plain, "lemon"))
 
 
-
 # ---------------------------------------------------------------------------
 # A photograph with EXIF (and a GPS point)
 # ---------------------------------------------------------------------------
@@ -3238,6 +3237,35 @@ def mail_file() -> bytes:
         b"\r\n" + attachment + b"\r\n"
         b"--ctfc--\r\n"
     )
+
+
+def lsb_wav(message: bytes, frames: int = 9000, rate: int = 8000) -> bytes:
+    """A one-second sine wave whose samples carry `message` in their low bit.
+
+    Deterministic, 16-bit mono, written with the standard library - the same
+    container a challenge hands over, and small enough to commit.
+    """
+    import wave as wave_module
+
+    bits = [(byte >> (7 - index)) & 1 for byte in message for index in range(8)]
+    samples = []
+    for position in range(frames):
+        value = int(8000 * math.sin(2 * math.pi * 440 * position / rate)) & ~1
+        if position < len(bits):
+            value |= bits[position]
+        samples.append(value & 0xFFFF)
+    buffer = io.BytesIO()
+    with wave_module.open(buffer, "wb") as handle:
+        handle.setnchannels(1)
+        handle.setsampwidth(2)
+        handle.setframerate(rate)
+        handle.writeframes(b"".join(struct.pack("<H", sample) for sample in samples))
+    return buffer.getvalue()
+
+
+def write_audio_fixtures() -> None:
+    print("audio:")
+    write("audio_lsb.wav", lsb_wav(b"CYBN{lsb_in_the_wav}\x00\x00"))
 
 
 def write_mail_fixtures() -> None:
@@ -3448,6 +3476,7 @@ def main() -> None:
     write_longtail_fixtures()
     write_exif_fixtures()
     write_mail_fixtures()
+    write_audio_fixtures()
 
 
 if __name__ == "__main__":

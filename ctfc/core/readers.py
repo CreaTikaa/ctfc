@@ -31,6 +31,7 @@ from datetime import UTC
 
 from ctfc.core import (
     archive,
+    audio,
     cab,
     cfb,
     evtx,
@@ -429,6 +430,22 @@ def _exif_date(value: str) -> str:
     return f"{text[:4]}-{text[5:7]}-{text[8:10]} {text[11:19]} UTC"
 
 
+def _open_wav(data: bytes, flagset: FlagSet | None, path: str) -> Opened:
+    report = audio.analyse(data, flagset, Budget(max_attempts=200, max_seconds=8), top_n=3)
+    children = [
+        Child(f"lowbits{index}.bin", f"WAV: {candidate.label}", candidate.data)
+        for index, candidate in enumerate(report.candidates)
+    ]
+    for keyword, text in report.texts:
+        children.append(Child(f"{keyword}.txt", "WAV metadata chunk", text.encode()))
+    return Opened(
+        detail=f"{report.channels} channel(s), {report.width * 8}-bit, "
+        f"{report.rate} Hz, {report.seconds:.1f} s",
+        children=_keep(children),
+        notes=list(report.notes),
+    )
+
+
 def _open_pe(data: bytes, flagset: FlagSet | None, path: str) -> Opened:
     report = pe.analyse(data, flagset)
     children: list[Child] = []
@@ -647,6 +664,13 @@ READERS: tuple[Reader, ...] = (
         "ctfc stego",
         lambda data: data[:8] == b"\x89PNG\r\n\x1a\n" or data[:2] == b"BM",
         _open_stego,
+    ),
+    Reader(
+        "wav",
+        "audio (WAV): a message in the low bits of the samples",
+        "ctfc stego",
+        audio.looks_like_wav,
+        _open_wav,
     ),
     Reader(
         "exif",

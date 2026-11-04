@@ -380,6 +380,44 @@ def _stego(data: bytes, flagset: FlagSet | None) -> dict:
     return {"sections": sections, "flags": flags, "notes": report.notes, "commands": []}
 
 
+def _wav(data: bytes, flagset: FlagSet | None) -> dict:
+    from ctfc.core import audio as audio_module
+
+    report = audio_module.analyse(data, flagset, Budget(max_attempts=200, max_seconds=10), top_n=5)
+    sections = [
+        facts(
+            "the audio",
+            [
+                ("channels", report.channels),
+                ("bits per sample", report.width * 8),
+                ("sample rate", f"{report.rate} Hz"),
+                ("length", f"{report.seconds:.2f} s"),
+                ("frames", report.frames),
+            ],
+        )
+    ]
+    if report.texts:
+        sections.append(
+            table(
+                "metadata chunks", ["chunk", "text"], [[key, value] for key, value in report.texts]
+            )
+        )
+    sections.append(
+        table(
+            "what the low bits spell",
+            ["score", "layout", "output"],
+            [
+                [f"{candidate.score:.2f}", candidate.label, _preview(candidate.data, 160)]
+                for candidate in report.candidates
+            ],
+        )
+    )
+    flags: list[str] = []
+    for candidate in report.candidates:
+        flags += [hit.text for hit in find_flags(candidate.data, flagset)]
+    return {"sections": sections, "flags": flags, "notes": report.notes, "commands": []}
+
+
 def _exif(data: bytes, flagset: FlagSet | None) -> dict:
     from ctfc.core import exif as exif_module
 
@@ -801,6 +839,7 @@ ADAPTERS: dict[str, Callable[[bytes, FlagSet | None], dict]] = {
     "msi": _msi,
     "pdf": _pdf,
     "stego": _stego,
+    "wav": _wav,
     "exif": _exif,
     "pe": _pe,
     "exe": _exe,

@@ -54,6 +54,7 @@ mirror the encryptor, do not guess.
 | a known file type, or data after the end of one | `binwalk -e`, `ctfc scan <folder>` |
 | a PNG that opens but looks too short | `ctfc repair img.png --out fixed/` - the height is put back |
 | a photograph (JPEG) | `ctfc stego photo.jpg` - EXIF, the comment field, the GPS point |
+| a WAV | `ctfc stego track.wav` - the low bits of the samples (a spectrogram needs Audacity) |
 | `Salted__` | `openssl enc` file: `ctfc sym <file> --passwords` or `--pass <pw>` |
 | `gAAAA...` | Fernet: `ctfc sym <file> --key <fernet key>` |
 | repeating pattern, period N | repeating-key XOR: `ctfc xor <file> --keylen N` |

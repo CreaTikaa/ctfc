@@ -114,6 +114,7 @@ def commands(scratch: Path) -> list[Demo]:
         Demo(["pdf", f("audit_malicious.pdf")], "CYBN{", why="three flags in a PDF"),
         Demo(["stego", f("audit_lsb.png"), "--show-code"], "CYBN{", why="LSB"),
         Demo(["stego", f("exif_photo.jpg")], "CYBN{", why="EXIF + GPS"),
+        Demo(["stego", f("audio_lsb.wav")], "CYBN{", why="LSB in a WAV"),
         Demo(["sqlite", f("audit_notes.sqlite")], "CYBN{", why="deleted rows"),
         Demo(["zip", f("audit_zipcrypto.zip")], "bkcrack", why="ZipCrypto"),
         Demo(["archive", f("archive_encoded_header.7z")], "CYBN{", why="7z encoded header"),

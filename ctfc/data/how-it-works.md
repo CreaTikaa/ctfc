@@ -2240,3 +2240,34 @@ photograph has to come back as a note, not an exception.
 One limit worth naming: EXIF has no time zone (the standard added one in 2016
 and almost nothing writes it), so a photograph's date is the camera's local
 clock. `ctfc timeline` labels it the same way it labels a ZIP's MS-DOS stamp.
+
+
+## 37. WAV: the low bits of the samples (`ctfc/core/audio.py`)
+
+The audio twin of the image stego challenge, and the same arithmetic: a WAV
+holds raw PCM, so the low bit of each sample can be rewritten without a
+listener noticing. `wave` from the standard library reads the container, which
+leaves only the bit layouts to try - bits 0 to 2, every channel separately as
+well as interleaved (a stereo file usually carries the message in one channel),
+both bit orders, and for 16-bit audio the **whole low byte** of each sample,
+which is what the simplest hiding scripts actually write.
+
+`ctfc stego track.wav` is the command: it is the same question as on a PNG, so
+it is the same command, and every result is scored by `scoring.py` like any
+other candidate - which is what makes silence (whose low bits are a constant)
+score as nothing instead of looking like printable text.
+
+The RIFF chunks are read too: `LIST`/`INFO` is where a comment goes, and bytes
+sitting past the end of the declared container are reported, since a whole file
+hidden behind the audio is common enough.
+
+### What it refuses to pretend
+
+A large family of audio challenges is a **spectrogram** puzzle - the flag is
+drawn in the frequency domain - and the same goes for DTMF tones and Morse
+whistled into a sine. All three need an FFT, numpy is not an allowed dependency
+here, and a hand-rolled DFT over a minute of audio in pure Python is not a tool
+but a wait. So the report says, every time, that the spectrum was not looked at
+and names Audacity's spectrogram view and Sonic Visualiser. A compressed WAV
+(ADPCM, mu-law) has no raw samples at all, and is refused with the `ffmpeg -i
+in.ext out.wav` line rather than a guess.

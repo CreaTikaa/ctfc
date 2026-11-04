@@ -927,11 +927,24 @@ def cmd_pdf(args: argparse.Namespace, config: Config, console: Console) -> int:
 
 
 def cmd_stego(args: argparse.Namespace, config: Config, console: Console) -> int:
-    """Look for a message hidden in the low bits of a PNG or BMP."""
+    """Look for a message hidden in the low bits of an image - or of a WAV."""
+    from ctfc.core import audio as audio_module
     from ctfc.core import stego
 
     inp = parse_input(args.input, decode_bare=False)
     budget = Budget(max_attempts=10_000, max_seconds=args.seconds)
+    if audio_module.looks_like_wav(inp.data):
+        # Same challenge, different container: raw PCM samples have low bits too.
+        sound = audio_module.analyse(
+            inp.data, flagset=flagset_from(config), budget=budget, top_n=config.top_n
+        )
+        remember(args, config, inp.data, args.input, sound.candidates, sound.notes[:3])
+        if args.json:
+            print(json.dumps({"input": input_to_dict(inp), **sound.to_dict()}, indent=2))
+            return 0 if sound.candidates else 1
+        render.print_input_notes(console, inp)
+        render.print_audio(console, sound, show_code=args.show_code)
+        return 0 if sound.candidates else 1
     report = stego.analyse(
         inp.data, flagset=flagset_from(config), budget=budget, top_n=config.top_n
     )

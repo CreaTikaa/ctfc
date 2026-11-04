@@ -684,6 +684,32 @@ def print_pdf(console: Console, report, saved: list[str]) -> None:
         console.print(f"[green]saved {len(saved)} file(s)[/]; next: ctfc scan <that folder>")
 
 
+def print_audio(console: Console, report, show_code: bool = False) -> None:
+    """`ctfc stego` on a WAV: the format, the metadata, what the low bits spell."""
+    facts = Table(title="audio", show_header=False, expand=False)
+    facts.add_column("name", style="cyan")
+    facts.add_column("value")
+    facts.add_row("format", f"WAV, {report.width * 8}-bit PCM")
+    facts.add_row("channels", str(report.channels))
+    facts.add_row("sample rate", f"{report.rate} Hz")
+    facts.add_row("length", f"{report.seconds:.2f} s ({report.frames} frames)")
+    console.print(facts)
+
+    if report.texts:
+        meta = Table(title="metadata chunks", expand=True)
+        meta.add_column("chunk", width=10)
+        meta.add_column("text", ratio=4)
+        for keyword, text in report.texts:
+            meta.add_row(safe(keyword), safe(text, 300))
+        console.print(meta)
+
+    for note in report.notes:
+        console.print(f"[cyan]*[/] {safe(note)}")
+    print_candidates(
+        console, report.candidates, show_code=show_code, title="hidden in the low bits"
+    )
+
+
 def print_stego(console: Console, report, show_code: bool = False, flags=None) -> None:
     """`ctfc stego`: the image, its metadata, and what the low bits spell out."""
     facts = Table(title="image", show_header=False, expand=False)
