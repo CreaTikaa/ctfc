@@ -3211,6 +3211,40 @@ def exif_jpeg() -> bytes:
     return segments
 
 
+def mail_file() -> bytes:
+    """A .eml with the ZIP password in the body and a flag in the attachment.
+
+    The shape of a real challenge: the mail and the archive arrive separately,
+    and `ctfc workspace` is what puts them together.
+    """
+    attachment = base64.b64encode(b"CYBN{mail_attachment}")
+    return (
+        b"From: admin@corp.local\r\n"
+        b"To: victim@corp.local\r\n"
+        b"Subject: the quarterly backup\r\n"
+        b"Date: Fri, 17 May 2024 09:30:00 +0000\r\n"
+        b"Message-ID: <fixture@corp.local>\r\n"
+        b"MIME-Version: 1.0\r\n"
+        b'Content-Type: multipart/mixed; boundary="ctfc"\r\n'
+        b"\r\n"
+        b"--ctfc\r\n"
+        b"Content-Type: text/plain; charset=utf-8\r\n"
+        b"\r\n"
+        b"Hello,\r\n\r\nthe password is Tr0ub4dor&3 as agreed. Do not write it down.\r\n"
+        b"--ctfc\r\n"
+        b"Content-Type: text/plain\r\n"
+        b'Content-Disposition: attachment; filename="note.txt"\r\n'
+        b"Content-Transfer-Encoding: base64\r\n"
+        b"\r\n" + attachment + b"\r\n"
+        b"--ctfc--\r\n"
+    )
+
+
+def write_mail_fixtures() -> None:
+    print("mail:")
+    write("mailfile_message.eml", mail_file())
+
+
 def write_exif_fixtures() -> None:
     print("exif:")
     write("exif_photo.jpg", exif_jpeg())
@@ -3413,6 +3447,7 @@ def main() -> None:
     # --- the encoding long tail (ideas.md 3.3) ---
     write_longtail_fixtures()
     write_exif_fixtures()
+    write_mail_fixtures()
 
 
 if __name__ == "__main__":

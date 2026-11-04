@@ -1,0 +1,21 @@
+From: admin@corp.local
+To: victim@corp.local
+Subject: the quarterly backup
+Date: Fri, 17 May 2024 09:30:00 +0000
+Message-ID: <fixture@corp.local>
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="ctfc"
+
+--ctfc
+Content-Type: text/plain; charset=utf-8
+
+Hello,
+
+the password is Tr0ub4dor&3 as agreed. Do not write it down.
+--ctfc
+Content-Type: text/plain
+Content-Disposition: attachment; filename="note.txt"
+Content-Transfer-Encoding: base64
+
+Q1lCTnttYWlsX2F0dGFjaG1lbnR9
+--ctfc--

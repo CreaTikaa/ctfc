@@ -803,6 +803,12 @@ remaining ones will be done in.
 
 ## 7. Quick verification commands
 
+**`make demo` now runs this list and checks it** (`tests/demo.py`): 60 commands, each with the
+exit code it must return and the string it must print - usually the flag. It was checked by hand
+before, which meant it was checked when someone remembered. `make demo ARGS=-v` prints each
+output, `ARGS="-k zip"` runs a subset. The few commands below that need something this machine
+may not have (a .git folder, .NET, mingw, a real hive) are not in it, and are still run by hand.
+
 ```sh
 cd ~/apps/ctfc && source .venv/bin/activate
 make test && make lint

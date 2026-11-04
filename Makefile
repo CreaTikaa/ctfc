@@ -3,11 +3,12 @@
 
 PY := .venv/bin/python
 
-.PHONY: help venv test fuzz lint fmt serve fixtures vendor bundle
+.PHONY: help venv test demo fuzz lint fmt serve fixtures vendor bundle
 
 help:
 	@echo "make venv      create .venv and install ctfc + dev tools"
 	@echo "make test      run the test suite"
+	@echo "make demo      run every command of docs/HANDOFF.md section 7 and check it"
 	@echo "make fuzz      throw broken files at every format reader (long sweep)"
 	@echo "make lint      check the code with ruff"
 	@echo "make fmt       auto-format the code with ruff"
@@ -23,6 +24,11 @@ venv:
 
 test:
 	$(PY) -m pytest -q
+
+# The demo list of the handoff, executed: each command must exit as expected and
+# print what it is supposed to print (usually the flag). ARGS=-v shows the output.
+demo:
+	$(PY) tests/demo.py $(ARGS)
 
 # A short fixed-seed sweep already runs inside `make test`; this is the long one.
 # SEED=7 make fuzz runs a different one.
