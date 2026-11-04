@@ -5,7 +5,7 @@ One page, for the day of the CTF. Start a session first, the write-up writes its
 
 ## 0. No idea at all? One command.
 
-`ctfc solve <file>` reads the file with whatever reader claims it, follows
+`ctfc solve <file>` (or the **Solve** tab of `ctfc serve`) reads the file with whatever reader claims it, follows
 everything that comes out of it (archive members, a mail's attachments, a
 capture's objects, an overlay, a Docker layer, a decoding chain), and prints the
 flag - with the commands that reproduce it - or the three best leads. It never

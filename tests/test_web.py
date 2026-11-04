@@ -668,3 +668,42 @@ def test_extend_tab_is_wired_end_to_end():
         assert f'id="{name}"' in page
         assert f'$("{name}")' in script
     assert 'extend: "sync"' in script
+
+
+def test_the_solve_tab_is_wired_end_to_end(client, fixture_bytes):
+    """The Solve tab: in the page, in app.js, and answering as a background job."""
+    import base64
+    import time
+
+    page = client.get("/").get_data(as_text=True)
+    script = client.get("/app.js").get_data(as_text=True)
+    assert 'data-tab="solve"' in page
+    assert 'id="options-solve"' in page
+    assert "renderSolve" in script
+    assert 'solve: "job"' in script or "solve: 'job'" in script
+
+    data = fixture_bytes("audit_macro.docm")
+    started = client.post(
+        "/api/jobs/solve",
+        json={
+            "data_b64": base64.b64encode(data).decode(),
+            "name": "macro.docm",
+            "options": {"seconds": 20, "depth": 5},
+        },
+    ).get_json()
+    for _ in range(200):
+        status = client.get(f"/api/jobs/{started['job']}").get_json()
+        if status["state"] in ("done", "error", "cancelled"):
+            break
+        time.sleep(0.05)
+    assert status["state"] == "done", status
+    answer = status["result"]
+    assert [flag["text"] for flag in answer["flags"]] == ["CYBN{fixture_vba_macro}"]
+    # The trail is the point: the commands that reproduce it, in order.
+    assert answer["flags"][0]["trail"][0].startswith("ctfc office ")
+    assert answer["read_as"].startswith("Office document")
+
+
+def test_the_solve_route_refuses_a_body_that_is_not_an_object(client):
+    answer = client.post("/api/jobs/solve", json=["not", "an", "object"])
+    assert answer.status_code == 400

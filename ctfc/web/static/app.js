@@ -23,6 +23,7 @@ const state = {
 // "job" runs in the background with progress and a Cancel button.
 const TOOLS = {
   auto: "job",
+  solve: "job",
   detect: "sync",
   xor: "job",
   sym: "job",
@@ -47,7 +48,7 @@ const API_PATH = { pipeline: "/api/recipe" };
 // Tabs that have their own options panel (#options-<tab>).
 const OPTION_PANELS = [
   "xor", "sym", "rsa", "hash", "pipeline", "keys", "lens", "radius", "volatility", "jwt", "prng", "extend",
-  "file", "classical", "crc", "sig", "docs",
+  "file", "classical", "crc", "sig", "docs", "solve",
 ];
 
 // Tabs that are reference pages, not tools: opening them shows the page and
@@ -211,6 +212,9 @@ function currentOptions() {
   }
   if (state.tab === "file") {
     return { reader: $("file-reader").value };
+  }
+  if (state.tab === "solve") {
+    return { seconds: $("solve-seconds").value, depth: $("solve-depth").value };
   }
   if (state.tab === "classical") {
     return {
@@ -385,6 +389,11 @@ function showAnswer(tab, answer) {
   if (tab === "prng") {
     renderPrng(answer);
     setStatus("");
+    return;
+  }
+  if (tab === "solve") {
+    renderSolve(answer);
+    setStatus(answer.budget || "");
     return;
   }
   if (tab === "file") {
@@ -1706,6 +1715,67 @@ init();
 // turns each report into the same shape - a list of sections, each a facts
 // table, a table or a block of text - so a reader added later shows up here
 // without a line of JavaScript.
+function renderSolve(answer) {
+  // The point of this tab is that it shows *one* thing when it worked: the
+  // flag, with the commands that reproduce it. The walk itself is behind a
+  // checkbox, because it is the thing you read when it did not work.
+  const results = $("results");
+  const head = el("div", "file-head");
+  head.append(el("strong", "", answer.path || T("web_tab_solve")));
+  const detail = [];
+  if (answer.read_as) detail.push(T("web_solve_read_as") + " " + answer.read_as);
+  detail.push(answer.pieces + " " + T("web_solve_pieces"));
+  head.append(el("span", "dim", "  " + detail.join("  -  ")));
+  results.append(head);
+
+  if ($("solve-steps") && $("solve-steps").checked) {
+    const steps = el("ul", "steps");
+    for (const step of answer.steps || []) steps.append(el("li", "dim", step));
+    results.append(steps);
+  }
+
+  for (const flag of answer.flags || []) {
+    const box = el("div", "flag");
+    box.append(el("strong", "", flag.text));
+    box.append(copyButton(T("web_copy"), () => flag.text));
+    box.append(
+      el("div", "dim", T("web_solve_found_in") + " " + flag.where + "  (" + flag.how + ")"),
+    );
+    for (const command of flag.trail || []) {
+      const line = el("div", "command");
+      line.append(el("code", "", command));
+      line.append(copyButton(T("web_copy"), () => command));
+      box.append(line);
+    }
+    results.append(box);
+  }
+
+  if (!(answer.flags || []).length && (answer.leads || []).length) {
+    results.append(el("p", "", T("web_solve_leads")));
+    const table = el("table", "ranked");
+    const header = el("tr");
+    for (const name of ["score", "piece", "why"]) header.append(el("th", "", name));
+    table.append(header);
+    for (const lead of answer.leads) {
+      const row = el("tr");
+      row.append(el("td", levelClass(lead.score), lead.score.toFixed(2)));
+      row.append(el("td", "", lead.title));
+      row.append(el("td", "dim", lead.why));
+      table.append(row);
+    }
+    results.append(table);
+    for (const lead of answer.leads) {
+      const line = el("div", "command");
+      line.append(el("code", "", lead.command));
+      line.append(copyButton(T("web_copy"), () => lead.command));
+      if (lead.preview) line.append(el("div", "dim", lead.preview));
+      results.append(line);
+    }
+  }
+  if (answer.notes && answer.notes.length) renderNotes(answer.notes);
+}
+
+
 function renderFile(answer) {
   const results = $("results");
   const head = el("div", "file-head");

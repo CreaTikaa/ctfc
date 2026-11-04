@@ -306,6 +306,29 @@ def create_app(config: Config | None = None) -> Flask:
 
             return work_auto, budget
 
+        if kind == "solve":
+            # The whole walk, in the browser: the same generator the terminal
+            # uses, so a reader added later shows up here with no work.
+            from ctfc.core.solve import solve as solve_file
+
+            inp = input_from_payload(payload, decode_bare=False)
+            depth = int(options.get("depth") or 5)
+            budget = Budget(
+                max_attempts=1_000_000, max_seconds=float(options.get("seconds") or 20)
+            )
+
+            def work_solve(budget: Budget) -> dict:
+                report = solve_file(
+                    inp.data,
+                    path=str(payload.get("name") or "input"),
+                    flagset=flagset,
+                    budget=budget,
+                    max_depth=depth,
+                )
+                return {"input": input_summary(inp), **report.to_dict()}
+
+            return work_solve, budget
+
         if kind == "classical":
             from ctfc.core import classical
 

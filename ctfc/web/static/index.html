@@ -74,6 +74,7 @@
     <section id="result-panel">
       <nav id="tabs">
         <button class="tab active" data-tab="auto" data-t="web_tab_auto">Auto</button>
+        <button class="tab" data-tab="solve" data-t="web_tab_solve">Solve</button>
         <button class="tab" data-tab="detect" data-t="web_tab_detect">Detect</button>
         <button class="tab" data-tab="pipeline" data-t="web_tab_pipeline">Pipeline</button>
         <button class="tab" data-tab="xor" data-t="web_tab_xor">XOR</button>
@@ -298,6 +299,15 @@
           <input id="classical-key" type="text" spellcheck="false"></label>
         <label><span data-t="web_sym_seconds">time budget (s)</span>
           <input id="classical-seconds" type="number" value="20" min="1" max="300"></label>
+      </div>
+      <!-- Options of the Solve tab: it deduces everything else by itself -->
+      <div id="options-solve" class="options hidden">
+        <label><span data-t="web_sym_seconds">time budget (s)</span>
+          <input id="solve-seconds" type="number" value="20" min="1" max="300"></label>
+        <label><span data-t="web_solve_depth">how deep to follow (default 5)</span>
+          <input id="solve-depth" type="number" value="5" min="1" max="10"></label>
+        <label class="checkbox"><input id="solve-steps" type="checkbox">
+          <span data-t="web_solve_steps">show what the walk did</span></label>
       </div>
       <!-- Options of the CRC32 tab: the checksum itself goes in the input box -->
       <div id="options-crc" class="options hidden">

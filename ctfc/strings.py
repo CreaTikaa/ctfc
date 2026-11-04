@@ -429,8 +429,20 @@ EN: dict[str, str] = {
     "web_sig_curve": "curve (or leave empty and give the DSA order)",
     "web_sig_order": "DSA group order q (decimal or 0x...)",
     "web_sig_hash": "hash used to sign (sha256, sha1, ...)",
+    "web_tab_solve": "Solve",
     "web_tab_file": "Files",
     "web_tab_crc": "CRC32",
+    "web_solve_hint": (
+        "One file in, the answer out: it is read by whatever reader claims it, everything "
+        "that comes out of it is followed, and only the flag - or the three best leads - "
+        "is shown. Nothing is brute-forced: a password is printed as a command."
+    ),
+    "web_solve_read_as": "read as",
+    "web_solve_found_in": "found in",
+    "web_solve_leads": "No flag. The most promising pieces, best first:",
+    "web_solve_steps": "what the walk did",
+    "web_solve_pieces": "piece(s) looked at",
+    "web_solve_depth": "how deep to follow (default 5)",
     "web_tab_classical": "Classical",
     "web_file_reader": "reader (auto-detected from the file)",
     "web_file_reader_auto": "detect it",

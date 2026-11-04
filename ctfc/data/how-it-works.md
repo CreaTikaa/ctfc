@@ -2412,3 +2412,21 @@ Both toolchains are installed on this machine, so the tests build a real binary
 the version against `go version`, the locator against the section header, and
 the Windows path against a `GOOS=windows` cross build. Without a toolchain
 every one of them skips with that reason printed.
+
+
+## 41. `Solve` in the browser
+
+The Files tab runs *one* reader; `ctfc solve` is the one that chains them, and
+it is the command a tired person wants - so it is now a tab too, the second
+one, right after Auto. It runs as a background job (progress, Cancel) like
+`auto` does, because its budget is seconds rather than milliseconds.
+
+The server side is six lines in `prepare_work`, because `SolveReport.to_dict()`
+already was the contract. The page side shows one thing when it worked: the
+flag, the piece it came from, and the commands that reproduce it, each with a
+Copy button - so the browser hands you a recipe, not a screenshot. The walk
+itself is behind a checkbox, because the list of steps is what you read when it
+did *not* work, and three leads with their commands are what you read instead.
+
+A reader added next month appears in this tab with no work at all: the walk
+comes from `core/readers.py`, like the Files tab's dropdown.
