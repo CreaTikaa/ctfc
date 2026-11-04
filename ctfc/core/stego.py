@@ -449,6 +449,39 @@ def _snippet(
     )
 
 
+def _analyse_jpeg(data: bytes) -> StegoReport:
+    """A JPEG: the metadata, plus where to look instead of the low bits."""
+    from ctfc.core import exif as exif_module
+
+    report = StegoReport(kind="jpeg")
+    try:
+        meta = exif_module.read(data)
+    except exif_module.ExifError as exc:
+        report.notes.append(str(exc))
+        meta = None
+    if meta is not None:
+        report.texts = [(tag.name, tag.value) for tag in meta.tags if tag.value.strip()]
+        report.notes += meta.notes
+        width, height = meta.get("PixelXDimension"), meta.get("PixelYDimension")
+        if width and height:
+            report.width, report.height = int(width or 0), int(height or 0)
+    comments = [
+        payload.decode("utf-8", "replace").strip("\x00")
+        for marker, payload in exif_module.jpeg_segments(data)
+        if marker == 0xFE and payload.strip(b"\x00")
+    ]
+    for comment in comments:
+        report.texts.append(("COM segment", comment))
+        report.notes.append(f"JPEG comment: {comment[:200]}")
+    report.notes.append(
+        "a JPEG has no raw pixels to hide bits in (the compression destroys them): "
+        "the places to look are the EXIF above, a COM segment, data appended after "
+        "the FFD9 end marker (`ctfc repair`), and the DCT-coefficient tools "
+        "(steghide, jsteg, stegseek) that `ctfc tools` lists"
+    )
+    return report
+
+
 @dataclass
 class StegoReport:
     """What the image holds."""
@@ -474,7 +507,14 @@ class StegoReport:
 
 
 def analyse(data: bytes, flagset=None, budget: Budget | None = None, top_n: int = 5) -> StegoReport:
-    """Decode the image, read its metadata, and try the LSB combinations."""
+    """Decode the image, read its metadata, and try the LSB combinations.
+
+    A JPEG takes the other road: its pixels do not survive the compression, so
+    an LSB message cannot be stored there at all. What it does carry is EXIF -
+    the comment field, the camera, the GPS point - and that is what comes back.
+    """
+    if data[:3] == b"\xff\xd8\xff":
+        return _analyse_jpeg(data)
     image = load(data)
     report = StegoReport(
         width=image.width,

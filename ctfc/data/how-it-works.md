@@ -2195,3 +2195,48 @@ Worth knowing what it costs: a wrong password against an `openssl enc` file is
 a PBKDF2 derivation, about a millisecond per variant and several variants per
 guess, so 2000 passwords is about 30 seconds. That is the honest reason the
 embedded list is 10000 entries and not a million.
+
+
+## 36. EXIF: what a photograph says about itself (`ctfc/core/exif.py`)
+
+"Install exiftool" was the answer here, and exiftool is not always installed.
+It turns out to be about a hundred and fifty lines of stdlib, so now
+`ctfc stego photo.jpg` reads the metadata instead of refusing the file.
+
+The structure, once and for all: **EXIF is a TIFF file embedded in a JPEG**. A
+JPEG is a chain of segments; the APP1 one (`FF E1`) holds `Exif\0\0` followed by
+a complete little- or big-endian TIFF header. That header points at the first
+IFD - a count, then 12-byte entries of `tag | type | count | value-or-offset` -
+and a value longer than four bytes is replaced by an offset from the start of
+the TIFF block. Two tags are pointers to further directories: the EXIF sub-IFD
+(0x8769) and the GPS IFD (0x8825), which is where the interesting fields are:
+`DateTimeOriginal`, `UserComment`, the lens, the serial number, the coordinates.
+
+GPS is three rationals - degrees, minutes, seconds - plus a reference letter,
+and `_gps_decimal` turns that into the signed decimal pair every map wants. The
+OpenStreetMap link is printed, never opened: it is a third party like any other.
+
+The same TIFF block appears in three containers, so all three are read: a JPEG
+(through APP1), a bare TIFF, and a PNG's `eXIf` chunk.
+
+### A JPEG is not an LSB target, and saying so is the feature
+
+`ctfc stego` used to refuse a JPEG with "not a PNG or BMP". It now explains
+what a JPEG *can* hide instead: the EXIF, a COM segment, data appended after
+the `FFD9` end marker (`ctfc repair`), and the DCT-coefficient tools - steghide,
+jsteg, stegseek - that `ctfc tools` already lists. The low bits of a JPEG's
+pixels do not survive its own compression, so a tool that offered to search
+them would be lying.
+
+### Ground truth
+
+The fixture is built by hand in `tests/make_fixtures.py` (deterministic, no
+imagemagick needed) and **checked against `exiftool -json -n`** field by field,
+including the GPS point in signed decimal degrees. Where exiftool is absent the
+test skips with that reason rather than passing quietly. Two other tests push a
+value offset past the end of the file and truncate the block, because a hostile
+photograph has to come back as a note, not an exception.
+
+One limit worth naming: EXIF has no time zone (the standard added one in 2016
+and almost nothing writes it), so a photograph's date is the camera's local
+clock. `ctfc timeline` labels it the same way it labels a ZIP's MS-DOS stamp.

@@ -684,21 +684,36 @@ def print_pdf(console: Console, report, saved: list[str]) -> None:
         console.print(f"[green]saved {len(saved)} file(s)[/]; next: ctfc scan <that folder>")
 
 
-def print_stego(console: Console, report, show_code: bool = False) -> None:
+def print_stego(console: Console, report, show_code: bool = False, flags=None) -> None:
     """`ctfc stego`: the image, its metadata, and what the low bits spell out."""
     facts = Table(title="image", show_header=False, expand=False)
     facts.add_column("name", style="cyan")
     facts.add_column("value")
     facts.add_row("format", report.kind)
-    facts.add_row("size", f"{report.width}x{report.height}")
-    facts.add_row("channels", str(report.channels))
+    if report.width or report.height:
+        facts.add_row("size", f"{report.width}x{report.height}")
+    if report.channels:
+        facts.add_row("channels", str(report.channels))
     console.print(facts)
+
+    # A JPEG's answer is its metadata, so it gets a table rather than a list of
+    # notes: EXIF is a table, and it is read by eye, field by field.
+    if report.texts:
+        meta = Table(title="metadata", expand=True)
+        meta.add_column("field", ratio=1)
+        meta.add_column("value", ratio=4)
+        for keyword, text in report.texts:
+            meta.add_row(safe(keyword, 30), safe(text, 300))
+        console.print(meta)
 
     for note in report.notes:
         console.print(f"[cyan]*[/] {safe(note)}")
-    print_candidates(
-        console, report.candidates, show_code=show_code, title="hidden in the low bits"
-    )
+    for flag in flags or []:
+        console.print(f"[bold green]{safe(flag)}[/]")
+    if report.kind != "jpeg":
+        print_candidates(
+            console, report.candidates, show_code=show_code, title="hidden in the low bits"
+        )
 
 
 def print_git(console: Console, report, saved: list[str]) -> None:

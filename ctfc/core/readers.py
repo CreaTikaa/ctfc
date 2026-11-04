@@ -35,6 +35,7 @@ from ctfc.core import (
     cfb,
     evtx,
     executable,
+    exif,
     hive,
     mail,
     msg,
@@ -50,7 +51,7 @@ from ctfc.core import (
     zipinfo,
 )
 from ctfc.core.budget import Budget
-from ctfc.core.flags import FlagSet
+from ctfc.core.flags import FlagSet, find_flags
 
 # A piece smaller than this holds nothing anyone wants; a piece bigger than this
 # is a disk image, not a payload, and following it is a different job (`ctfc scan`).
@@ -394,6 +395,40 @@ def _open_stego(data: bytes, flagset: FlagSet | None, path: str) -> Opened:
     )
 
 
+def _open_exif(data: bytes, flagset: FlagSet | None, path: str) -> Opened:
+    report = exif.read(data)
+    events = [
+        Event(when, label, report.get("Model") or "the camera")
+        for when, label in (
+            (_exif_date(report.get("DateTimeOriginal")), "photograph taken"),
+            (_exif_date(report.get("DateTime")), "image file written"),
+        )
+        if when
+    ]
+    flags = [hit.text for hit in find_flags(exif.text_values(report), flagset)]
+    return Opened(
+        detail=f"{report.container} EXIF, {len(report.tags)} field(s)"
+        + (f", GPS {report.coordinates}" if report.coordinates else ""),
+        flags=flags,
+        notes=list(report.notes),
+        events=events,
+    )
+
+
+def _exif_date(value: str) -> str:
+    """EXIF writes "2024:05:17 09:30:00"; every event here is ISO-ish and UTC-labelled.
+
+    EXIF has no time zone (the standard added one only in 2016, and almost
+    nothing writes it), so this is the camera's local clock. It is labelled as
+    UTC-shaped for sorting and the timeline flags its kind, which is the same
+    compromise the ZIP and cabinet stamps get.
+    """
+    text = value.strip()
+    if len(text) < 19 or text[:1] not in "12":
+        return ""
+    return f"{text[:4]}-{text[5:7]}-{text[8:10]} {text[11:19]} UTC"
+
+
 def _open_pe(data: bytes, flagset: FlagSet | None, path: str) -> Opened:
     report = pe.analyse(data, flagset)
     children: list[Child] = []
@@ -612,6 +647,13 @@ READERS: tuple[Reader, ...] = (
         "ctfc stego",
         lambda data: data[:8] == b"\x89PNG\r\n\x1a\n" or data[:2] == b"BM",
         _open_stego,
+    ),
+    Reader(
+        "exif",
+        "photograph metadata (JPEG / TIFF EXIF, GPS)",
+        "ctfc stego",
+        lambda data: data[:3] == exif.JPEG_MAGIC or data[:4] in (exif.TIFF_LITTLE, exif.TIFF_BIG),
+        _open_exif,
     ),
     Reader("pe", "Windows executable (PE)", "ctfc pe", lambda data: data[:2] == b"MZ", _open_pe),
     Reader(

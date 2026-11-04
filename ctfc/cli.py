@@ -935,13 +935,18 @@ def cmd_stego(args: argparse.Namespace, config: Config, console: Console) -> int
     report = stego.analyse(
         inp.data, flagset=flagset_from(config), budget=budget, top_n=config.top_n
     )
+    # The metadata is searched for a flag too: on a JPEG it is the only place
+    # there is, and on a PNG a tEXt chunk is as good a hiding place as the bits.
+    metadata = "\n".join(f"{key}: {value}" for key, value in report.texts).encode()
+    flags = [hit.text for hit in find_flags_in(metadata, flagset_from(config))]
     remember(args, config, inp.data, args.input, report.candidates, report.notes[:3])
     if args.json:
-        print(json.dumps({"input": input_to_dict(inp), **report.to_dict()}, indent=2))
-        return 0 if report.candidates else 1
+        payload = {"input": input_to_dict(inp), **report.to_dict(), "flags": flags}
+        print(json.dumps(payload, indent=2))
+        return 0 if report.candidates or flags else 1
     render.print_input_notes(console, inp)
-    render.print_stego(console, report, show_code=args.show_code)
-    return 0 if report.candidates else 1
+    render.print_stego(console, report, show_code=args.show_code, flags=flags)
+    return 0 if report.candidates or flags else 1
 
 
 def cmd_git(args: argparse.Namespace, config: Config, console: Console) -> int:

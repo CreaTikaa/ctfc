@@ -380,6 +380,39 @@ def _stego(data: bytes, flagset: FlagSet | None) -> dict:
     return {"sections": sections, "flags": flags, "notes": report.notes, "commands": []}
 
 
+def _exif(data: bytes, flagset: FlagSet | None) -> dict:
+    from ctfc.core import exif as exif_module
+
+    report = exif_module.read(data)
+    sections = [
+        facts(
+            "the photograph",
+            [
+                ("container", report.container),
+                ("byte order", report.byte_order),
+                ("GPS", report.coordinates),
+                ("altitude", report.altitude),
+                ("camera", f"{report.get('Make')} {report.get('Model')}".strip()),
+                ("taken", report.get("DateTimeOriginal")),
+            ],
+        ),
+        table(
+            "every field",
+            ["where", "tag", "field", "value"],
+            [[tag.ifd, f"0x{tag.tag:04x}", tag.name, tag.value] for tag in report.tags],
+        ),
+    ]
+    commands = []
+    if report.map_url:
+        commands.append(f"# the GPS point, on a map (a third party): {report.map_url}")
+    return {
+        "sections": sections,
+        "flags": [hit.text for hit in find_flags(exif_module.text_values(report), flagset)],
+        "notes": list(report.notes),
+        "commands": commands,
+    }
+
+
 def _pe(data: bytes, flagset: FlagSet | None) -> dict:
     report = pe.analyse(data, flagset)
     sections = [
@@ -768,6 +801,7 @@ ADAPTERS: dict[str, Callable[[bytes, FlagSet | None], dict]] = {
     "msi": _msi,
     "pdf": _pdf,
     "stego": _stego,
+    "exif": _exif,
     "pe": _pe,
     "exe": _exe,
     "winartifact": _winartifact,

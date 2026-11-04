@@ -3119,6 +3119,103 @@ def write_longtail_fixtures() -> None:
     write("classical_beaufort.txt", beaufort_decrypt(plain, "lemon"))
 
 
+
+# ---------------------------------------------------------------------------
+# A photograph with EXIF (and a GPS point)
+# ---------------------------------------------------------------------------
+#
+# Built by hand so that it is deterministic and needs no imagemagick: a JPEG is
+# SOI, then segments, then EOI, and EXIF is a whole little-endian TIFF inside
+# the APP1 segment. The test checks this fixture against `exiftool`, which is
+# the only way to know the bytes mean what we think they mean.
+
+
+def tiff_entry(tag: int, kind: int, count: int, payload: bytes) -> bytes:
+    """One 12-byte IFD entry. `payload` is the value, or the offset, already packed."""
+    return struct.pack("<HHI", tag, kind, count) + payload[:4].ljust(4, b"\x00")
+
+
+def exif_jpeg() -> bytes:
+    """A JPEG whose EXIF holds a camera, a date, a flag in UserComment and a GPS point."""
+    # The TIFF block is assembled back to front: the values that do not fit in
+    # four bytes live after the directories, at an offset from the TIFF header.
+    header = b"II\x2a\x00" + struct.pack("<I", 8)
+    strings = {
+        "make": b"ctfcCam\x00",
+        "model": b"Model X1\x00",
+        "software": b"ctfc fixture\x00",
+        "date": b"2024:05:17 09:30:00\x00",
+        "comment": b"ASCII\x00\x00\x00CYBN{exif_user_comment}",
+    }
+    # Latitude 48 deg 51' 30.12" N, longitude 2 deg 17' 40.13" E (three rationals each).
+    gps_latitude = struct.pack("<IIIIII", 48, 1, 51, 1, 3012, 100)
+    gps_longitude = struct.pack("<IIIIII", 2, 1, 17, 1, 4013, 100)
+    gps_altitude = struct.pack("<II", 35, 1)
+
+    # Lay the value block out and remember where each piece landed.
+    ifd0_count, exif_count, gps_count = 5, 2, 7
+    ifd0_at = 8
+    exif_at = ifd0_at + 2 + ifd0_count * 12 + 4
+    gps_at = exif_at + 2 + exif_count * 12 + 4
+    values_at = gps_at + 2 + gps_count * 12 + 4
+    blob = bytearray()
+    where = {}
+    for name, payload in strings.items():
+        where[name] = values_at + len(blob)
+        blob += payload
+    for name, payload in (
+        ("lat", gps_latitude),
+        ("lon", gps_longitude),
+        ("alt", gps_altitude),
+    ):
+        where[name] = values_at + len(blob)
+        blob += payload
+
+    def offset(name: str) -> bytes:
+        return struct.pack("<I", where[name])
+
+    ifd0 = struct.pack("<H", ifd0_count)
+    ifd0 += tiff_entry(0x010F, 2, len(strings["make"]), offset("make"))
+    ifd0 += tiff_entry(0x0110, 2, len(strings["model"]), offset("model"))
+    ifd0 += tiff_entry(0x0131, 2, len(strings["software"]), offset("software"))
+    ifd0 += tiff_entry(0x8769, 4, 1, struct.pack("<I", exif_at))
+    ifd0 += tiff_entry(0x8825, 4, 1, struct.pack("<I", gps_at))
+    ifd0 += struct.pack("<I", 0)  # no IFD1: no thumbnail
+
+    sub = struct.pack("<H", exif_count)
+    sub += tiff_entry(0x9003, 2, len(strings["date"]), offset("date"))
+    sub += tiff_entry(0x9286, 7, len(strings["comment"]), offset("comment"))
+    sub += struct.pack("<I", 0)
+
+    gps = struct.pack("<H", gps_count)
+    gps += tiff_entry(0x0000, 1, 4, bytes([2, 3, 0, 0]))
+    gps += tiff_entry(0x0001, 2, 2, b"N\x00")
+    gps += tiff_entry(0x0002, 5, 3, offset("lat"))
+    gps += tiff_entry(0x0003, 2, 2, b"E\x00")
+    gps += tiff_entry(0x0004, 5, 3, offset("lon"))
+    gps += tiff_entry(0x0005, 1, 1, bytes([0]))
+    gps += tiff_entry(0x0006, 5, 1, offset("alt"))
+    gps += struct.pack("<I", 0)
+
+    tiff = header + ifd0 + sub + gps + bytes(blob)
+    app1 = b"Exif\x00\x00" + tiff
+    segments = b"\xff\xd8"  # SOI
+    segments += b"\xff\xe1" + struct.pack(">H", len(app1) + 2) + app1
+    comment = b"the flag is not in this comment"
+    segments += b"\xff\xfe" + struct.pack(">H", len(comment) + 2) + comment
+    # A minimal grey 1x1 scan, so the file is a real JPEG and not only a header.
+    quant = b"\xff\xdb" + struct.pack(">H", 67) + b"\x00" + bytes([16] * 64)
+    frame = b"\xff\xc0" + struct.pack(">H", 11) + bytes([8, 0, 1, 0, 1, 1, 1, 0x11, 0])
+    segments += quant + frame
+    segments += b"\xff\xd9"  # EOI
+    return segments
+
+
+def write_exif_fixtures() -> None:
+    print("exif:")
+    write("exif_photo.jpg", exif_jpeg())
+
+
 def main() -> None:
     FIXTURES.mkdir(exist_ok=True)
     print(f"writing fixtures to {FIXTURES}")
@@ -3315,6 +3412,7 @@ def main() -> None:
 
     # --- the encoding long tail (ideas.md 3.3) ---
     write_longtail_fixtures()
+    write_exif_fixtures()
 
 
 if __name__ == "__main__":
