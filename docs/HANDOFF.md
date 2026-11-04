@@ -36,10 +36,13 @@ the ciphers that belong to dcode.fr. Read `CLAUDE.md` first, then this file.
 | M8 sessions + report + bundle | `5e35985`..this one | write-up lessons (`lens --against`), sessions, `ctfc report`, cheat sheet, `make bundle` (section 5ter) |
 | lot D + E (ideas.md 1 and 2.5) | `6b6424c`..`2d897c9` | `ctfc prng`, `ctfc extend`, `make fuzz`, `ctfc rsa --also`, `ctfc sig` (section 5septies) |
 | lot F + G (the rest of ideas.md) | `b6e0fb9`..`5e142f2` | `ctfc archive`, `ctfc msg`, `ctfc msi`, `ctfc crc`, `ctfc winartifact`, `ctfc exe`, the encoding long tail, `ctfc watch`, `ctfc replay` (section 5octies) |
+| lot H (ideas.md section 2) | `6d2c5f7`..`f969f5e` | `ctfc solve`, `ctfc workspace`, PNG surgery, `ctfc timeline`, `ctfc mail`, `--wordlist`, EXIF, WAV LSB, PHP in Lens, Go/Rust strings, `make demo`, `make fuzz-web` (section 5nonies) |
 
-1439 tests pass, 1 skipped (`.venv/bin/python -m pytest -q`, ~66 s), `ruff check .` and
+1651 tests pass, 1 skipped (`.venv/bin/python -m pytest -q`, ~100 s), `ruff check .` and
 `ruff format --check .` clean. `make fuzz` (the long sweep) is clean on seeds 3, 7, 9, 13, 17,
-42 and 101, over 35 reader entry points.
+42 and 101, over 35 reader entry points; `make fuzz-web` is clean on seeds 0, 1, 2, 3, 5, 7, 11,
+13, 23, 42 and 101. **`make demo` runs the 62 commands of section 7 and checks each one's exit
+code and output** - run it after any change to a reader or a renderer.
 
 **Plan approval: the user waived it twice on 2026-10-27.** For M4: "tu peux directement commencer
 avec ton plan, pas besoin de me le présenter". For M5 and the improvement ideas that follow:
@@ -800,6 +803,82 @@ Done so far: idea 5 (password list, M3), idea 1 and idea 8 (this commit).
 
 Ideas 5 (password list) and, in M5, the hash hand-off are done. See section 5 for the order the
 remaining ones will be done in.
+
+## 5nonies. Lot H (2026-11-04): `docs/ideas.md` section 2
+
+Eleven commits, each with tests, docs and a push. In the order they were built, which was the
+order of value against effort:
+
+1. **`ctfc solve <file>`** (`core/solve.py`) - the cheat sheet executed. Flag in the raw bytes ->
+   the reader that claims the file -> everything that reader produced that is itself a file ->
+   the carver -> the decoding chains, and whatever comes out of *them* goes back through the
+   same loop. Stops at the first flag, otherwise prints three leads. Every piece carries the
+   commands that reproduce it, and those commands really run in that order (`unzip -j -d out1
+   chal.zip` then `unzip -j -d out2 out1/inner.zip`).
+2. **`core/readers.py`** - the single registry. Which reader claims a file *moved out of
+   `web/formats.py`*, which now keeps only its display adapters, and the table answers two more
+   questions: what did this reader produce that is itself worth reading, and what timestamps
+   does it carry. **A new reader now reaches the CLI, the browser Files tab, `solve`,
+   `workspace` and `timeline` from one entry.** `solve.walk()` is the shared generator.
+3. **`ctfc workspace <folder>`** (`core/workspace.py`) - three pools (secrets written in configs
+   *or in sentences*, named keys plus the files worth searching, everything encrypted) and the
+   cross product under one shared budget, cheapest first: ZIP entries, then `keyhunt` of every
+   file against every blob, then the passphrases that cost a KDF each. "The password in mail.txt
+   opens backup.zip", in 0.4 s. It needed `secrets.find_prose_secrets` and
+   `keyhunt.find_entropy_runs` (below).
+4. **PNG surgery** in `ctfc repair` (`core/pngfix.py`) - the shrunk IHDR height put back by
+   arithmetic (the IDAT inflates to exactly `height * row`), wrong chunk CRCs, impossible
+   depth/colour pairs, the text chunks. A healthy PNG comes back byte for byte identical.
+5. **`ctfc timeline <path>`** (`core/timeline.py`) - every date in one UTC table, sorted, each
+   row naming its source. A future date is kept and flagged; a format with no time zone (ZIP,
+   cabinet, EXIF) says so. `zipinfo` and `archive` now keep the dates they were already parsing.
+6. **`ctfc mail`** for .eml/.mbox, and **`--wordlist`** on `sym`/`hash`/`jwt` (capped, and the
+   note says how much of the file was used - rockyou is 14 344 391 lines).
+7. **EXIF** (`core/exif.py`) - `ctfc stego photo.jpg`: the fields, the GPS point as decimals,
+   and what a JPEG *can* hide (its pixels' low bits cannot). Validated against `exiftool -json -n`.
+8. **`make demo`** (`tests/demo.py`) - the 62 commands of section 7, executed, each with the
+   exit code and the string it must print. Writing it found four wrong expectations of mine.
+9. **WAV LSB** (`core/audio.py`) - bits 0-2, per channel, both bit orders, and the whole low
+   byte; the spectrogram is named as *not* looked at (it needs an FFT, so numpy) and handed to
+   Audacity.
+10. **PHP in Code Lens** - 30 rules. Two things the tests found: `gzinflate` is *raw* deflate
+    (`zlib.decompress(data, -15)`), and nested calls execute inside-out, so `_order_nested`
+    reverses a line whose operations really are nested.
+11. **`make fuzz-web`** (`tests/fuzz_web.py`) - random JSON at every route; found three 500s, all
+    "a JSON type assumed rather than checked" (`data_b64` as an object, `input` as a dict,
+    `options` as a string in fifteen routes -> one `options_of()` helper).
+12. **Go and Rust binaries** (`core/binstrings.py`) - the (pointer, length) slice scan cuts
+    literals exactly where `strings` glues them, and `.gopclntab` gives the function table
+    (located by magic when no section is named, which is how a Windows Go binary is read).
+    Validated against `go tool nm`, `go version` and a `GOOS=windows` cross build. Rust's limit
+    is stated: its lengths are immediates in the code.
+
+### Decisions worth keeping
+
+- **`solve` never brute-forces.** A password or a key is printed as a command (`bkcrack`,
+  `zip2john`, `ctfc sym --passwords`), never guessed. That is also why it is fast.
+- **One budget per walk, not per piece**, plus a depth and a piece cap, and the report names what
+  it did not get to.
+- **`keyhunt` has a second pass** (`find_entropy_runs`): the old scan walks a 16-byte grid, which
+  is right for a key a program allocated and wrong for a key *written into a file*. The new pass
+  looks for the shape a key has in a file - a short run of random bytes among strings and zeroes -
+  and sweeps every offset inside it, with the run widened by 8 bytes at each end because the
+  detector's own window makes the edges fuzzy (measured: a key at 9997 produced a run from 9998).
+- **What counts as a ciphertext** in `workspace`: entropy compared with the most a sample that
+  *short* could have (96 random bytes cannot exceed log2(96) = 6.6 bits/byte), over 64 KB only
+  with a name that says "encrypted", and `.raw`/`.dmp`/`.mem`/`.img` are key sources, never
+  targets. The first version spent 60 s throwing keys at a memory dump.
+- **A forged timestamp is evidence**: kept and flagged, never dropped.
+- The **ssh-agent lost its key** mid-session, so pushes went through
+  `git -c credential.helper='!gh auth git-credential' push https://github.com/CreaTikaa/ctfc.git main`.
+  GitHub answered `Internal Server Error` twice; resending the same push worked.
+
+### What is left
+
+`docs/ideas.md` section 1 (three readers that need a real sample: SAM hashes, EVTX binary XML,
+LZXPRESS Huffman; parallelism, measured and declined; the keyed classical ciphers; Mach-O) and
+section 2.6's last item: **a regression corpus from his own anonymized challenges**. He has still
+not sent samples - that is the one test that measures the thing he cares about.
 
 ## 7. Quick verification commands
 

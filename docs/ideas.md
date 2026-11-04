@@ -8,8 +8,10 @@ this file has been built (lots D, E, F and G - see `HANDOFF.md` §5septies and
 - **Section 1** is what is still open from that list: three things that need a
   real sample before they can be finished honestly, and the things that were
   measured or considered and deliberately not built.
-- **Section 2** is the new list, written at the end of the session that finished
-  the old one - what I would build next, and why.
+- **Section 2** was the list written at the end of the session that finished the
+  old one. **It is now built too** (lot H, 2026-11-04 - `HANDOFF.md` §5nonies);
+  each entry below keeps its reasoning, with what actually happened added where
+  the plan turned out to be wrong. **Section 2.7 is the fresh list.**
 - **Section 3** keeps the reasoning behind what is already done, and section 4
   the questions that do not need reopening.
 
@@ -78,7 +80,7 @@ are all read.
 
 ---
 
-## 2. What I would build next (2026-11-03)
+## 2. Built on 2026-11-04 (lot H), with what the plan got wrong
 
 Written at the end of the session that finished the previous list, while the
 code was still fresh. Ordered by **value against effort**, as before. Each entry
@@ -285,3 +287,56 @@ Recorded so the question does not have to be reopened each time.
 - **Row-level MSI table decoding.** The string pool answers the same questions
   with a tenth of the code, and `msidump` exists. Stated in the report rather
   than hidden.
+
+
+---
+
+## 2.7 What is left, and what I would do next (2026-11-04)
+
+Everything in section 2 is built. What remains is short, and the first entry is
+the only one that measures the thing he actually cares about.
+
+### 2.7.1 A regression corpus from his own challenges (the one that matters)
+
+Still the top of the list, and still blocked on the same thing: **the samples
+never arrived**. He said the bar is "j'aurais pu les flag simplement en copiant
+les infos dans le tool" - so the test that proves it is his own past challenges,
+anonymized, each as a fixture with its expected flag. `tests/demo.py` is now the
+frame it would drop into: one line per challenge, the flag as the expected
+output. Ask again, and if the answer is "later", `make demo` at least keeps the
+62 synthetic cases honest.
+
+### 2.7.2 The three readers that need a real sample
+
+Unchanged from section 1.1: SAM hash decryption, EVTX binary XML, LZXPRESS
+Huffman for compressed prefetch. All three would be guesses without something
+genuine to diff against, and the project has deliberately not guessed.
+
+### 2.7.3 Smaller, and each an afternoon
+
+- **A Go PE's string literals.** `ctfc pe` reads the function table of a Windows
+  Go binary but not its literals, because a PE's string headers hold absolute
+  addresses and the reader does not keep the image base. Keeping it is a
+  two-line change in `pe.py`; the rest is passing sections into
+  `binstrings.slice_strings` with `address = image_base + virtual_address`.
+- **Rust literals properly** would mean reading the immediates out of the code,
+  which means a disassembler. `capstone` is not an allowed dependency, and a
+  hand-written x86-64 length decoder for `lea`/`mov` pairs is a week. The honest
+  answer stays: hand over to `objdump -d`.
+- **`ctfc solve` in the browser.** The Files tab runs one reader; `solve` is the
+  one that chains them, and it is the command a tired person wants. The API
+  already returns the shape (`SolveReport.to_dict`), so it is a tab and a
+  renderer, not new logic.
+- **A `--since`/`--until` on `ctfc workspace`** to narrow a big folder, and a
+  `--secrets-from <file>` to add a list of candidate passwords by hand.
+- **The `interesting` flag on `AmCache`/`hive`** and the other readers that
+  return `notes` but no `events`: `ctfc timeline` would then cover them too
+  (registry key last-written times are real evidence).
+
+### 2.7.4 Still deliberately not doing
+
+The spectrogram, DTMF and whistled Morse (an FFT needs numpy), decoding a
+damaged QR (`zbarimg` is now suggested and does it in one call), the keyed
+classical ciphers that need a key square typed in (dcode.fr), parallel brute
+force (measured: the slowest search here is 8.3 s), and Mach-O (no macOS to
+check against).

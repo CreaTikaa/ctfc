@@ -155,7 +155,7 @@ command_template = ["exiftool", "{input}"]
 suggest_when = ["magic.jpg", "magic.png", "magic.gif", "magic.pdf", "magic.tif"]
 offline_safe = true
 install = "apt install libimage-exiftool-perl"
-notes = "metadata: comments and GPS tags are a classic hiding place"
+notes = "metadata: comments and GPS tags are a classic hiding place. ctfc reads EXIF itself now (`ctfc stego photo.jpg`); exiftool knows the maker notes and the thousand vendor tags it does not"
 
 [[tool]]
 id = "zsteg"
@@ -165,7 +165,17 @@ command_template = ["zsteg", "-a", "{input}"]
 suggest_when = ["magic.png", "magic.bmp"]
 offline_safe = true
 install = "gem install zsteg"
-notes = "LSB steganography in PNG and BMP, which ctfc does not look at"
+notes = "LSB steganography in PNG and BMP. ctfc tries the common channel orders and bit planes itself (`ctfc stego`); zsteg tries the exotic ones and the colour-palette tricks"
+
+[[tool]]
+id = "zbarimg"
+name = "zbarimg"
+kind = "local"
+command_template = ["zbarimg", "--quiet", "-Sdisable", "-Sqrcode.enable", "-Scode128.enable", "{input}"]
+suggest_when = ["magic.png", "magic.jpg", "magic.gif", "magic.bmp", "magic.tif"]
+offline_safe = true
+install = "apt install zbar-tools"
+notes = "reads a QR code or a barcode out of an image. ctfc does not: decoding a damaged QR properly (its Reed-Solomon correction, its masks, its versions) is a project of its own, and this does it in one call"
 
 [[tool]]
 id = "steghide"

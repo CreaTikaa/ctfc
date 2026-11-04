@@ -314,3 +314,13 @@ def test_bkcrack_command_is_deduced_for_a_zipcrypto_png(no_embedded_copy):
         "89504e470d0a1a0a0000000d49484452",
     ]
     assert bk.placeholders == []
+
+
+def test_zbarimg_is_suggested_for_an_image_and_says_why_ctfc_does_not_decode():
+    """A QR code belongs to zbarimg: decoding a damaged one properly is a project."""
+    tool = tool_by_id("zbarimg")
+    assert tool.kind == "local"
+    assert tool.offline_safe
+    assert "qrcode" in " ".join(tool.command_template)
+    assert "project of its own" in tool.notes
+    assert "magic.png" in tool.suggest_when and "magic.jpg" in tool.suggest_when
