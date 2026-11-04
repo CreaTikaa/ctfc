@@ -188,8 +188,7 @@ def random_value(rng: random.Random, blobs: list[bytes], depth: int = 0):
         return [random_value(rng, blobs, depth + 1) for _ in range(rng.randrange(4))]
     if choice == 11 and depth < 2:
         return {
-            rng.choice(KEYS): random_value(rng, blobs, depth + 1)
-            for _ in range(rng.randrange(4))
+            rng.choice(KEYS): random_value(rng, blobs, depth + 1) for _ in range(rng.randrange(4))
         }
     if choice == 12:
         return rng.choice(["../../etc/passwd", "file:///etc/passwd", "http://127.0.0.1:1/"])

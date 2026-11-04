@@ -1012,6 +1012,7 @@ def print_hive(console: Console, report) -> None:
 
 def print_pe(console: Console, report) -> None:
     """`ctfc pe`: what the executable is, its sections, and what its APIs say."""
+
     facts = Table(title="executable", show_header=False, expand=False)
     facts.add_column("name", style="cyan")
     facts.add_column("value")
@@ -1061,6 +1062,7 @@ def print_pe(console: Console, report) -> None:
                 title=f"{len(report.dotnet_literals)} .NET string literal(s) (#US heap)",
             )
         )
+    print_toolchain(console, getattr(report, "toolchain", None))
     for flag in report.flags:
         console.print(f"[bold green]flag:[/] {escape(flag)}")
     for note in report.notes:
@@ -1640,10 +1642,52 @@ def print_jumplist(console: Console, report) -> None:
     print_notes(console, report.notes)
 
 
+def print_toolchain(console: Console, found) -> None:
+    """The Go / Rust report: the version, the program's own functions, the literals."""
+    if found is None:
+        return
+    facts = Table(title=f"built by {found.toolchain}", show_header=False, expand=False)
+    facts.add_column("name", style="cyan")
+    facts.add_column("value")
+    facts.add_row("version", safe(found.version) or "?")
+    if found.module:
+        facts.add_row("module", safe(found.module))
+    if found.functions:
+        facts.add_row("functions", str(len(found.functions)))
+    if found.slices:
+        facts.add_row("string literals", str(len(found.slices)))
+    console.print(facts)
+
+    own = found.own_functions
+    if own:
+        table = Table(title=f"{len(own)} function(s) of this program", expand=True)
+        table.add_column("name", ratio=1)
+        for name in own[:40]:
+            table.add_row(safe(name, 110))
+        console.print(table)
+    if found.slices:
+        # The point of the feature: each literal on its own line, cut where the
+        # compiler ended it - which is what `strings` cannot do.
+        table = Table(title="string literals (exact, from their length fields)", expand=True)
+        table.add_column("literal", ratio=1)
+        for text in found.slices[:40]:
+            table.add_row(safe(text, 140))
+        console.print(table)
+        if len(found.slices) > 40:
+            console.print(f"[dim]... and {len(found.slices) - 40} more (--json has them all)[/]")
+    if found.sources:
+        table = Table(title="source paths embedded in the binary", expand=True)
+        table.add_column("path", ratio=1)
+        for path in found.sources[:20]:
+            table.add_row(safe(path, 140))
+        console.print(table)
+
+
 def print_executable(console: Console, report) -> None:
     """`ctfc exe`: an ELF, a Java class or JAR, or an Android DEX."""
     if report.elf is not None:
         print_elf(console, report.elf)
+    print_toolchain(console, getattr(report, "toolchain", None))
     for item in report.classes[:20]:
         print_class(console, item)
     if len(report.classes) > 20:

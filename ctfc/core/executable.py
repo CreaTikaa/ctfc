@@ -330,6 +330,9 @@ class ExecutableReport:
 
     kind: str = ""  # "elf" | "class" | "jar" | "dex" | "pe" | "macho"
     elf: ElfReport | None = None
+    # Filled when the binary was built by Go or Rust: `strings` is useless on
+    # those, and `core/binstrings.py` says why and does better.
+    toolchain: object | None = None
     classes: list[ClassReport] = field(default_factory=list)
     dex: DexReport | None = None
     flags: list[str] = field(default_factory=list)
@@ -340,12 +343,34 @@ class ExecutableReport:
         return {
             "kind": self.kind,
             "elf": None if self.elf is None else self.elf.to_dict(),
+            "toolchain": None if self.toolchain is None else self.toolchain.to_dict(),
             "classes": [item.to_dict() for item in self.classes],
             "dex": None if self.dex is None else self.dex.to_dict(),
             "flags": list(self.flags),
             "notes": list(self.notes),
             "commands": list(self.commands),
         }
+
+
+def _read_toolchain(data: bytes, report: ExecutableReport) -> None:
+    """Was this built by Go or Rust? Then `strings` is the wrong tool - see binstrings."""
+    from ctfc.core import binstrings
+
+    sections = [
+        binstrings.Section(section.name, section.address, section.offset, section.size)
+        for section in (report.elf.sections if report.elf else [])
+    ]
+    pointer_size = 8 if (report.elf and report.elf.bits == 64) else 4
+    found = binstrings.analyse(data, sections, pointer_size)
+    if not found.toolchain:
+        return
+    report.toolchain = found
+    report.notes += found.notes
+    if found.toolchain == "go":
+        report.commands.append("go tool nm <file>             # the same function table")
+        report.commands.append("go version -m <file>          # the module and its dependencies")
+    else:
+        report.commands.append("nm --demangle <file> | rustfilt   # the Rust symbol names")
 
 
 def sniff(data: bytes) -> str:
@@ -390,6 +415,7 @@ def analyse(data: bytes, flagset: FlagSet | None = None) -> ExecutableReport:
         report.elf = read_elf(data)
         report.commands.append("readelf -a <file> | less      # the full headers")
         report.commands.append("objdump -d <file> | less      # the disassembly")
+        _read_toolchain(data, report)
     elif kind == "class":
         report.classes = [read_class(data)]
         report.commands.append("javap -c -p <file>            # the bytecode, from the JDK")

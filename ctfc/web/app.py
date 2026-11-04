@@ -69,9 +69,7 @@ def input_from_payload(payload: dict, decode_bare: bool = True) -> Input:
     if "data_b64" in payload:
         raw = payload["data_b64"]
         if not isinstance(raw, str):
-            raise InputError(
-                f"data_b64 must be a string, not {type(raw).__name__}"
-            )
+            raise InputError(f"data_b64 must be a string, not {type(raw).__name__}")
         try:
             data = base64.b64decode(raw, validate=True)
         except (binascii.Error, ValueError) as exc:

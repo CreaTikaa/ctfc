@@ -2349,3 +2349,66 @@ real answer ("this is not valid base64") behind a wall of HTML.
 
 `make fuzz-web` is the long sweep, and `tests/test_fuzz_web.py` runs sixty
 rounds inside `make test`, the same arrangement the reader fuzzer has.
+
+
+## 40. Go and Rust binaries, where `strings` is useless (`ctfc/core/binstrings.py`)
+
+In C a literal is NUL-terminated, so a scanner can find its end. In Go and
+Rust a string is a **(pointer, length) pair**: the bytes carry no terminator
+and the compiler packs the literals end to end. `strings` on a Go binary
+therefore prints this:
+
+    ...exit hook invoked exitCYBN{go_string_literal}<invalid reflect.Value>...
+
+one run of a thousand characters with the answer buried in it. Two techniques
+replace it.
+
+### The slice scan
+
+Every 8-byte-aligned position in the data sections is read as a (pointer,
+length) pair. When the pointer lands inside `.rodata`, the length is small and
+the bytes there are printable, that *is* a string header - so the string is cut
+exactly where the compiler ended it. On the test binary it returns
+`CYBN{go_string_literal}` as its own entry, next to `the neighbour literal,
+which strings glues to the first`. This is not a heuristic about characters: it
+reads the structure the compiler emitted.
+
+### The Go function table
+
+A Go binary carries `.gopclntab`, whose `funcnametab` is a block of
+NUL-terminated names - every function in the binary. The header is read for
+go1.16 and later (magics `0xfffffffa`, `0xfffffff0`, `0xfffffff1`), with the
+one difference that matters: go1.18 inserted `textStart` before the table
+offsets. The **module path** from `.go.buildinfo` then separates the program's
+own functions from the 1800 runtime and standard-library ones, which turns a
+wall of names into `main.main` - the map you actually want.
+
+`find_pclntab` is the fallback when no section is named: it searches for the
+magic and accepts a hit only when the two bytes after it are zero and the minLC
+and pointer-size fields are plausible, which is what the runtime itself checks.
+That is what reads a **Windows** Go binary, whose table lives inside `.rdata` -
+and it was validated by checking that on an ELF it lands exactly on the
+`.gopclntab` section offset.
+
+### Rust gets less, and the report says so
+
+Rust puts the length of a literal in the **code**, as an immediate, not in a
+data-section header - verified on a real `rustc -O` binary, where the slice
+scan finds nothing. So what is reported is what can be had without
+disassembling: the compiler version or its commit hash, and the `.rs` paths the
+panic machinery embeds, which still give the crate layout and often the
+author's own module names. For the literals themselves the report hands over to
+`objdump -d`, Ghidra, or `nm --demangle | rustfilt`.
+
+A PE built by Go gets the function table but not the literals: a PE's string
+headers hold *absolute* addresses, and turning those into file offsets needs
+the image base, which `ctfc pe` does not track yet. The note says that, rather
+than returning a shorter list that looks complete.
+
+### Ground truth
+
+Both toolchains are installed on this machine, so the tests build a real binary
+(no 2 MB fixture in git) and compare: the function names against `go tool nm`,
+the version against `go version`, the locator against the section header, and
+the Windows path against a `GOOS=windows` cross build. Without a toolchain
+every one of them skips with that reason printed.

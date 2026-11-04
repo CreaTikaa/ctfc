@@ -459,6 +459,7 @@ def _open_pe(data: bytes, flagset: FlagSet | None, path: str) -> Opened:
                 "\n".join(report.dotnet_literals).encode(),
             )
         )
+    children += _toolchain_child(report.toolchain)
     events = (
         [Event(report.timestamp_text, "PE build stamp", "linked")] if report.timestamp_text else []
     )
@@ -472,6 +473,27 @@ def _open_pe(data: bytes, flagset: FlagSet | None, path: str) -> Opened:
     )
 
 
+def _toolchain_child(found) -> list[Child]:
+    """A Go or Rust binary's literals and function names, as one text piece.
+
+    Handed over as a child so that the flag hunt and `ctfc solve` search them:
+    the whole point of `core/binstrings.py` is that these strings are invisible
+    to a plain scan of the bytes.
+    """
+    if found is None:
+        return []
+    lines = [*found.slices, *found.own_functions, *found.sources]
+    if not lines:
+        return []
+    return [
+        Child(
+            f"{found.toolchain}_strings.txt",
+            f"{found.toolchain} literals and function names",
+            "\n".join(lines).encode(),
+        )
+    ]
+
+
 def _open_exe(data: bytes, flagset: FlagSet | None, path: str) -> Opened:
     report = executable.analyse(data, flagset)
     children: list[Child] = []
@@ -481,6 +503,7 @@ def _open_exe(data: bytes, flagset: FlagSet | None, path: str) -> Opened:
         )
     if report.kind in ("jar", "dex") and data[:4] == b"PK\x03\x04":
         children += _zip_members(data, f"{report.kind} entry")
+    children += _toolchain_child(report.toolchain)
     return Opened(
         detail=report.kind,
         children=_keep(children),

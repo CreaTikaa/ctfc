@@ -198,6 +198,9 @@ class PeReport:
     # .NET only: the metadata heaps, which is where a C# program's strings are.
     dotnet_identifiers: list[str] = field(default_factory=list)
     dotnet_literals: list[str] = field(default_factory=list)
+    # Filled when this PE was built by Go: its function table is inside .rdata
+    # and is found by its own magic (see core/binstrings.py).
+    toolchain: object | None = None
     flags: list[str] = field(default_factory=list)
 
     @property
@@ -235,6 +238,7 @@ class PeReport:
             "notes": list(self.notes),
             "dotnet_identifiers": list(self.dotnet_identifiers),
             "dotnet_literals": list(self.dotnet_literals),
+            "toolchain": None if self.toolchain is None else self.toolchain.to_dict(),
             "flags": list(self.flags),
         }
 
@@ -558,6 +562,31 @@ def dotnet_strings(heaps: dict[str, bytes]) -> tuple[list[str], list[str]]:
     return identifiers, literals
 
 
+def _read_toolchain(data: bytes, report: PeReport) -> None:
+    """A Go binary on Windows: the function table is inside .rdata, found by magic.
+
+    No sections are handed to `binstrings` here, so the (pointer, length) scan
+    for string literals is skipped: a PE's string headers hold *absolute*
+    addresses, and turning those back into file offsets needs the image base,
+    which this reader does not keep. The function table - which is the map a
+    reverse engineer wants first - needs none of that.
+    """
+    from ctfc.core import binstrings
+
+    found = binstrings.analyse(data, [])
+    if not found.toolchain:
+        return
+    report.toolchain = found
+    report.notes += found.notes
+    if found.toolchain == "go":
+        report.notes.append(
+            "the string literals of a Go PE are not listed here: their (pointer, length) "
+            "headers hold absolute addresses, and ctfc does not track this file's image "
+            "base yet. `strings` runs them together; `go tool nm` and Ghidra do not"
+        )
+        report.notes.append("go tool nm <file> / go version -m <file> read the same tables")
+
+
 def analyse(data: bytes, flagset: FlagSet | None = None) -> PeReport:
     """Read the executable and report what it is and what it does."""
     from ctfc.core import timestamps
@@ -597,6 +626,7 @@ def analyse(data: bytes, flagset: FlagSet | None = None) -> PeReport:
     report.imports = pe.imports()
     report.exports = pe.exports()
     report.overlay_offset, report.overlay = pe.overlay()
+    _read_toolchain(data, report)
 
     if report.is_dotnet:
         report.notes.append(
