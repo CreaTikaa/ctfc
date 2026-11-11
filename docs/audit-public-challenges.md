@@ -266,3 +266,31 @@ mot de passe), American_Spy (trafic chiffré), Cursed_Credential (profil Firefox
 déchiffrement NSS key4.db/logins.json — capacité niche possible). ctfc remonte
 les preuves (records evtx, streams, secrets) mais ne peut pas auto-flagger ces
 challenges d'enquête. Pas de nouveau bug : les features actuelles tiennent.
+
+## Sixième audit — 10 CTF en lot (2026-11-12)
+
+Harnais v2 (`scratchpad/audit2.py`) sur **51 challenges forensics** de 10 CTF du
+miroir sajjadium (BITSCTF, BYUCTF, 1337UP, Akasec, BCACTF, 0xL4ugh, BSidesSF,
+Bearcat, AirOverflow, BTCTF). Le miroir ne fournit pas les flags : on juge par
+« ctfc a sorti un flag fort ».
+
+**Vrais flags sortis seuls** : BSidesSF javai (`CTF{javai_java_with_100x_ai}`),
+sgai_1 (`CTF{i_name_thee_flag}`), Bearcat Needle (`BCCTF{ThisIsANeedle}`), BTCTF
+no_end_in_sight (`btctf{...}`), BSidesSF undelete (chaîne complète xz→tar→**disk
+→flag.png supprimé récupéré**→stego ; flag final visuel).
+
+**Deux corrections issues de l'audit :**
+- **ztxt** (BSidesSF) : un flag dans un chunk PNG **zTXt** d'un PNG 4 bits était
+  perdu car le chargeur de pixels abandonnait avant de lire les chunks texte.
+  Les chunks texte sont maintenant lus indépendamment du format de pixels.
+- **Faux positifs** : le brute-force sur du binaire (XOR d'un flux PDF, canal
+  covert R/Q) produisait des `xx{...}` à corps sans voyelles (`CL{CmvGTKDTDvh2g}`,
+  `SSSQ…{PYXS…}`) déclarés flags forts. Un corps générique sans voyelle (ni leet)
+  est désormais une piste, pas un flag ; les vrais flags (voyelles/underscore/hash)
+  restent forts.
+
+**La limite, mesurée** : une grande part des challenges forensics de CTF est du
+**stego visuel, de l'audio, de l'OSINT ou de l'investigation Q/R** (le flag est
+dessiné dans des pixels, caché dans un son, ou une réponse à déduire) — hors
+périmètre sans OCR/ML. ctfc résout ce qui est « flag dans un fichier / encodé /
+réseau / archive / disque / chunk » et remonte les preuves pour le reste.
