@@ -891,6 +891,79 @@ def timeline(report) -> dict:
     }
 
 
+def workspace(report) -> dict:
+    """`ctfc workspace` in the same display shape, for the Workspace tab.
+
+    Mirrors `render.print_workspace`: the pairs that worked first; the pools
+    (secrets, named keys) only when nothing worked, because that is when you
+    read them; and what is encrypted, with the command when ctfc cannot try it.
+    """
+    sections = [
+        facts(
+            "workspace",
+            [
+                ("files", report.files),
+                ("pieces read", report.pieces),
+                ("pairs tried", report.tried),
+                ("secrets", len(report.secrets)),
+                ("encrypted things", len(report.ciphertexts)),
+            ],
+        )
+    ]
+    if report.hits:
+        sections.append(
+            table(
+                "pairs that worked",
+                ["secret", "found in", "opens", "how", "what came out"],
+                [[h.secret, h.secret_where, h.target, h.how, h.preview] for h in report.hits],
+            )
+        )
+    else:
+        sections.append(
+            table(
+                "candidate secrets",
+                ["value", "found in", "why"],
+                [[f.value, f.where, f.why] for f in report.secrets],
+            )
+        )
+        sections.append(
+            table(
+                "named key candidates",
+                ["key (hex)", "found in", "why"],
+                [[f.value, f.where, f.why] for f in report.keys],
+            )
+        )
+    sections.append(
+        table(
+            "things that are encrypted",
+            ["what", "kind", "tried here?"],
+            [
+                [c.name, c.kind, "yes" if c.testable else (c.command or "no")]
+                for c in report.ciphertexts
+            ],
+        )
+    )
+    if report.skipped:
+        sections.append(table("pairs never reached", ["pair"], [[s] for s in report.skipped]))
+    flags = list(report.flags)
+    for hit in report.hits:
+        flags += [flag for flag in hit.flags if flag not in flags]
+    notes = list(report.notes)
+    if not report.hits:
+        notes.insert(0, f"no pair worked ({report.tried} tried): the secret may be in another file")
+    return {
+        "sections": [s for s in sections if s.get("rows")],
+        "flags": flags,
+        "notes": notes,
+        "commands": [hit.command for hit in report.hits if hit.command],
+        "reader": "workspace",
+        "label": "the files together: secrets x ciphertexts",
+        "command": "ctfc workspace <folder>",
+        "sniffed": True,
+        "budget": report.budget,
+    }
+
+
 # ---------------------------------------------------------------------------
 # The registry
 # ---------------------------------------------------------------------------

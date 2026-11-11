@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import io
 import zipfile
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -358,22 +359,54 @@ def analyse(
     read_seconds: float | None = None,
 ) -> WorkspaceReport:
     """Read every file in the folder, pool what it found, and try the pairs."""
-    budget = budget or Budget(max_attempts=5_000_000, max_seconds=90)
-    report = WorkspaceReport(root=str(root))
     if not root.exists():
+        report = WorkspaceReport(root=str(root))
         report.notes.append(f"{root} does not exist")
         return report
 
     paths = [root] if root.is_file() else list_files(root, recursive, max_files)
-    report.files = len(paths)
     if not paths:
+        report = WorkspaceReport(root=str(root))
         report.notes.append(f"no file to read in {root}")
         return report
+    unreadable: list[str] = []
+
+    def read_one_by_one() -> Iterator[tuple[str, bytes]]:
+        # A generator: a folder of large dumps is never all in memory at once.
+        for path in paths:
+            try:
+                data = path.read_bytes()
+            except OSError as exc:
+                unreadable.append(f"{path}: {exc}")
+                continue
+            yield str(path), data
+
+    report = from_files(read_one_by_one(), flagset, budget, read_seconds, root=str(root))
+    report.files = len(paths)
+    report.notes[:0] = unreadable
+    return report
+
+
+def from_files(
+    files: Iterable[tuple[str, bytes]],
+    flagset: FlagSet | None = None,
+    budget: Budget | None = None,
+    read_seconds: float | None = None,
+    root: str = "",
+) -> WorkspaceReport:
+    """The same, for files given as (name, bytes) pairs - what a browser drop gives.
+
+    Nothing here needs a path: the pools do not care where the bytes came from.
+    The names are only used to say where a secret was found, and in the
+    commands printed beside a hit.
+    """
+    budget = budget or Budget(max_attempts=5_000_000, max_seconds=90)
+    report = WorkspaceReport(root=root)
 
     # Half the budget goes to reading, half to trying - otherwise a folder full
     # of archives spends everything before a single pair is tested.
     reading = read_seconds if read_seconds is not None else budget.max_seconds / 2
-    _read_everything(paths, report, flagset, budget, reading)
+    _read_everything(files, report, flagset, budget, reading)
     _try_pairs(report, flagset, budget)
 
     report.budget = budget.summary()
@@ -386,7 +419,7 @@ def analyse(
 
 
 def _read_everything(
-    paths: list[Path],
+    files: Iterable[tuple[str, bytes]],
     report: WorkspaceReport,
     flagset: FlagSet | None,
     budget: Budget,
@@ -397,18 +430,14 @@ def _read_everything(
     seen_secrets: set[str] = set()
     seen_keys: set[bytes] = set()
 
-    for path in paths:
+    for path, data in files:
+        report.files += 1
         if budget.cancel_event.is_set() or budget.elapsed() >= deadline:
             report.notes.append(
                 f"stopped reading after {len(report.ciphertexts)} ciphertext(s): "
                 "the time went on opening files (raise --seconds)"
             )
             break
-        try:
-            data = path.read_bytes()
-        except OSError as exc:
-            report.notes.append(f"{path}: {exc}")
-            continue
 
         walk_budget = Budget(
             max_attempts=50_000,

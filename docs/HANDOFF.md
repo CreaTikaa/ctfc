@@ -955,10 +955,14 @@ The audit list of section 5nonies ("Not in the browser"), done in its order:
 `state.file = {name, b64, size}` to simulate a drop): Go binary in Files, `.lnk` in Timeline
 (with and without `since`), Hash with a wordlist, JWT with an unreadable wordlist.
 
-**Still open, and the user's call: `ctfc workspace` in the page.** It takes a folder; a browser
-gives bytes. Either a multi-file drop (the pools do not care where bytes come from, and
-`timeline.from_files` already takes a list, so the Timeline tab would gain folders for free), or
-leave it in the terminal and name it in the Docs tab beside scan/watch/git.
+6. **Workspace in the page = a multi-file drop** (he did not choose; the recommended option was
+   taken, say so if he objects). `workspace.from_files()` is the disk-free core, `analyse()`
+   feeds it lazily. `#file-input` has `multiple`; `state.files` holds every dropped file,
+   `state.file` the first; `MULTI_FILE_TABS` (workspace, timeline) send `files: [...]`, read
+   server-side by `files_from_payload()` (max 200). `formats.workspace()` gives the Files display
+   shape. **Bug only the real browser found:** `run()` refused a payload with only `files`
+   ("The input is empty"); the hexdump preview always shows the first file.
+   Chromium caches `app.js`: the DevTools script must call `Network.setCacheDisabled`.
 
 ## 7. Quick verification commands
 

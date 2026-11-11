@@ -93,6 +93,35 @@ def input_from_payload(payload: dict, decode_bare: bool = True) -> Input:
     return parse_input(text, allow_files=False, decode_bare=decode_bare)
 
 
+# A multi-file drop: how many files one request may carry. The total size is
+# already capped by MAX_CONTENT_LENGTH; this caps the count.
+MAX_DROPPED_FILES = 200
+
+
+def files_from_payload(payload: dict) -> list[tuple[str, bytes]]:
+    """Every dropped file as (name, bytes): `files` when several were dropped.
+
+    The Workspace and Timeline tabs send `files: [{name, data_b64}, ...]`;
+    every other shape (one dropped file, pasted text) is one file named after
+    its source, so those tabs also work with a single input.
+    """
+    given = payload.get("files")
+    if given is None:
+        inp = input_from_payload(payload, decode_bare=False)
+        return [(str(payload.get("name") or "input")[:200], inp.data)]
+    if not isinstance(given, list) or not given:
+        raise InputError("files must be a non-empty list of {name, data_b64}")
+    if len(given) > MAX_DROPPED_FILES:
+        raise InputError(f"{len(given)} files: at most {MAX_DROPPED_FILES} in one drop")
+    files: list[tuple[str, bytes]] = []
+    for index, item in enumerate(given):
+        if not isinstance(item, dict):
+            raise InputError(f"files[{index}] must be an object with name and data_b64")
+        name = str(item.get("name") or f"file{index}")[:200]
+        files.append((name, input_from_payload({"data_b64": item.get("data_b64", "")}).data))
+    return files
+
+
 def options_of(payload: dict) -> dict:
     """The `options` object of a request body, insisting that it *is* an object.
 
@@ -121,7 +150,18 @@ def _number(value: object) -> int | None:
 
 # The tools that run as background jobs (POST /api/jobs/<kind>). Listed once so
 # the web fuzzer can call every one of them, not only the first.
-JOB_KINDS = ("auto", "solve", "timeline", "classical", "xor", "sym", "blob", "rsa", "keys")
+JOB_KINDS = (
+    "auto",
+    "solve",
+    "timeline",
+    "workspace",
+    "classical",
+    "xor",
+    "sym",
+    "blob",
+    "rsa",
+    "keys",
+)
 
 
 def _seconds(options: dict, default: float, cap: float = 300) -> float:
@@ -401,22 +441,41 @@ def create_app(config: Config | None = None) -> Flask:
             # there is no filesystem mtime to add).
             from ctfc.core.timeline import from_files
 
-            inp = input_from_payload(payload, decode_bare=False)
-            name = str(payload.get("name") or "input")
+            files = files_from_payload(payload)
             budget = Budget(max_attempts=1_000_000, max_seconds=_seconds(options, 20))
 
             def work_timeline(budget: Budget) -> dict:
                 report = from_files(
-                    [(name, inp.data)],
+                    files,
                     flagset=flagset,
                     budget=budget,
                     since=str(options.get("since") or "").strip(),
                     until=str(options.get("until") or "").strip(),
-                    root=name,
+                    root=", ".join(name for name, _ in files[:3]),
                 )
-                return {"input": input_summary(inp), **formats.timeline(report)}
+                return formats.timeline(report)
 
             return work_timeline, budget
+
+        if kind == "workspace":
+            # Several dropped files: pool their secrets, keys and ciphertexts,
+            # then try the pairs - "the password in mail.txt opens backup.zip".
+            # The browser has no folder, but the pools do not need one.
+            from ctfc.core.workspace import from_files as workspace_from_files
+
+            files = files_from_payload(payload)
+            budget = Budget(max_attempts=5_000_000, max_seconds=_seconds(options, 60))
+
+            def work_workspace(budget: Budget) -> dict:
+                report = workspace_from_files(
+                    files,
+                    flagset=flagset,
+                    budget=budget,
+                    root=f"{len(files)} dropped file(s)",
+                )
+                return formats.workspace(report)
+
+            return work_workspace, budget
 
         if kind == "classical":
             from ctfc.core import classical

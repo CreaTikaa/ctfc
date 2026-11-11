@@ -244,3 +244,89 @@ def test_zipfile_is_only_trusted_for_zipcrypto(tmp_path):
     report = run(tmp_path, seconds=5)
     # Nothing encrypted at all here: the ZIP is not listed as a ciphertext.
     assert report.ciphertexts == []
+
+
+# ---------------------------------------------------------------------------
+# The browser: a multi-file drop, no folder
+# ---------------------------------------------------------------------------
+
+
+def test_from_files_needs_no_folder(folder_with_a_password_elsewhere):
+    """`from_files` is what the Workspace tab calls: (name, bytes) pairs only."""
+    files = [(p.name, p.read_bytes()) for p in sorted(folder_with_a_password_elsewhere.iterdir())]
+    report = workspace.from_files(files, budget=Budget(max_attempts=5_000_000, max_seconds=40))
+    assert report.files == 3
+    assert FLAG in report.flags
+    assert report.hits[0].secret_where == "mail.txt"
+
+
+def _web_job(client, kind: str, payload: dict) -> dict:
+    import time
+
+    started = client.post(f"/api/jobs/{kind}", json=payload).get_json()
+    assert "job" in started, started
+    for _ in range(600):
+        status = client.get(f"/api/jobs/{started['job']}").get_json()
+        if status["state"] in ("done", "error", "cancelled"):
+            break
+        time.sleep(0.05)
+    assert status["state"] == "done", status
+    return status["result"]
+
+
+@pytest.fixture
+def web_client():
+    from ctfc.config import Config
+    from ctfc.web.app import create_app
+
+    app = create_app(Config(max_upload_mb=8))
+    app.testing = True
+    return app.test_client()
+
+
+def test_the_workspace_tab_opens_the_archive_with_the_password_from_the_mail(
+    folder_with_a_password_elsewhere, web_client
+):
+    import base64
+
+    page = web_client.get("/").get_data(as_text=True)
+    assert 'data-tab="workspace"' in page
+    assert 'id="file-input" multiple' in page
+
+    files = [
+        {"name": p.name, "data_b64": base64.b64encode(p.read_bytes()).decode()}
+        for p in sorted(folder_with_a_password_elsewhere.iterdir())
+    ]
+    answer = _web_job(web_client, "workspace", {"files": files, "options": {"seconds": 40}})
+    assert FLAG in answer["flags"]
+    pairs = next(s for s in answer["sections"] if s["title"] == "pairs that worked")
+    secret, found_in, opens = pairs["rows"][0][:3]
+    assert (secret, found_in) == ("Tr0ub4dor&3", "mail.txt")
+    assert "backup.zip" in opens
+    assert any("Tr0ub4dor&3" in command for command in answer["commands"])
+
+
+def test_the_timeline_tab_merges_several_dropped_files(fixture_bytes, web_client):
+    import base64
+
+    files = [
+        {"name": name, "data_b64": base64.b64encode(fixture_bytes(fixture)).decode()}
+        for name, fixture in (
+            ("dropper.lnk", "winartifact_dropper.lnk"),
+            ("log.evtx", "audit_security.evtx"),
+        )
+    ]
+    answer = _web_job(web_client, "timeline", {"files": files, "options": {}})
+    rows = next(s for s in answer["sections"] if s["kind"] == "table")["rows"]
+    sources = {row[3].split(" > ")[0] for row in rows}
+    assert {"dropper.lnk", "log.evtx"} <= sources
+    assert [row[0] for row in rows] == sorted(row[0] for row in rows)
+
+
+@pytest.mark.parametrize(
+    "files",
+    [[], "x", [1], [{"name": "a", "data_b64": "!!"}], [{"name": "a", "data_b64": ["x"]}]],
+)
+def test_a_bad_file_list_is_a_400(web_client, files):
+    answer = web_client.post("/api/jobs/workspace", json={"files": files})
+    assert answer.status_code == 400

@@ -2482,3 +2482,13 @@ answers. The words are never sent back; only a password that worked is.
 **Passwords written in a sentence, in the Keys tab** - see section 12: they are
 now candidates of `keyhunt` itself, so `ctfc keys` and the Keys tab both test
 them, rather than only `ctfc workspace`.
+
+**Workspace in the page: a multi-file drop.** `ctfc workspace` takes a folder and
+a browser hands over bytes, so `workspace.analyse()` was split like the
+timeline: `from_files([(name, bytes), ...])` does the work, `analyse()` reads a
+folder lazily and feeds it. The drop zone now accepts several files at once.
+The **Workspace** and **Timeline** tabs send them all (`files: [{name,
+data_b64}]`, at most 200, the total still capped by the upload limit); every
+other tab reads the first one, and the page says so under the file names.
+Drop `mail.txt` and `backup.zip` together and the Workspace tab answers "the
+password in mail.txt opens backup.zip", with the `unzip -P` command.

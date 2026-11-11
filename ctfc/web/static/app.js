@@ -12,7 +12,8 @@
 const state = {
   strings: {},      // UI labels from /api/strings
   tab: "auto",      // active tab
-  file: null,       // {name, b64, size} when a file was dropped
+  file: null,       // {name, b64, size} when a file was dropped (the first one)
+  files: [],        // every dropped file: Workspace and Timeline read them all
   job: null,        // id of the background job currently running
   session: "",      // the session runs are recorded in ("" = not recording)
   // Volatility tab: the cheat sheet data, and how the user wants it shown.
@@ -38,6 +39,7 @@ const TOOLS = {
   extend: "sync",
   file: "sync",
   timeline: "job",
+  workspace: "job",
   crc: "sync",
   classical: "job",
   sig: "sync",
@@ -49,7 +51,7 @@ const API_PATH = { pipeline: "/api/recipe" };
 // Tabs that have their own options panel (#options-<tab>).
 const OPTION_PANELS = [
   "xor", "sym", "rsa", "hash", "pipeline", "keys", "lens", "radius", "volatility", "jwt", "prng", "extend",
-  "file", "classical", "crc", "sig", "docs", "solve", "timeline",
+  "file", "classical", "crc", "sig", "docs", "solve", "timeline", "workspace",
 ];
 
 // Tabs that are reference pages, not tools: opening them shows the page and
@@ -149,7 +151,13 @@ function isReadable(text) {
 }
 
 // ---------------------------------------------------------------- server calls
+// Tabs that take every dropped file, not only the first.
+const MULTI_FILE_TABS = ["workspace", "timeline"];
+
 function currentPayload() {
+  if (state.files.length > 1 && MULTI_FILE_TABS.includes(state.tab)) {
+    return { files: state.files.map((f) => ({ name: f.name, data_b64: f.b64 })) };
+  }
   if (state.file) return { data_b64: state.file.b64, name: state.file.name };
   // Code Lens and Hash want the raw text: neither a script nor a hash is decoded.
   const format = state.tab === "lens" || state.tab === "hash" ? "text" : $("format").value;
@@ -225,6 +233,9 @@ function currentOptions() {
   }
   if (state.tab === "solve") {
     return { seconds: $("solve-seconds").value, depth: $("solve-depth").value };
+  }
+  if (state.tab === "workspace") {
+    return { seconds: $("workspace-seconds").value };
   }
   if (state.tab === "timeline") {
     return {
@@ -306,7 +317,9 @@ let previewTimer = null;
 function schedulePreview() {
   clearTimeout(previewTimer);
   previewTimer = setTimeout(async () => {
-    const payload = currentPayload();
+    // The hexdump shows one input: the first dropped file, even on the tabs
+    // that send them all (a list of files has no single hexdump).
+    const payload = state.file ? { data_b64: state.file.b64, name: state.file.name } : currentPayload();
     if (!payload.data_b64 && !payload.input) {
       $("input-info").textContent = "";
       $("hexdump").textContent = "";
@@ -325,7 +338,7 @@ function schedulePreview() {
 async function run() {
   if (!TOOLS[state.tab] || state.job) return;
   const payload = currentPayload();
-  if (!payload.data_b64 && !payload.input) {
+  if (!payload.data_b64 && !payload.input && !payload.files) {
     setStatus(T("web_empty_input"), true);
     return;
   }
@@ -419,8 +432,8 @@ function showAnswer(tab, answer) {
     setStatus("");
     return;
   }
-  if (tab === "timeline") {
-    // Same display shape as the Files tab (see formats.timeline in Python).
+  if (tab === "timeline" || tab === "workspace") {
+    // Same display shape as the Files tab (formats.timeline / formats.workspace).
     renderFile(answer);
     setStatus(answer.budget || "");
     return;
@@ -1533,21 +1546,37 @@ function downloadReport() {
 }
 
 // ---------------------------------------------------------------- file input
-function loadFile(file) {
-  const reader = new FileReader();
-  reader.onload = () => {
-    const bytes = new Uint8Array(reader.result);
-    state.file = { name: file.name, b64: bytesToBase64(bytes), size: bytes.length };
-    $("file-name").textContent = file.name + " (" + bytes.length + " " + T("web_bytes") + ")";
-    $("file-info").classList.remove("hidden");
-    $("input-text").disabled = true;
-    schedulePreview();
-  };
-  reader.readAsArrayBuffer(file);
+// Read every dropped file. The first one is `state.file`, which every tab
+// uses; Workspace and Timeline send them all (MULTI_FILE_TABS).
+async function loadFiles(fileList) {
+  const files = Array.from(fileList);
+  if (!files.length) return;
+  const read = (file) => new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(new Uint8Array(reader.result));
+    reader.onerror = () => reject(reader.error);
+    reader.readAsArrayBuffer(file);
+  });
+  state.files = [];
+  for (const file of files) {
+    const bytes = await read(file);
+    state.files.push({ name: file.name, b64: bytesToBase64(bytes), size: bytes.length });
+  }
+  state.file = state.files[0];
+  let label = state.file.name + " (" + state.file.size + " " + T("web_bytes") + ")";
+  if (state.files.length > 1) {
+    label = state.files.length + " " + T("web_files_dropped") + ": "
+      + state.files.map((f) => f.name).join(", ") + ". " + T("web_files_first_only");
+  }
+  $("file-name").textContent = label;
+  $("file-info").classList.remove("hidden");
+  $("input-text").disabled = true;
+  schedulePreview();
 }
 
 function clearFile() {
   state.file = null;
+  state.files = [];
   $("file-input").value = "";
   $("file-info").classList.add("hidden");
   $("input-text").disabled = false;
@@ -1715,7 +1744,7 @@ async function init() {
     if (event.key === "Enter" || event.key === " ") $("file-input").click();
   });
   $("file-input").addEventListener("change", (event) => {
-    if (event.target.files[0]) loadFile(event.target.files[0]);
+    loadFiles(event.target.files);
   });
   zone.addEventListener("dragover", (event) => {
     event.preventDefault();
@@ -1725,7 +1754,7 @@ async function init() {
   zone.addEventListener("drop", (event) => {
     event.preventDefault();
     zone.classList.remove("over");
-    if (event.dataTransfer.files[0]) loadFile(event.dataTransfer.files[0]);
+    loadFiles(event.dataTransfer.files);
   });
   $("file-clear").addEventListener("click", () => {
     clearFile();

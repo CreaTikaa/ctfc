@@ -41,7 +41,7 @@
       <textarea id="input-text" spellcheck="false" data-t-placeholder="web_placeholder"></textarea>
       <div id="drop-zone" tabindex="0">
         <span data-t="web_drop">Drop a file here</span>
-        <input type="file" id="file-input" hidden>
+        <input type="file" id="file-input" multiple hidden>
       </div>
       <div id="file-info" class="hidden">
         <span id="file-name"></span>
@@ -84,6 +84,7 @@
         <button class="tab" data-tab="lens" data-t="web_tab_lens">Code Lens</button>
         <button class="tab" data-tab="file" data-t="web_tab_file">Files</button>
         <button class="tab" data-tab="timeline" data-t="web_tab_timeline">Timeline</button>
+        <button class="tab" data-tab="workspace" data-t="web_tab_workspace">Workspace</button>
         <button class="tab" data-tab="classical" data-t="web_tab_classical">Classical</button>
         <button class="tab" data-tab="crc" data-t="web_tab_crc">CRC32</button>
         <button class="tab" data-tab="hash" data-t="web_tab_hash">Hash</button>
@@ -296,6 +297,11 @@
           <input id="timeline-until" type="text" spellcheck="false" placeholder="2024-02-01"></label>
         <label><span data-t="web_sym_seconds">time budget (s)</span>
           <input id="timeline-seconds" type="number" value="20" min="1" max="300"></label>
+      </div>
+      <!-- Options of the Workspace tab: drop several files at once on the left -->
+      <div id="options-workspace" class="options hidden">
+        <label><span data-t="web_sym_seconds">time budget (s)</span>
+          <input id="workspace-seconds" type="number" value="60" min="1" max="300"></label>
       </div>
       <!-- Options of the Classical tab -->
       <div id="options-classical" class="options hidden">

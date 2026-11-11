@@ -105,6 +105,7 @@ KEYS = (
     "curve",
     "attack",
     "generator",
+    "files",  # the multi-file drop of Workspace and Timeline
 )
 
 # The names probed against every route that takes one in its path.

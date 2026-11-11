@@ -456,11 +456,21 @@ EN: dict[str, str] = {
     "web_wordlist": "your own wordlist: a path on the machine running ctfc serve",
     "web_wordlist_limit": "how many entries to read (the first ones, in order)",
     "web_tab_timeline": "Timeline",
+    "web_tab_workspace": "Workspace",
+    "web_workspace_help": (
+        "drop SEVERAL files at once on the left (a mail, a zip, a note...): every secret, "
+        "key and ciphertext they hold is pooled, then each pair is tried - the password "
+        "in one file opens the archive in another. The terminal does the same on a "
+        "folder: ctfc workspace <folder>."
+    ),
+    "web_files_dropped": "files dropped",
+    "web_files_first_only": "Workspace and Timeline read them all; the other tabs read the first.",
     "web_timeline_help": (
         "drop a file on the left: every date it carries - a shortcut's three times, a "
         "prefetch run, an event log record, a ZIP or cabinet member, a PE build stamp, a "
         "mail's Date - and every date inside the pieces it holds, in one table in UTC. A "
-        "date in the future is kept and flagged. For a whole folder: ctfc timeline <folder>."
+        "date in the future is kept and flagged. Drop several files to merge their dates; for a "
+        "whole folder: ctfc timeline <folder>."
     ),
     "web_timeline_since": "from (YYYY-MM-DD, empty = no limit)",
     "web_timeline_until": "until (YYYY-MM-DD, that day included)",
