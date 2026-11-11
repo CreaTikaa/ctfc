@@ -824,6 +824,17 @@ def _pcap(data: bytes, flagset: FlagSet | None) -> dict:
     return {"sections": sections, "flags": flags, "notes": report.notes, "commands": []}
 
 
+def _iso(data: bytes, flagset: FlagSet | None) -> dict:
+    opened = core_readers.open_with("iso", data, flagset, "image.iso")
+    rows = [[c.name, len(c.data), _preview(c.data)] for c in opened.children]
+    sections = [
+        facts("ISO 9660 image", [("what", opened.detail)]),
+        table("files", ["path", "size", "preview"], rows),
+    ]
+    flags = [hit.text for c in opened.children for hit in find_flags(c.data, flagset)]
+    return {"sections": sections, "flags": flags, "notes": opened.notes, "commands": []}
+
+
 def _keylog(data: bytes, flagset: FlagSet | None) -> dict:
     opened = core_readers.open_with("keylog", data, flagset, "sslkeyfile")
     sections = [facts("TLS key log", [("what", opened.detail)])]
@@ -1008,6 +1019,7 @@ ADAPTERS: dict[str, Callable[[bytes, FlagSet | None], dict]] = {
     "hive": _hive,
     "sqlite": _sqlite,
     "pcap": _pcap,
+    "iso": _iso,
     "keylog": _keylog,
     "compressed": _compressed,
     "repair": _repair,

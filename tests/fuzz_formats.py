@@ -56,6 +56,7 @@ from ctfc.core import (  # noqa: E402
     executable,
     gpp,
     hive,
+    iso,
     lnk,
     luks,
     mail,
@@ -157,6 +158,7 @@ READERS: tuple[Reader, ...] = (
         ("*.zip", "png_with_zip.png"),
     ),
     Reader("sqlitedb", sqlitedb.analyse, (sqlitedb.SqliteError,), ("*.sqlite",)),
+    Reader("iso", iso.read, (iso.IsoError,), ("*.iso",)),
     # The archives that are not ZIPs. The dispatcher is listed too, because it
     # is the one a user actually calls and it must not let a reader's error
     # through in another reader's name.

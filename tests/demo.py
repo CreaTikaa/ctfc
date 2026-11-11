@@ -86,6 +86,11 @@ def commands(scratch: Path) -> list[Demo]:
             "CYBN{fixture_pcap_http}",
             why="solve: recovered pcap magic",
         ),
+        Demo(
+            ["solve", f("iso_flag.iso")],
+            "CYBN{iso_9660_reader}",
+            why="solve: file inside an ISO",
+        ),
         Demo(["timeline", f("winartifact_dropper.lnk")], "shortcut target", why="timeline: a .lnk"),
         Demo(
             ["timeline", FIXTURES, "--no-filesystem"],

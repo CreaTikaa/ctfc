@@ -2647,3 +2647,18 @@ trust, ctfc walks the records both ways and keeps the walk that reaches the end
 of the file cleanly (a desynced walk stops early and leaves a big tail). The
 check used while sniffing is header-only, so it is safe to run on every file.
 Ground truth: the recovered frames are byte-for-byte the clean capture's.
+
+## 48. ISO 9660 disk images (`core/iso.py`, lot K)
+
+WaniCTF 2024 "tiny_usb" hands over a `.iso`, with the flag in a file inside it;
+the usual answer is `mount` (needs root) or `7z x`. The ISO reader walks the
+file tree without either. The Primary Volume Descriptor at sector 16 (offset
+0x8000, `01 "CD001" 01`) points at the root directory; a directory is a list of
+variable-length records, each giving a file's sector and length (read
+little-endian) and a flags byte whose bit 1 means "subdirectory". Files are read
+straight from `sector * 2048`, subdirectories recursed into, and the `;1`
+version suffix stripped from names. `solve` then walks each extracted file, so
+a flag in a text file inside the image is found; a flag drawn in an image inside
+it is extracted for viewing (the usual boundary). Ground truth: 7z lists the
+same files with the same sizes. Joliet/Rock Ridge names are left to the primary
+(uppercase 8.3) tree, which is enough to get the files out.

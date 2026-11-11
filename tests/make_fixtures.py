@@ -3637,6 +3637,30 @@ def corrupt_pcap_header(clean: bytes) -> bytes:
     return bytes(out)
 
 
+def write_iso_fixture() -> None:
+    """A real ISO 9660 image, built with xorriso, holding the flag in a file."""
+    import shutil
+    import subprocess
+    import tempfile
+
+    if shutil.which("xorriso") is None:
+        print("  iso_flag.iso SKIPPED (xorriso not installed)")
+        return
+    print("iso:")
+    with tempfile.TemporaryDirectory() as folder:
+        root = Path(folder) / "root"
+        (root / "secret").mkdir(parents=True)
+        (root / "flag.txt").write_bytes(b"CYBN{iso_9660_reader}\n")
+        (root / "secret" / "note.txt").write_bytes(b"the flag is in flag.txt\n")
+        out = Path(folder) / "out.iso"
+        subprocess.run(
+            ["xorriso", "-as", "mkisofs", "-V", "CTFC_ISO", "-o", str(out), str(root)],
+            check=True,
+            capture_output=True,
+        )
+        write("iso_flag.iso", out.read_bytes())
+
+
 def write_corrupt_pcap_fixture() -> None:
     print("corrupt pcap:")
     clean = (FIXTURES / "capture.pcap").read_bytes()
@@ -3879,6 +3903,7 @@ def main() -> None:
     write_wifi_fixtures()
     write_keylog_fixture()
     write_corrupt_pcap_fixture()
+    write_iso_fixture()
 
 
 if __name__ == "__main__":

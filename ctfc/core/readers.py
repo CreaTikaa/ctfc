@@ -41,6 +41,7 @@ from ctfc.core import (
     executable,
     exif,
     hive,
+    iso,
     mail,
     msg,
     msi,
@@ -359,6 +360,17 @@ def keylog_sniff(data: bytes) -> bool:
         label = line.split(b" ", 1)[0]
         return label in KEYLOG_LABELS
     return False
+
+
+def _open_iso(data: bytes, flagset: FlagSet | None, path: str) -> Opened:
+    report = iso.read(data)
+    children = [Child(f.path, "ISO 9660 file", f.data) for f in report.files]
+    return Opened(
+        detail=f"ISO 9660 '{report.volume_id}', {len(report.files)} file(s)",
+        children=_keep(children),
+        notes=list(report.notes),
+        extract="7z x {file} -o{dir}   (or mount it)",
+    )
 
 
 def _open_keylog(data: bytes, flagset: FlagSet | None, path: str) -> Opened:
@@ -976,6 +988,13 @@ READERS: tuple[Reader, ...] = (
         "ctfc repair",
         lambda data: False,
         _open_repair,
+    ),
+    Reader(
+        "iso",
+        "ISO 9660 disk image (.iso)",
+        "ctfc archive",
+        iso.looks_like_iso,
+        _open_iso,
     ),
     Reader(
         "keylog",
