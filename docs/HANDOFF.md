@@ -964,6 +964,35 @@ The audit list of section 5nonies ("Not in the browser"), done in its order:
    ("The input is empty"); the hexdump preview always shows the first file.
    Chromium caches `app.js`: the DevTools script must call `Network.setCacheDisabled`.
 
+## 5undecies. Workspace in the browser + third audit (2026-11-11, Opus 4.8)
+
+**Workspace tab (`8ca2f1e`):** `ctfc workspace` is split like timeline -
+`workspace.from_files([(name, bytes)])` is the disk-free core, `analyse()` feeds
+a folder lazily. The drop zone takes `multiple`; `state.files` holds every drop,
+`state.file` the first; `MULTI_FILE_TABS = [workspace, timeline]` send
+`files: [{name, data_b64}]`, read by `files_from_payload()` (<=200). Bug only the
+real browser caught: `run()` refused a payload of only `files`. Checked in
+Chromium: mail.txt + backup.zip -> "the password in mail.txt opens backup.zip".
+
+**Third audit - public challenges (`docs/audit-public-challenges.md`, `358df21`):**
+36 forensics challenges (HTB CA2024, DUCTF 2021-24, picoCTF) run blind. 16/34
+flag, 4 stop at OCR (out of scope). Files in `corpus/` (gitignored, untrusted);
+full per-challenge log with flags in `corpus/notes.md` (local only). **Six bugs
+found and fixed, each with a test and an external-tool check:**
+- pcap Ethernet padding read as TCP payload (`4616f70`) - 91/91 streams == tshark
+- pcap raw-IP link types 228/229/12/14 dropped every packet (`4616f70`)
+- pcap two conns to one server shared a filename, --extract overwrote (`79bc53a`)
+- sym: an RC4 key of unusual length not tried as given (`7b532cb`)
+- hashes: NTLM uncrackable without OpenSSL md4 -> pure-Python `core/md4.py` (`346260d`)
+- solve: an APK dead-ended on the DEX instead of walking as a ZIP (`ef668fd`)
+
+The priced backlog (what to build next, each tied to real challenges) is the
+second half of `docs/audit-public-challenges.md`. Top rank-1 items: search the
+flag in decoded bytes / media strings (CanYouSee, Thats_Not_My_Name); flag
+fragments; built-in famous prefixes for the encoded hunt; UTF-16LE flag search.
+Rank-2 readers: .NET Rfc2898 KDF (Data Siege), SAM-hash decryption (samiam,
+secretsdump+samdump2 present for ground truth), audio Morse, MFT, dnscat2.
+
 ## 7. Quick verification commands
 
 **`make demo` now runs this list and checks it** (`tests/demo.py`): 60 commands, each with the
