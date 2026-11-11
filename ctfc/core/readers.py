@@ -62,6 +62,8 @@ from ctfc.core.flags import FlagSet, find_flags
 # is a disk image, not a payload, and following it is a different job (`ctfc scan`).
 CHILD_MIN_SIZE = 4
 CHILD_MAX_SIZE = 8 * 1024 * 1024
+# A decompressed stream may be a whole disk image; only a bomb is refused.
+DECOMPRESS_MAX = 512 * 1024 * 1024
 # How many children one reader may hand over. A 2000-file tar would otherwise
 # turn one command into an afternoon.
 CHILD_LIMIT = 120
@@ -255,7 +257,7 @@ def _gzip_name(data: bytes) -> str:
     return data[start:end].decode("latin-1") if end > start else ""
 
 
-def decompress_stream(data: bytes, limit: int = CHILD_MAX_SIZE) -> tuple[bytes, str]:
+def decompress_stream(data: bytes, limit: int = DECOMPRESS_MAX) -> tuple[bytes, str]:
     """Decompress a gzip / bzip2 / xz stream, at most `limit` bytes of output.
 
     Returns (content, note). The cap is what keeps a decompression bomb (a few
@@ -314,7 +316,9 @@ def _open_compressed(data: bytes, flagset: FlagSet | None, path: str) -> Opened:
     tool = {"gzip": "gzip", "bzip2": "bzip2", "xz": "xz"}.get(kind, "gzip")
     opened = Opened(
         detail=note,
-        children=_keep([Child(name, f"{kind} content", content)]) if content else [],
+        # Kept whatever its size (a disk image is large on purpose), unlike the
+        # 8 MB-capped children of other readers - solve still searches it.
+        children=[Child(name, f"{kind} content", content)] if content else [],
         notes=[note],
         extract=f"mkdir -p {{dir}} && {tool} -dc {{file}} > {{dir}}/{safe_child_name(name)}",
     )

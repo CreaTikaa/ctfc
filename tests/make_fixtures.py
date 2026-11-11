@@ -3637,6 +3637,19 @@ def corrupt_pcap_header(clean: bytes) -> bytes:
     return bytes(out)
 
 
+def write_large_gzip_fixture() -> None:
+    """A gzip that decompresses past the old 8 MB child cap, flag deep inside.
+
+    The shape of TJCTF 2024 "thatsmyjam": a disk image .gz whose flag sits tens
+    of MB in. Mostly zero bytes, so the compressed fixture stays a few KB.
+    """
+    print("large gzip:")
+    payload = bytearray(12 * 1024 * 1024)  # 12 MB, past the 8 MB child cap
+    flag = b"CYBN{flag_deep_in_a_disk_image}"
+    payload[10 * 1024 * 1024 : 10 * 1024 * 1024 + len(flag)] = flag
+    write("large_image.img.gz", gzip.compress(bytes(payload)))
+
+
 def write_iso_fixture() -> None:
     """A real ISO 9660 image, built with xorriso, holding the flag in a file."""
     import shutil
@@ -3903,6 +3916,7 @@ def main() -> None:
     write_wifi_fixtures()
     write_keylog_fixture()
     write_corrupt_pcap_fixture()
+    write_large_gzip_fixture()
     write_iso_fixture()
 
 

@@ -96,6 +96,15 @@ def test_truncated_gzip_gives_what_it_can():
     assert b"abc" in content and "truncated" in note
 
 
+def test_large_stream_is_fully_decompressed_and_searched():
+    # A disk-image .gz: the flag is 10 MB in, past the 8 MB per-child cap. The
+    # compressed reader keeps the whole output so solve finds it (TJCTF thatsmyjam).
+    from ctfc.core.solve import solve
+
+    report = solve((FIXTURES / "large_image.img.gz").read_bytes(), path="large_image.img.gz")
+    assert "CYBN{flag_deep_in_a_disk_image}" in {flag.text for flag in report.flags}
+
+
 def test_solve_gets_the_flag_in_a_tar_gz():
     assert solved("compressed_flag.tar.gz") == ["CYBN{flag_in_a_tar_gz}"]
 
