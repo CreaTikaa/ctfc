@@ -210,3 +210,14 @@ Note : les deux challenges WiFi restent à cracker (clé WPA, hors scope) ; ctfc
 va désormais jusqu'au handshake + la commande hashcat exacte. La capture
 corrompue est reconstruite à l'identique ; le flag final est ensuite dans une
 image transférée (analyse d'image, hors scope).
+
+
+### WaniCTF 2024 (via le miroir sajjadium/ctf-archives)
+
+Le miroir livre les handouts mais pas les flags, donc jugé à l'oeil. 6 forensics :
+**tiny_usb** = une **ISO 9660** -> nouveau reader `core/iso.py` (vérité terrain 7z),
+qui extrait `FLAG.PNG` (le flag y est dessiné : visuel, hors scope ensuite).
+Les autres sont hors scope : codebreaker (QR, zbarimg suggéré), tiny_10px (image
+agrandie), I_wanna_be_a_streamer (flux RTP vidéo), Surveillance_of_sus (cache
+bitmap RDP `RDP8bmp` à reconstruire, bmc-tools). Seul l'ISO était dans le périmètre
+sans OCR ; il est maintenant lu.
