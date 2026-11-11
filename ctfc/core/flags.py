@@ -117,6 +117,20 @@ SHORT_BODY = 12
 FLAGGY_PREFIX_RE = re.compile(r"flag|ctf", re.IGNORECASE)
 
 
+def _strong_body(flag: str) -> bool:
+    """A body so flag-like that its surroundings no longer matter.
+
+    "kerbrute_finding_users" inside a Kerberos packet, or a long hash: an
+    underscored multi-word body, or a long one, is a real flag wherever it
+    sits - so it is not downgraded for being surrounded by binary bytes, the
+    way a short soup body ("btBs&7p!G") is.
+    """
+    body = flag[flag.index("{") + 1 : -1]
+    if any(ch in SOUP_CHARS for ch in body):
+        return False
+    return ("_" in body and len(body) >= 8) or len(body) >= 20
+
+
 def _chance_body(flag: str) -> bool:
     """Could a generic hit be chance rather than a flag, judging by its body?
 
@@ -148,7 +162,11 @@ def plain_hits(text: str, flagset: FlagSet) -> list[tuple[str, float, str]]:
                     continue
                 if not CTF_PREFIX_RE.match(flag[: flag.index("{")]):
                     strength = WEAK_GENERIC_STRENGTH
-                elif _in_garbage(text, match.start(), match.end()) or _chance_body(flag):
+                elif _chance_body(flag):
+                    strength = WEAK_GENERIC_STRENGTH
+                elif not _strong_body(flag) and _in_garbage(text, match.start(), match.end()):
+                    # A borderline body sitting in binary noise is likely chance;
+                    # a strong body (underscored or long) is a real flag anywhere.
                     strength = WEAK_GENERIC_STRENGTH
             elif "{" in flag and not looks_like_flag(flag):
                 # Right prefix but garbled content (e.g. a half-correct XOR key).

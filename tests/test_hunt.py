@@ -131,7 +131,7 @@ def test_random_bytes_yield_no_flag_and_no_fragment():
     [
         "x(F@Kt:@u}8uyd;Bztr K4J{btBs&7p!G}z(>*Jt",  # punctuation soup (HTB Fake Boost)
         "zq7#W1{!Tgxk3b}p0",  # a short body, no underscore, an anonymous prefix
-        "\x9a\xe1\xff\x93AB{c4fe_b4be}\xfa\x81\xee\x99",  # a hit between high bytes
+        "\x9a\xe1\xff\x93AB{c4fe}\xfa\x81\xee\x99",  # a short body between high bytes
     ],
 )
 def test_chance_hits_are_weak(text):
@@ -148,6 +148,28 @@ def test_real_shapes_stay_strong(flag):
     assert [(found, strength > WEAK_GENERIC_STRENGTH) for found, strength, _p in hits] == [
         (flag, True)
     ]
+
+
+def test_strong_body_in_binary_is_not_downgraded():
+    # flag{kerbrute_finding_users} sits inside a Kerberos packet, between binary
+    # bytes on both sides. An underscored, multi-word body is a real flag there -
+    # not chance - so it keeps full strength (DEADFACE 2024 Wild Wild West).
+    data = b"\x1b\x1cflag{kerbrute_finding_users}\xa2\x15\x1b\x13"
+    hits = find_flags(data)
+    strong = [h for h in hits if h.text == "flag{kerbrute_finding_users}"]
+    assert strong and strong[0].strength > WEAK_GENERIC_STRENGTH
+
+
+def test_realm_prefixed_duplicate_is_deduped_by_solve():
+    # "LOCALflag{...}" (a Kerberos realm glued to the flag) and "flag{...}" are
+    # the same flag; solve keeps the one starting at the cleaner boundary.
+    from ctfc.core.solve import solve
+
+    data = b"domain is LOCALflag{w1n_th3_w3st}, also \x00\x01flag{w1n_th3_w3st}\xa2"
+    report = solve(data)
+    texts = {flag.text for flag in report.flags}
+    assert "flag{w1n_th3_w3st}" in texts
+    assert "LOCALflag{w1n_th3_w3st}" not in texts
 
 
 def test_configured_prefix_is_never_weakened():
