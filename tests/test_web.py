@@ -904,3 +904,28 @@ def test_a_wordlist_that_cannot_be_read_is_a_400(client, tmp_path, where):
     answer = client.post("/api/hash", json={"input": "0" * 32, "options": {"wordlist": path}})
     assert answer.status_code == 400
     assert "ctfc serve" in answer.get_json()["error"]
+
+
+def test_the_keys_tab_tries_a_password_written_in_a_sentence(client):
+    """`find_prose_secrets` used to be reached only through `ctfc workspace`."""
+    import shutil
+    import subprocess
+
+    if shutil.which("openssl") is None:
+        pytest.skip("openssl is not installed")
+    vault = subprocess.run(
+        ["openssl", "enc", "-aes-256-cbc", "-pbkdf2", "-pass", f"pass:{OWN_PASSWORD}"],
+        input=b"CYBN{found_in_a_sentence}\n",
+        check=True,
+        capture_output=True,
+    ).stdout
+    notes = f"Call me back. The password is {OWN_PASSWORD} until Friday.\n"
+    answer = client.post(
+        "/api/keys",
+        json={
+            "input": "text:" + notes,
+            "options": {"against": "b64:" + base64.b64encode(vault).decode()},
+        },
+    ).get_json()
+    assert answer["winner"]["kind"] == "prose"
+    assert "CYBN{found_in_a_sentence}" in answer["results"][0]["data_text"]

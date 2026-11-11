@@ -454,6 +454,8 @@ def _read_everything(
             #    and measured. So the pool here is of *files to search*.
             if len(piece.data) <= CIPHERTEXT_MAX:
                 for candidate in keyhunt.extract_candidates(piece.data, include_windows=False):
+                    if candidate.kind == "prose":
+                        continue  # already in the secrets pool, from _text_secrets
                     if candidate.key in seen_keys or len(report.keys) >= MAX_KEYS:
                         continue
                     seen_keys.add(candidate.key)

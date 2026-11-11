@@ -833,6 +833,14 @@ report says **at which offset** the key was found.
 5. **Random-looking windows** of 16/32 bytes - last, and with AES only, because
    compressed data looks random too.
 
+A sixth source, tried after the hex and base64 strings: **a password written in a sentence** -
+"the password is hunter2", "mdp : azerty", "le mot de passe est ..." - read by
+`secrets.find_prose_secrets` (the same rule `ctfc workspace` uses) and tried as
+a passphrase. A person who leaves a password in a note writes a sentence, not
+`password = x`. Only the first 64 MB of the input is read for these, and at
+most 50 are kept: a memory dump is full of "pass ..." strings, and each one
+costs a slice of the solver.
+
 Without `--against`, the candidates are only listed, with their offsets.
 
 ```
@@ -2350,6 +2358,19 @@ real answer ("this is not valid base64") behind a wall of HTML.
 `make fuzz-web` is the long sweep, and `tests/test_fuzz_web.py` runs sixty
 rounds inside `make test`, the same arrangement the reader fuzzer has.
 
+### What it missed, and why (2026-11-11)
+
+The background-job route is `/api/jobs/<kind>`, and the fuzzer filled `<kind>`
+with `auto` - only `auto`. So nine tools that each read their own options were
+never fuzzed, and `solve` answered **500 to a time budget of "abc"**
+(`float("abc")`); `classical`, `rsa`, `keys`, `crc`, `prng` and `sig` had the
+same line. The lesson is about the harness, not the bug: a route with a
+parameter is as many routes as the parameter has values. `JOB_KINDS` in
+`web/app.py` now lists them, the fuzzer calls each one (and cancels the job it
+started, so the sweep stays fast), and `_seconds()` / `_small_int()` read those
+options once: a sentence and a 400, or a value clamped into range - including
+NaN and 1e308, which are numbers to `float()` but not a time budget.
+
 
 ## 40. Go and Rust binaries, where `strings` is useless (`ctfc/core/binstrings.py`)
 
@@ -2430,3 +2451,34 @@ did *not* work, and three leads with their commands are what you read instead.
 
 A reader added next month appears in this tab with no work at all: the walk
 comes from `core/readers.py`, like the Files tab's dropdown.
+
+
+## 42. The rest of lot H in the browser
+
+Four things the terminal could do and the page could not.
+
+**The Go / Rust report in the Files tab.** A dropped Go or Rust binary now shows
+what `ctfc exe` / `ctfc pe` print: the version, the module, the program's own
+functions, and the string literals cut where the compiler ended them. Writing
+the test found a bug in the terminal too: `ctfc exe` never searched those
+literals for a flag (only `ctfc solve` did, by reading them as a child file).
+
+**A Timeline tab.** `timeline.build()` was split in two: `from_files()` takes
+`(name, bytes)` pairs and touches no disk, `build()` reads a folder - one file
+at a time, through a generator, so a folder of large dumps is never all in
+memory - and hands them over. The page has bytes and no path, so it calls
+`from_files` directly; the only thing missing is the filesystem mtime, which a
+browser upload does not have. The answer uses the Files tab's display shape
+(sections of facts and tables), so the same `renderFile` draws it.
+
+**Your own wordlist in Symmetric, Hash and JWT.** A path field, read by the
+server - which is this machine, so `~/Documents/rockyou.txt` works exactly as
+`--wordlist` does - and the same note about how much of it was used. Accepting
+a path from a request sounds dangerous, so here is why it is not: the server
+binds to 127.0.0.1, and it only reads a body sent as `application/json`, which
+a page on another site cannot send without a CORS preflight this server never
+answers. The words are never sent back; only a password that worked is.
+
+**Passwords written in a sentence, in the Keys tab** - see section 12: they are
+now candidates of `keyhunt` itself, so `ctfc keys` and the Keys tab both test
+them, rather than only `ctfc workspace`.

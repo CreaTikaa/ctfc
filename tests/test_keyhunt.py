@@ -22,6 +22,7 @@ from ctfc.core.keyhunt import (
     find_ascii_keys,
     find_encoded,
     find_labelled,
+    find_prose,
     hunt,
 )
 
@@ -198,3 +199,46 @@ def test_detect_reports_the_key_schedule(fixture_bytes):
     ]
     assert guesses and "0x5a30" in guesses[0].label
     assert guesses[0].apply == {"tab": "keys", "options": {}}
+
+
+# ---------------------------------------------------------------------------
+# A password written in a sentence
+# ---------------------------------------------------------------------------
+
+PROSE_NOTE = (
+    b"Meeting notes, Tuesday.\n"
+    b"Reminder for Bob: the password is Zyx!tr0ub4dor-77. Do not write it down.\n"
+)
+
+
+def test_a_password_in_a_sentence_is_a_passphrase_candidate():
+    found = find_prose(PROSE_NOTE)
+    assert [(c.role, c.key) for c in found][:1] == [("passphrase", b"Zyx!tr0ub4dor-77.")]
+    assert b"Zyx!tr0ub4dor-77" in [c.key for c in found]  # the full stop trimmed too
+    assert all(c.kind == "prose" and "line 2" in c.how for c in found)
+    assert PROSE_NOTE[found[1].offset :].startswith(b"Zyx!tr0ub4dor-77")
+
+
+def test_the_hunt_opens_a_file_with_a_password_from_a_sentence():
+    """`password = x` was always found; a person writes a sentence instead."""
+    import shutil
+
+    if shutil.which("openssl") is None:
+        pytest.skip("openssl is not installed")
+    vault = subprocess.run(
+        ["openssl", "enc", "-aes-256-cbc", "-pbkdf2", "-pass", "pass:Zyx!tr0ub4dor-77"],
+        input=b"CYBN{fixture_prose_password}\n",
+        check=True,
+        capture_output=True,
+    ).stdout
+    report = hunt(PROSE_NOTE, vault, budget=Budget(max_attempts=10_000, max_seconds=30))
+    assert report.winner is not None
+    assert report.winner.kind == "prose"
+    assert b"CYBN{fixture_prose_password}" in report.results[0].data
+
+
+def test_the_sentence_search_is_capped():
+    from ctfc.core import keyhunt
+
+    many = b"".join(b"the password is pw%05d\n" % index for index in range(500))
+    assert len(find_prose(many)) == keyhunt.MAX_PROSE

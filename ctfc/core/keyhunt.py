@@ -48,6 +48,11 @@ MAX_ENTROPY_WINDOWS = 300
 # The second pass: isolated runs of random-looking bytes, at any offset. Only
 # on inputs small enough that sliding a window one byte at a time is cheap.
 FINE_SCAN_LIMIT = 256 * 1024
+# "the password is hunter2" lives in a note or a mail, not deep in a memory
+# dump - and a dump is full of "pass ..." strings that would each cost a solver
+# slice. So the sentence search reads the start of the input, and keeps a few.
+PROSE_SCAN_LIMIT = 64 * 1024 * 1024
+MAX_PROSE = 50
 NEAR_CONSTANT = 4096  # an ASCII key this close after a crypto constant is ranked higher
 
 # How much each kind of evidence is trusted, i.e. the order keys are tried in.
@@ -58,6 +63,7 @@ STRENGTH = {
     "base64": 0.6,
     "ascii_near_constant": 0.6,
     "passphrase": 0.55,
+    "prose": 0.5,
     "ascii": 0.45,
     "entropy": 0.25,
 }
@@ -512,10 +518,36 @@ def _readings_of(run: bytes, offset: int) -> list[tuple[bytes, int, str]]:
     return readings
 
 
+def find_prose(data: bytes) -> list[KeyCandidate]:
+    """A password written in a sentence: "the password is hunter2", "mdp : azerty".
+
+    `find_labelled` reads `password = x`; a person writes a sentence instead.
+    The sentence shapes live in `secrets.find_prose_secrets` (shared with
+    `ctfc workspace`); here each one becomes a passphrase to test.
+    """
+    from ctfc.core import secrets
+
+    found = []
+    for secret in secrets.find_prose_secrets(data[:PROSE_SCAN_LIMIT])[:MAX_PROSE]:
+        raw = secret.value.encode()
+        found.append(
+            KeyCandidate(
+                raw,
+                max(0, data.find(raw)),  # where the value first appears
+                "prose",
+                f"written in a sentence ('{secret.name}', line {secret.line}): used as passphrase",
+                STRENGTH["prose"],
+                "passphrase",
+            )
+        )
+    return found
+
+
 def extract_candidates(data: bytes, include_windows: bool = True) -> list[KeyCandidate]:
     """Every candidate key, strongest first, each key bytes once."""
     candidates = find_aes_schedules(data)
     candidates += find_labelled(data)
+    candidates += find_prose(data)
     candidates += find_encoded(data)
     candidates += find_ascii_keys(data)
     if include_windows:
