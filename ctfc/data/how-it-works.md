@@ -2492,3 +2492,54 @@ data_b64}]`, at most 200, the total still capped by the upload limit); every
 other tab reads the first one, and the page says so under the file names.
 Drop `mail.txt` and `backup.zip` together and the Workspace tab answers "the
 password in mail.txt opens backup.zip", with the `unzip -P` command.
+
+## 43. The flag one layer down (`flags.hunt`, lot I)
+
+The 2026-11-11 audit ran ctfc on 36 public challenges and found the same miss
+again and again: ctfc had **already decoded** the bytes holding the flag - a
+hex DNS stream, a base64 string in a JPEG's metadata - and never looked inside
+them. Lot I is the search that looks.
+
+**Two searches, on purpose.** `find_flags` is called by the scorer, so it runs
+thousands of times per brute force: it only reads the data as it is (plus the
+base64 forms of `CYBN{`, one regex each). `hunt` is the slow one, for when a
+human waits on one answer - `solve`, `scan`, `detect`, `watch`, `workspace`,
+the web flag search. It adds:
+
+- **every hex or base64 run decoded**, whatever the prefix: the 3.5 MB hex
+  stream of a DNS tunnel is unhexed and searched, a `cGljb0NURn...` in an XMP
+  attribute is decoded. Short runs are tried at the four start offsets, long
+  runs also **backwards** (reversed base64 is the stock PowerShell trick);
+- the text read **backwards** where it has the `}...{PREFIX` shape;
+- **UTF-16** (also in `find_flags`, because it is cheap and a decrypted GPP
+  password or .NET string is UTF-16): `C\0Y\0B\0N\0{\0`. Both byte orders are
+  read, which also reads each string one byte off; that misreading is the same
+  text minus its first character, and is dropped.
+
+**Fragments.** Challenges split the flag: half of it backwards in an SSH key
+comment, the other half in base64 in a crontab. `hunt` keeps a **start with no
+end** (`CYBN{h4lf_0n3_`) and an **end with no start** - the latter only when a
+decoded string is *nothing but* that (`4nd_tw0!}`), because in plain text
+"...}" is every closing brace of every script. Fragments never stop `solve`;
+when it finds no whole flag, it tries every start + end pair and keeps the
+joins that pass the flag check, reported as "assembled from two fragments",
+with both halves' trails.
+
+**Chance must not pass for a flag.** The generic `XXX{...}` pattern matched
+`K4J{btBs&7p!G}` in a rot13 -> rot47 -> reverse of an HTTP stream, and `solve`
+stopped there, printing a false flag. A generic hit (never `CYBN{`) is now weak
+when it sits between binary bytes on both sides, when its body is punctuation
+soup without an underscore, or when its body is short, has no underscore and
+the prefix does not say "flag"/"ctf". `solve` shows a weak hit as a lead, not
+as the answer.
+
+**Blobs inside a text.** `auto` sees a script as a whole, so the 8 kB of
+reversed base64 in `$var = "..."` never decoded. `solve` now decodes each long
+(>= 64 characters) base64 / hex string inside a text piece, and follows those
+that turn into readable text or a known file - the next stage of the dropper.
+
+**A busy capture's order.** Only 120 children of a piece are followed. A real
+capture has thousands of objects, and the DNS tunnel was number 1240. The
+capture's objects are now walked by kind - keystrokes and passwords, mail,
+HTTP, DNS (the biggest stream first: a tunnel has thousands of queries, a CDN
+a handful), then raw TCP/UDP.

@@ -79,6 +79,22 @@ Tous avec un test et validés contre un outil externe.
    dans `res/`, `assets/` ou le manifeste) ; un .dex brut, un ELF, un .class, un
    .jar sont inchangés.
 
+## Lot I — construit juste après l'audit (2026-11-11)
+
+Le rang 1 du backlog ci-dessous (sauf les préfixes connus : décision de
+l'utilisateur, l'outil sert à CYBN, on garde `CYBN{` en clair et en base64).
+Vérifié sur les vrais fichiers du corpus :
+
+| Challenge | Avant | Après lot I |
+|---|---|---|
+| CanYouSee | rien | **flag, une commande** (base64 dans l'XMP, décodé) |
+| Thats_Not_My_Name | rien (objet n° 1240 sur 6436) | **flag en 12 s** (flux DNS déhexé, tunnel trié en tête) |
+| It Has Begun | rien | **flag recollé** de deux moitiés (inversée + base64) |
+| Fake Boost | **faux flag** `K4J{...}` | plus de faux flag ; moitié 1 sortie comme fragment (la 2 est en AES) |
+| badpolicies | sortie UTF-16 non reconnue | UTF-16 reconnu ; manque la clé GPP publique |
+
+Score : **19/34** (contre 16). Détail : `ctfc/data/how-it-works.md` §43.
+
 ## Backlog priorisé (ce que l'audit dit de construire ensuite)
 
 Classé par rapport valeur/effort, chacun relié à des challenges réels.
