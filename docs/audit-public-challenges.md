@@ -244,3 +244,25 @@ visuel), pals (visuel), purified (image QOI).
 
 Capacité majeure encore absente, repérée ici : un **reader ext4/FAT** (image
 disque), gros module mais très courant — 7z/`debugfs` seraient la vérité terrain.
+
+## Lot L — reader d'image disque (2026-11-12)
+
+Construit à la demande : un **reader d'image disque complet**, en pilotant **The
+Sleuth Kit** (déjà installé) — `core/disk.py`. Couvre ext2/3/4, FAT, exFAT, NTFS,
+HFS+, UFS, et les tables de partitions MBR/GPT ; **récupère les fichiers
+supprimés** (`icat -r`). Appels en liste d'arguments (pas de shell), bornés par
+nombre de fichiers / taille / temps ; priorité aux chemins intéressants
+(home, /tmp, flag) ; fallback sur la recherche brute si TSK absent. Intégré :
+commande `ctfc disk`, reader (donc `solve`), onglet Files du web. Vérité terrain :
+TSK lui-même + fixture FAT12 vérifiée contre `fls`, y compris un fichier supprimé
+et une image partitionnée (MBR). thatsmyjam (ext4 199 Mo) : `ctfc solve` sort le
+flag. 1792 tests, démo 77.
+
+### Cinquième audit (corCTF 2024, BackdoorCTF 2024)
+
+Surtout de l'investigation Q/R (le flag est une réponse à déduire, pas une chaîne
+dans un fichier) : corCTF infiltration (evtx — ctfc remonte le record avec le
+mot de passe), American_Spy (trafic chiffré), Cursed_Credential (profil Firefox :
+déchiffrement NSS key4.db/logins.json — capacité niche possible). ctfc remonte
+les preuves (records evtx, streams, secrets) mais ne peut pas auto-flagger ces
+challenges d'enquête. Pas de nouveau bug : les features actuelles tiennent.
