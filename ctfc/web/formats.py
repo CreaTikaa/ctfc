@@ -824,6 +824,33 @@ def _pcap(data: bytes, flagset: FlagSet | None) -> dict:
     return {"sections": sections, "flags": flags, "notes": report.notes, "commands": []}
 
 
+def _disk(data: bytes, flagset: FlagSet | None) -> dict:
+    from ctfc.core import disk as disk_module
+
+    try:
+        report = disk_module.analyse(data, max_files=300, max_seconds=25)
+    except disk_module.DiskError as exc:
+        return {
+            "sections": [facts("disk image", [("error", str(exc))])],
+            "flags": [],
+            "notes": [str(exc)],
+            "commands": [],
+        }
+    rows = [[f.path, len(f.data), "deleted" if f.deleted else ""] for f in report.files[:200]]
+    sections = [
+        facts(
+            "disk image",
+            [
+                ("filesystems", ", ".join(p.fs_type for p in report.partitions)),
+                ("files recovered", len(report.files)),
+            ],
+        ),
+        table("files", ["path", "size", ""], rows),
+    ]
+    flags = [hit.text for f in report.files for hit in find_flags(f.data, flagset)]
+    return {"sections": sections, "flags": flags, "notes": report.notes, "commands": []}
+
+
 def _iso(data: bytes, flagset: FlagSet | None) -> dict:
     opened = core_readers.open_with("iso", data, flagset, "image.iso")
     rows = [[c.name, len(c.data), _preview(c.data)] for c in opened.children]
@@ -1019,6 +1046,7 @@ ADAPTERS: dict[str, Callable[[bytes, FlagSet | None], dict]] = {
     "hive": _hive,
     "sqlite": _sqlite,
     "pcap": _pcap,
+    "disk": _disk,
     "iso": _iso,
     "keylog": _keylog,
     "compressed": _compressed,

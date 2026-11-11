@@ -1378,6 +1378,37 @@ def print_repair(console: Console, report, source: str, written: list) -> None:
         console.print("[dim]Add --out <folder> to write the repaired file and the pieces.[/]")
 
 
+def print_disk(console: Console, report, flags) -> None:
+    """`ctfc disk`: the filesystems, the files pulled out, and any flags."""
+    for part in report.partitions:
+        console.print(
+            f"[bold]{safe(part.fs_type)}[/] at sector {part.offset}  "
+            f"[dim]{safe(part.description, 50)}[/]"
+        )
+    table = Table(title=f"{len(report.files)} file(s) recovered", expand=True)
+    table.add_column("path", ratio=4)
+    table.add_column("size", justify="right", width=10)
+    table.add_column("", width=8)
+    # The files most likely to matter: small ones, and deleted ones, first.
+    shown = sorted(report.files, key=lambda f: (not f.deleted, len(f.data)))[:40]
+    for item in shown:
+        table.add_row(
+            safe(item.path, 70),
+            str(len(item.data)),
+            "[yellow]deleted[/]" if item.deleted else "",
+        )
+    if report.files:
+        console.print(table)
+    if len(report.files) > 40:
+        console.print(
+            f"[dim]... and {len(report.files) - 40} more (use --extract to write them)[/]"
+        )
+    for flag in dict.fromkeys(flags):
+        console.print(f"[bold green]flag:[/] {escape(flag)}")
+    for note in report.notes:
+        console.print(f"[cyan]*[/] {safe(note)}")
+
+
 def print_archive(console: Console, report) -> None:
     """`ctfc archive`: the entries, the encryption, and the Docker layers."""
     title = f"{report.format}: {len(report.entries)} entry/entries"

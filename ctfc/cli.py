@@ -205,6 +205,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--extract", help=t("opt_archive_extract"))
     p.add_argument("--no-contents", action="store_true", help=t("opt_archive_no_contents"))
 
+    p = add("disk")
+    p.add_argument("input", help=t("arg_disk"))
+    p.add_argument("--extract", help=t("opt_disk_extract"))
+    p.add_argument("--max-files", type=int, default=1500, help=t("opt_disk_max_files"))
+    p.add_argument("--seconds", type=float, default=120.0, help=t("opt_seconds"))
+
     p = add("zip")
     p.add_argument("input", help=t("arg_archive"))
     p.add_argument("--seconds", type=float, default=30.0, help=t("opt_seconds"))
@@ -1301,6 +1307,44 @@ def cmd_archive(args: argparse.Namespace, config: Config, console: Console) -> i
     return 0
 
 
+def cmd_disk(args: argparse.Namespace, config: Config, console: Console) -> int:
+    """Read a disk image with The Sleuth Kit: its filesystems and its files."""
+    from ctfc.core import disk
+
+    inp = parse_input(args.input, decode_bare=False)
+    flagset = flagset_from(config)
+    try:
+        report = disk.analyse(inp.data, max_files=args.max_files, max_seconds=args.seconds)
+    except disk.DiskError as exc:
+        print(f"{t('error_prefix')}: {exc}", file=sys.stderr)
+        return 1
+    flags: list[str] = []
+    for item in report.files:
+        flags += [hit.text for hit in find_flags_in(item.data, flagset)]
+    written: list[Path] = []
+    if args.extract:
+        folder = Path(args.extract)
+        folder.mkdir(parents=True, exist_ok=True)
+        for item in report.files:
+            safe = re.sub(r"[^A-Za-z0-9._-]", "_", item.path) or f"inode_{item.inode}"
+            target = folder / safe
+            target.write_bytes(item.data)
+            written.append(target)
+    remember(args, config, inp.data, args.input, summary=flags[:4] or report.notes[:3])
+    if args.json:
+        payload = {"input": input_to_dict(inp), **report.to_dict(), "flags": flags}
+        if args.extract:
+            payload["extracted"] = [str(path) for path in written]
+        print(json.dumps(payload, indent=2))
+        return 0
+    render.print_input_notes(console, inp)
+    render.print_disk(console, report, flags)
+    if args.extract:
+        console.print(f"[green]*[/] wrote {len(written)} file(s) to {args.extract}")
+        console.print(f"[green]$[/] ctfc scan {args.extract}")
+    return 0
+
+
 def cmd_time(args: argparse.Namespace, config: Config, console: Console) -> int:
     """Read a number as a date, across the epochs forensics runs into."""
     from ctfc.core import timestamps
@@ -1976,6 +2020,7 @@ def main(argv: list[str] | None = None) -> int:
         "extend": cmd_extend,
         "sig": cmd_sig,
         "archive": cmd_archive,
+        "disk": cmd_disk,
         "exe": cmd_exe,
         "winartifact": cmd_winartifact,
         "crc": cmd_crc,

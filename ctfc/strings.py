@@ -320,6 +320,15 @@ EN: dict[str, str] = {
     "opt_msi_extract": "write the embedded cabinet's files and the Binary streams here",
     "opt_office_extract": "write the embedded objects (ObjectPool) into this folder",
     "cmd_archive": "read a tar / 7z / RAR / cabinet, or a saved Docker image",
+    "cmd_disk": "read a disk image (ext/FAT/NTFS/...) and pull out its files",
+    "cmd_disk_ex": (
+        "examples: ctfc disk image.img  |  ctfc disk disk.dd --extract ./files  |  "
+        "ctfc disk partition.raw --json. "
+        "Reads a disk or partition image (ext2/3/4, FAT, exFAT, NTFS, HFS+, ...) with "
+        "The Sleuth Kit: lists the filesystems, pulls out the files - deleted ones "
+        "included - and searches each for a flag. Needs `sleuthkit` installed; without "
+        "it, ctfc still searches the raw image for a flag in clear."
+    ),
     "cmd_archive_ex": (
         "examples: ctfc archive files.7z  |  ctfc archive image.tar --extract ./layers  |  "
         "ctfc archive secret.rar --json. "
@@ -329,6 +338,9 @@ EN: dict[str, str] = {
         "in build order and recovers the files a later layer deleted."
     ),
     "arg_archive_any": "the archive (tar, 7z, rar, cab, docker save .tar) - a path, or -",
+    "arg_disk": "the disk image (.img, .dd, .raw, a partition) - a path, or -",
+    "opt_disk_extract": "write every recovered file into this folder",
+    "opt_disk_max_files": "stop after this many files (default 1500)",
     "opt_archive_extract": "write every member ctfc could decode into this folder",
     "opt_archive_no_contents": "headers only: do not decompress anything",
     "cmd_zip": "look closely at a ZIP: encryption, header mismatches, tiny files",
