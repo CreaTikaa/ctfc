@@ -1,0 +1,5 @@
+Incident notes
+
+The attacker left a message in the config, and after decoding the base64
+the recovered flag was CYBN{a_flag_in_plain_readable_text} which we then
+verified against the challenge server. Nothing else of note in the logs.
