@@ -150,12 +150,14 @@ def test_embedded_password_list_cracks_unsalted_hashes(algorithm, password):
 
 
 def test_ntlm_is_cracked_as_utf16():
-    """NTLM is md4 of the UTF-16LE password: the list try must do that encoding."""
-    try:
-        digest = hashlib.new("md4", "password123".encode("utf-16-le")).hexdigest()
-    except ValueError:
-        pytest.skip("this OpenSSL build has no md4")
-    report = identify(digest)
+    """NTLM is md4 of the UTF-16LE password: the list try must do that encoding.
+
+    ctfc ships its own MD4 (core/md4.py), so this works even where OpenSSL
+    dropped md4 - which is most machines now, and exactly when it matters.
+    """
+    from ctfc.core.md4 import ntlm
+
+    report = identify(ntlm("password123"))
     cracked = [match for match in report.matches if match.cracked]
     assert cracked and cracked[0].format.id == "ntlm"
 

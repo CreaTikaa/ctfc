@@ -53,6 +53,12 @@ CHARSETS = {
 
 def _try_hash(name: str, data: bytes) -> str | None:
     """Hash with an algorithm OpenSSL may or may not provide (md4, whirlpool)."""
+    if name == "md4":
+        # Modern OpenSSL drops MD4, which would leave NTLM (the SAM-dump hash)
+        # identifiable but never crackable. Our own MD4 needs no OpenSSL.
+        from ctfc.core.md4 import md4
+
+        return md4(data).hex()
     try:
         return hashlib.new(name, data).hexdigest()
     except ValueError:
