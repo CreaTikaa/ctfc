@@ -971,12 +971,36 @@ def analyse(data: bytes, path: str = "") -> PcapReport:
             )
         )
 
+    _make_names_unique(report.objects)
     if not report.objects:
         report.notes.append(
             "no payload to extract: the capture may be only handshakes, or encrypted "
             "(TLS cannot be opened without the keys)"
         )
     return report
+
+
+def _make_names_unique(objects: list[Extracted]) -> None:
+    """Give every object its own file name: `--extract` writes them side by side.
+
+    Each extractor numbers what it finds *within one stream*, so two connections
+    to the same server both produced `http_<server>_0.bin` - and on disk the
+    second overwrote the first. On HTB CA2024 "Fake Boost" the second was "OK"
+    and the first was the PowerShell the whole challenge is about.
+    """
+    seen: set[str] = set()
+    for item in objects:
+        name = item.name
+        if name in seen:
+            stem, dot, suffix = name.rpartition(".")
+            if not dot:
+                stem, suffix = name, ""
+            number = 2
+            while f"{stem}_{number}{dot}{suffix}" in seen:
+                number += 1
+            name = f"{stem}_{number}{dot}{suffix}"
+            item.name = name
+        seen.add(name)
 
 
 def analyse_file(path: str | Path) -> PcapReport:

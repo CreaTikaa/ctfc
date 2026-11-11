@@ -180,6 +180,23 @@ def test_a_longer_segment_at_the_same_offset_wins():
     assert stream.data == b"abcdef"
 
 
+def test_two_connections_to_one_server_do_not_share_a_file_name():
+    """Both responses must survive `--extract`: before, the second overwrote the first."""
+    from ctfc.core.pcap import analyse
+
+    frames = []
+    for client, body in ((50451, b"$script = 'the payload'"), (50487, b"OK")):
+        response = b"HTTP/1.1 200 OK\r\nContent-Length: %d\r\n\r\n" % len(body) + body
+        frames.append(
+            ethernet_ipv4("192.168.0.5", "192.168.0.9", 6, tcp_segment(8080, client, 1, response))
+        )
+    report = analyse(build_capture(frames))
+    bodies = [item for item in report.objects if item.kind == "http-body"]
+    assert len(bodies) == 2
+    assert len({item.name for item in bodies}) == 2
+    assert {item.data for item in bodies} == {b"$script = 'the payload'", b"OK"}
+
+
 # ---------------------------------------------------------------------------
 # DNS
 # ---------------------------------------------------------------------------
