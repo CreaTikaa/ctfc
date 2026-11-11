@@ -9,3 +9,6 @@ dist/
 # Large vendored assets are fetched by scripts/fetch_vendor.sh, not committed.
 ctfc/web/static/vendor/cyberchef/
 wheels/
+
+# Public CTF challenges downloaded for the audit (untrusted, never committed)
+corpus/

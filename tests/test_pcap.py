@@ -86,7 +86,7 @@ def test_truncated_file_keeps_what_it_can():
 
 @pytest.mark.parametrize(
     "link_type,header_size",
-    [(1, 14), (101, 0), (0, 4), (113, 16), (276, 20)],
+    [(1, 14), (101, 0), (12, 0), (14, 0), (228, 0), (229, 0), (0, 4), (113, 16), (276, 20)],
 )
 def test_strip_link_layer_sizes(link_type, header_size):
     payload = b"\x45" + b"\x00" * 40
@@ -143,6 +143,40 @@ def test_retransmission_is_not_written_twice():
     frame = ethernet_ipv4("1.1.1.1", "2.2.2.2", 6, segment)
     packets = [parse_packet(frame, 1, 1), parse_packet(frame, 1, 2)]
     stream = reassemble_tcp(packets)[0]
+    assert stream.data == b"abcdef"
+
+
+def test_ethernet_padding_is_not_payload():
+    """An empty ACK is padded with zeros to Ethernet's 60-byte minimum.
+
+    Found on HTB Cyber Apocalypse 2024 "Fake Boost": the padding of the ACK
+    before an HTTP response was read as 6 bytes of payload at the same sequence
+    number as the response, which then lost (first chunk won) and the whole
+    HTTP header came out as zeros. tshark reads the IP total length; so must we.
+    """
+    ack = ethernet_ipv4("2.2.2.2", "1.1.1.1", 6, tcp_segment(8080, 50451, 1, b""))
+    padded = ack + b"\x00" * (60 - len(ack))
+    assert parse_packet(padded, 1, 1).payload == b""
+
+    response = b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nhi"
+    data = ethernet_ipv4("2.2.2.2", "1.1.1.1", 6, tcp_segment(8080, 50451, 1, response))
+    stream = reassemble_tcp([parse_packet(padded, 1, 1), parse_packet(data, 1, 2)])[0]
+    assert stream.data == response
+    assert stream.gaps is False
+
+
+def test_ipv6_payload_length_is_honoured():
+    body = tcp_segment(2222, 443, 7, b"hi")
+    header = struct.pack(">IHBB", 6 << 28, len(body), 6, 64) + bytes(range(16)) + bytes(range(16))
+    frame = b"\x00" * 12 + b"\x86\xdd" + header + body + b"\x00" * 6  # trailer
+    assert parse_packet(frame, 1, 1).payload == b"hi"
+
+
+def test_a_longer_segment_at_the_same_offset_wins():
+    """Two segments start at the same byte: keep the one that carries more."""
+    short = ethernet_ipv4("1.1.1.1", "2.2.2.2", 6, tcp_segment(1, 80, 1000, b"ab"))
+    full = ethernet_ipv4("1.1.1.1", "2.2.2.2", 6, tcp_segment(1, 80, 1000, b"abcdef"))
+    stream = reassemble_tcp([parse_packet(short, 1, 1), parse_packet(full, 1, 2)])[0]
     assert stream.data == b"abcdef"
 
 

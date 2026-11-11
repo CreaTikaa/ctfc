@@ -47,6 +47,10 @@ PCAPNG_EPB = 0x00000006
 LINK_ETHERNET = 1
 LINK_NULL = 0
 LINK_RAW_IP = 101
+# The same "no link layer, the frame is the IP packet" under other numbers:
+# 12 and 14 are DLT_RAW on some BSDs, 228/229 are LINKTYPE_IPV4/IPV6 (what
+# scapy writes). Found on picoCTF "PcapPoisoning", where every frame was dropped.
+LINK_RAW_IP_ALIASES = (12, 14, 228, 229)
 LINK_LINUX_SLL = 113
 LINK_LINUX_SLL2 = 276
 
@@ -218,7 +222,7 @@ def strip_link_layer(frame: bytes, link_type: int) -> bytes | None:
         if ether_type in (0x0800, 0x86DD):
             return frame[14:]
         return None
-    if link_type == LINK_RAW_IP:
+    if link_type == LINK_RAW_IP or link_type in LINK_RAW_IP_ALIASES:
         return frame
     if link_type == LINK_NULL:
         return frame[4:] if len(frame) > 4 else None
@@ -251,6 +255,12 @@ def parse_packet(frame: bytes, link_type: int, number: int) -> Packet | None:
         header_length = (packet[0] & 0x0F) * 4
         if header_length < 20 or len(packet) < header_length:
             return None
+        # Cut at the IP total length: what follows is the link layer's padding
+        # (an empty ACK is padded with zeros to Ethernet's 60-byte minimum),
+        # not data. Without this, those zeros became 6 bytes of "payload".
+        total_length = struct.unpack(">H", packet[2:4])[0]
+        if header_length <= total_length <= len(packet):
+            packet = packet[:total_length]
         protocol_number = packet[9]
         source_ip = _ipv4_address(packet[12:16])
         destination_ip = _ipv4_address(packet[16:20])
@@ -261,6 +271,9 @@ def parse_packet(frame: bytes, link_type: int, number: int) -> Packet | None:
         protocol_number = packet[6]
         source_ip = _ipv6_address(packet[8:24])
         destination_ip = _ipv6_address(packet[24:40])
+        payload_length = struct.unpack(">H", packet[4:6])[0]
+        if 0 < payload_length <= len(packet) - 40:  # 0 = jumbogram: keep it all
+            packet = packet[: 40 + payload_length]  # same reason as IPv4 above
         body = packet[40:]
     else:
         return None
@@ -299,8 +312,9 @@ def parse_packet(frame: bytes, link_type: int, number: int) -> Packet | None:
 def reassemble_tcp(packets: list[Packet]) -> list[Stream]:
     """Rebuild each direction of each TCP conversation, ordered by sequence number.
 
-    Retransmissions and overlaps are resolved the simple way: a byte range already
-    seen is not written twice. A hole in the sequence numbers is reported (`gaps`)
+    Retransmissions and overlaps are resolved the simple way: of two segments
+    that start at the same byte, the longer one is kept, and a byte range
+    already written is not written twice. A hole in the sequence numbers is reported (`gaps`)
     rather than silently glued over, because a glued-over hole gives a corrupted
     file and an hour of confusion.
     """
@@ -319,7 +333,10 @@ def reassemble_tcp(packets: list[Packet]) -> list[Stream]:
             offset = packet.sequence - base
             if offset < 0:  # sequence wrapped or a stray packet: skip it
                 continue
-            chunks.setdefault(offset, packet.payload)
+            # Two segments at the same offset (a retransmission, or a
+            # repacketised one): keep the one that carries more bytes.
+            if len(packet.payload) > len(chunks.get(offset, b"")):
+                chunks[offset] = packet.payload
         out = bytearray()
         gaps = False
         for offset in sorted(chunks):
