@@ -37,6 +37,7 @@ from ctfc.core import (
     audio,
     cab,
     cfb,
+    disk,
     evtx,
     executable,
     exif,
@@ -374,6 +375,25 @@ def _open_iso(data: bytes, flagset: FlagSet | None, path: str) -> Opened:
         children=_keep(children),
         notes=list(report.notes),
         extract="7z x {file} -o{dir}   (or mount it)",
+    )
+
+
+def _open_disk(data: bytes, flagset: FlagSet | None, path: str) -> Opened:
+    try:
+        # A quick pass for solve; `ctfc disk` runs the full extraction itself.
+        report = disk.analyse(data, max_files=400, max_seconds=25)
+    except disk.DiskError as exc:
+        return Opened(error=str(exc))
+    children = []
+    for item in report.files:
+        tag = "deleted file" if item.deleted else "file"
+        children.append(Child(item.path, f"disk image {tag}", item.data))
+    parts = ", ".join(f"{p.fs_type}" for p in report.partitions)
+    return Opened(
+        detail=f"disk image ({parts}), {len(report.files)} file(s)",
+        children=children,  # a disk's files are kept whatever their size
+        notes=list(report.notes),
+        extract="fls -r -p {file}  then  icat {file} <inode> > out   (The Sleuth Kit)",
     )
 
 
@@ -999,6 +1019,13 @@ READERS: tuple[Reader, ...] = (
         "ctfc archive",
         iso.looks_like_iso,
         _open_iso,
+    ),
+    Reader(
+        "disk",
+        "disk image (ext/FAT/NTFS/..., via The Sleuth Kit)",
+        "ctfc disk",
+        disk.looks_like_disk_image,
+        _open_disk,
     ),
     Reader(
         "keylog",
