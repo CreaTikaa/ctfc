@@ -119,6 +119,41 @@ def _number(value: object) -> int | None:
         raise InputError(f"{text[:40]!r} is not a number (decimal, or 0x for hex)") from exc
 
 
+# The tools that run as background jobs (POST /api/jobs/<kind>). Listed once so
+# the web fuzzer can call every one of them, not only the first.
+JOB_KINDS = ("auto", "solve", "timeline", "classical", "xor", "sym", "blob", "rsa", "keys")
+
+
+def _seconds(options: dict, default: float, cap: float = 300) -> float:
+    """A time budget from the browser, kept between 1 second and `cap`.
+
+    A form field can hold anything ("abc", "nan", -5, 1e308): each of those is
+    either a 400 with a sentence, or clamped - never a 500 or a job that never ends.
+    """
+    raw = options.get("seconds")
+    if raw in (None, ""):
+        return default
+    try:
+        value = float(raw)
+    except (TypeError, ValueError) as exc:
+        raise InputError(f"time budget {str(raw)[:40]!r} is not a number of seconds") from exc
+    if value != value:  # NaN is the one float not equal to itself
+        raise InputError("time budget is not a number of seconds")
+    return max(1.0, min(cap, value))
+
+
+def _small_int(options: dict, name: str, default: int, low: int, high: int) -> int:
+    """A small whole number option (a depth, a count), kept between low and high."""
+    raw = options.get(name)
+    if raw in (None, ""):
+        return default
+    try:
+        value = int(str(raw).strip(), 0)
+    except (TypeError, ValueError) as exc:
+        raise InputError(f"{name} {str(raw)[:40]!r} is not a whole number") from exc
+    return max(low, min(high, value))
+
+
 def candidate_from_dict(raw: dict) -> Candidate:
     """Back from the JSON a tool returned to a Candidate (to record it in a session)."""
     return Candidate(
@@ -312,8 +347,8 @@ def create_app(config: Config | None = None) -> Flask:
             from ctfc.core.solve import solve as solve_file
 
             inp = input_from_payload(payload, decode_bare=False)
-            depth = int(options.get("depth") or 5)
-            budget = Budget(max_attempts=1_000_000, max_seconds=float(options.get("seconds") or 20))
+            depth = _small_int(options, "depth", 5, 1, 10)
+            budget = Budget(max_attempts=1_000_000, max_seconds=_seconds(options, 20))
 
             def work_solve(budget: Budget) -> dict:
                 report = solve_file(
@@ -327,6 +362,29 @@ def create_app(config: Config | None = None) -> Flask:
 
             return work_solve, budget
 
+        if kind == "timeline":
+            # One dropped file: every date it carries, and every piece inside it.
+            # The bytes version of `ctfc timeline` (a browser has no path, so
+            # there is no filesystem mtime to add).
+            from ctfc.core.timeline import from_files
+
+            inp = input_from_payload(payload, decode_bare=False)
+            name = str(payload.get("name") or "input")
+            budget = Budget(max_attempts=1_000_000, max_seconds=_seconds(options, 20))
+
+            def work_timeline(budget: Budget) -> dict:
+                report = from_files(
+                    [(name, inp.data)],
+                    flagset=flagset,
+                    budget=budget,
+                    since=str(options.get("since") or "").strip(),
+                    until=str(options.get("until") or "").strip(),
+                    root=name,
+                )
+                return {"input": input_summary(inp), **formats.timeline(report)}
+
+            return work_timeline, budget
+
         if kind == "classical":
             from ctfc.core import classical
 
@@ -334,7 +392,7 @@ def create_app(config: Config | None = None) -> Flask:
             cipher = str(options.get("cipher") or "").strip() or None
             key = str(options.get("key") or "").strip()
             params = classical.parse_key(cipher, key) if cipher and key else None
-            budget = Budget(max_attempts=20_000, max_seconds=float(options.get("seconds") or 20))
+            budget = Budget(max_attempts=20_000, max_seconds=_seconds(options, 20))
 
             def work_classical(budget: Budget) -> dict:
                 candidates = classical.solve_classical(
@@ -360,10 +418,7 @@ def create_app(config: Config | None = None) -> Flask:
             key = option_bytes(options, "key")
             crib = option_bytes(options, "crib", decode_bare=False)
             other = option_bytes(options, "other")
-            try:
-                keylen = int(options.get("keylen") or 0) or None
-            except ValueError as exc:
-                raise InputError("key length must be a number") from exc
+            keylen = _small_int(options, "keylen", 0, 0, 4096) or None
             budget = Budget(max_attempts=2000, max_seconds=60)
 
             def work_xor(budget: Budget) -> dict:
@@ -417,7 +472,7 @@ def create_app(config: Config | None = None) -> Flask:
                 cipher = str(options.get("cipher") or "").strip() or None
                 mode = str(options.get("mode") or "").strip() or None
                 try_passwords = bool(options.get("passwords"))
-            seconds = min(float(options.get("seconds") or 30), 120)
+            seconds = _seconds(options, 30, cap=120)
             budget = Budget(max_attempts=1_000_000, max_seconds=seconds)
 
             def work_sym(budget: Budget) -> dict:
@@ -457,9 +512,9 @@ def create_app(config: Config | None = None) -> Flask:
                 line = line.strip()
                 if not line:
                     continue
-                others.append(parse_key(line.encode()).n if "-----" in line else int(line))
+                others.append(parse_key(line.encode()).n if "-----" in line else _number(line))
             attack = bool(options.get("attack"))
-            seconds = min(float(options.get("seconds") or 20), 120)
+            seconds = _seconds(options, 20, cap=120)
             budget = Budget(max_attempts=50_000_000, max_seconds=seconds)
 
             def work_rsa(budget: Budget) -> dict:
@@ -482,7 +537,7 @@ def create_app(config: Config | None = None) -> Flask:
             ciphertext = option_bytes(options, "against")
             cipher = str(options.get("cipher") or "").strip() or None
             mode = str(options.get("mode") or "").strip() or None
-            seconds = min(float(options.get("seconds") or 60), 300)
+            seconds = _seconds(options, 60, cap=300)
             budget = Budget(max_attempts=1_000_000, max_seconds=seconds)
 
             def work_keys(budget: Budget) -> dict:
@@ -609,11 +664,11 @@ def create_app(config: Config | None = None) -> Flask:
             raise InputError(f"{target} does not fit in 32 bits: a CRC32 is 4 bytes")
         length = str(options.get("length") or "").strip()
         pattern = str(options.get("pattern") or "").strip()
-        budget = Budget(max_attempts=200_000_000, max_seconds=float(options.get("seconds") or 20))
+        budget = Budget(max_attempts=200_000_000, max_seconds=_seconds(options, 20))
         if not length and not pattern:
             report = crc32.recover_any_length(target, budget=budget)
         else:
-            size = int(length) if length else len(pattern)
+            size = _small_int(options, "length", 0, 1, 64) if length else len(pattern)
             report = crc32.recover(
                 target,
                 size,
@@ -696,8 +751,8 @@ def create_app(config: Config | None = None) -> Flask:
         report = prng_mod.solve(
             integers,
             generator=str(options.get("generator") or "auto"),
-            forward=max(0, min(200, int(options.get("forward") or 10))),
-            backward=max(0, min(200, int(options.get("backward") or 10))),
+            forward=_small_int(options, "forward", 10, 0, 200),
+            backward=_small_int(options, "backward", 10, 0, 200),
         )
         report.notes += prng_mod.float_notes(len(floats)) + prng_mod.truncation_notes(integers)
         answer = {"input": input_summary(inp), **report.to_dict()}
@@ -910,7 +965,7 @@ def create_app(config: Config | None = None) -> Flask:
         name = str(options.get("curve") or "").strip()
         curve = signatures.find_curve(name) if name else None
         order_text = str(options.get("order") or "").strip()
-        order = int(order_text, 0) if order_text else None
+        order = _number(order_text)
         if curve is None and order is None:
             raise InputError(
                 "choose a curve (secp256k1, p-256, p-384, p-521, p-224, p-192), or give "

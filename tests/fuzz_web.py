@@ -49,7 +49,7 @@ if str(ROOT) not in sys.path:  # so it runs as a plain script too
     sys.path.insert(0, str(ROOT))
 
 from ctfc.config import Config  # noqa: E402
-from ctfc.web.app import create_app  # noqa: E402
+from ctfc.web.app import JOB_KINDS, create_app  # noqa: E402
 
 FIXTURES = ROOT / "tests" / "fixtures"
 
@@ -93,6 +93,18 @@ KEYS = (
     "note",
     "query",
     "title",
+    # option names of the job tools, which parse numbers and dates
+    "depth",
+    "keylen",
+    "forward",
+    "backward",
+    "since",
+    "until",
+    "order",
+    "other",
+    "curve",
+    "attack",
+    "generator",
 )
 
 # The names probed against every route that takes one in its path.
@@ -219,15 +231,19 @@ def routes_of(app) -> list[tuple[str, str]]:
         url = str(rule)
         if "<path:filename>" in url:
             continue  # the static catch-all: covered by the traversal pass
+        # Every job kind gets its own route: each one reads its options in its
+        # own code, and fuzzing only `auto` hid the 500s in the others.
+        kinds = JOB_KINDS if "<kind>" in url else ("",)
         for method in sorted(rule.methods - {"HEAD", "OPTIONS"}):
-            filled = (
-                url.replace("<name>", "fuzz")
-                .replace("<kind>", "auto")
-                .replace("<job_id>", "0" * 32)
-            )
-            if "<" in filled:
-                continue  # a parameter we do not know how to fill
-            found.append((method, filled))
+            for kind in kinds:
+                filled = (
+                    url.replace("<name>", "fuzz")
+                    .replace("<kind>", kind)
+                    .replace("<job_id>", "0" * 32)
+                )
+                if "<" in filled:
+                    continue  # a parameter we do not know how to fill
+                found.append((method, filled))
     return sorted(set(found))
 
 
@@ -251,6 +267,13 @@ def check(client, method: str, url: str, body, seed: int) -> Failure | None:
             detail=f"{type(error).__name__}: {error} at {where}",
         )
     if response.status_code in ALLOWED:
+        # A job that started is cancelled at once: the code that can answer 500
+        # (reading the request) has already run, and twenty solves left running
+        # in the background would only slow the sweep down.
+        if url.startswith("/api/jobs/") and response.status_code == 200:
+            job = (response.get_json(silent=True) or {}).get("job")
+            if job:
+                client.post(f"/api/jobs/{job}/cancel")
         return None
     return Failure(
         route=f"{method} {url}",

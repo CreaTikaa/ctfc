@@ -707,3 +707,110 @@ def test_the_solve_tab_is_wired_end_to_end(client, fixture_bytes):
 def test_the_solve_route_refuses_a_body_that_is_not_an_object(client):
     answer = client.post("/api/jobs/solve", json=["not", "an", "object"])
     assert answer.status_code == 400
+
+
+# ---------------------------------------------------------------------------
+# Timeline tab: `ctfc timeline` for one dropped file
+# ---------------------------------------------------------------------------
+
+
+def _run_job(client, kind: str, payload: dict) -> dict:
+    import time
+
+    started = client.post(f"/api/jobs/{kind}", json=payload).get_json()
+    for _ in range(400):
+        status = client.get(f"/api/jobs/{started['job']}").get_json()
+        if status["state"] in ("done", "error", "cancelled"):
+            break
+        time.sleep(0.05)
+    assert status["state"] == "done", status
+    return status["result"]
+
+
+def test_the_timeline_tab_lists_a_dropped_shortcut_s_dates(client, fixture_bytes):
+    import base64
+
+    page = client.get("/").get_data(as_text=True)
+    script = client.get("/app.js").get_data(as_text=True)
+    assert 'data-tab="timeline"' in page
+    assert 'id="options-timeline"' in page
+    assert 'timeline: "job"' in script
+
+    data = fixture_bytes("winartifact_dropper.lnk")
+    answer = _run_job(
+        client,
+        "timeline",
+        {"data_b64": base64.b64encode(data).decode(), "name": "dropper.lnk", "options": {}},
+    )
+    # The same display shape as the Files tab, so renderFile draws it.
+    assert answer["reader"] == "timeline"
+    rows = next(s for s in answer["sections"] if s["kind"] == "table")["rows"]
+    assert [row[0] for row in rows] == sorted(row[0] for row in rows)
+    assert [row[1] for row in rows] == [
+        "shortcut target created",
+        "shortcut target accessed",
+        "shortcut target written",
+    ]
+    assert all(row[0].endswith("UTC") for row in rows)
+    assert all(row[3] == "dropper.lnk" for row in rows)
+    # A browser hands bytes, not a path: there is no filesystem mtime to show.
+    assert not any(row[1] == "filesystem mtime" for row in rows)
+
+
+def test_the_timeline_tab_honours_since_and_until(client, fixture_bytes):
+    import base64
+
+    data = fixture_bytes("winartifact_dropper.lnk")
+    answer = _run_job(
+        client,
+        "timeline",
+        {
+            "data_b64": base64.b64encode(data).decode(),
+            "name": "dropper.lnk",
+            "options": {"since": "2023-11-14 22:14", "until": "2023-11-14"},
+        },
+    )
+    rows = next(s for s in answer["sections"] if s["kind"] == "table")["rows"]
+    assert [row[1] for row in rows] == ["shortcut target accessed", "shortcut target written"]
+
+
+def test_the_timeline_tab_says_so_when_a_file_has_no_date(client):
+    answer = _run_job(client, "timeline", {"input": "text:no dates in here", "options": {}})
+    assert next(s for s in answer["sections"] if s["kind"] == "table")["rows"] == []
+    assert any("no timestamp came out" in note for note in answer["notes"])
+
+
+@pytest.mark.parametrize(
+    "options",
+    [
+        {"seconds": "abc"},
+        {"seconds": [1]},
+        {"seconds": "nan"},
+        {"depth": "x"},
+        {"keylen": [1]},
+        {"other": "zz"},
+    ],
+)
+def test_a_job_with_a_nonsense_option_is_a_400_not_a_500(options):
+    """Found by fuzzing every job kind: only `auto` was fuzzed before, and
+    `solve` answered 500 to a time budget of "abc"."""
+    from ctfc.web.app import JOB_KINDS
+
+    app = create_app(Config())
+    app.testing = False  # Flask's own 500, not a re-raised exception
+    client = app.test_client()
+    for kind in JOB_KINDS:
+        answer = client.post(f"/api/jobs/{kind}", json={"input": "text:hi", "options": options})
+        assert answer.status_code < 500, (kind, options, answer.get_data(as_text=True)[:300])
+        job = (answer.get_json(silent=True) or {}).get("job")
+        if job:
+            client.post(f"/api/jobs/{job}/cancel")
+
+
+def test_a_time_budget_is_clamped_rather_than_trusted():
+    from ctfc.web.app import _seconds
+
+    assert _seconds({"seconds": 1e308}, 20) == 300
+    assert _seconds({"seconds": -5}, 20) == 1
+    assert _seconds({}, 20) == 20
+    assert _seconds({"seconds": "45"}, 20, cap=120) == 45

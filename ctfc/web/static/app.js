@@ -37,6 +37,7 @@ const TOOLS = {
   prng: "sync",
   extend: "sync",
   file: "sync",
+  timeline: "job",
   crc: "sync",
   classical: "job",
   sig: "sync",
@@ -48,7 +49,7 @@ const API_PATH = { pipeline: "/api/recipe" };
 // Tabs that have their own options panel (#options-<tab>).
 const OPTION_PANELS = [
   "xor", "sym", "rsa", "hash", "pipeline", "keys", "lens", "radius", "volatility", "jwt", "prng", "extend",
-  "file", "classical", "crc", "sig", "docs", "solve",
+  "file", "classical", "crc", "sig", "docs", "solve", "timeline",
 ];
 
 // Tabs that are reference pages, not tools: opening them shows the page and
@@ -215,6 +216,13 @@ function currentOptions() {
   }
   if (state.tab === "solve") {
     return { seconds: $("solve-seconds").value, depth: $("solve-depth").value };
+  }
+  if (state.tab === "timeline") {
+    return {
+      since: $("timeline-since").value,
+      until: $("timeline-until").value,
+      seconds: $("timeline-seconds").value,
+    };
   }
   if (state.tab === "classical") {
     return {
@@ -399,6 +407,12 @@ function showAnswer(tab, answer) {
   if (tab === "file") {
     renderFile(answer);
     setStatus("");
+    return;
+  }
+  if (tab === "timeline") {
+    // Same display shape as the Files tab (see formats.timeline in Python).
+    renderFile(answer);
+    setStatus(answer.budget || "");
     return;
   }
   if (tab === "crc") {

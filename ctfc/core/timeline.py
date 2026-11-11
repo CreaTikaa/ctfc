@@ -24,6 +24,7 @@ every event, sort, print. Three rules make the table trustworthy:
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -96,76 +97,89 @@ def _note_for(entry_kind: str, when: str, now: str) -> str:
     return "; ".join(notes)
 
 
-def build(
-    root: Path,
+def events_of(
+    data: bytes,
+    name: str,
+    now: str,
+    flagset: FlagSet | None,
+    budget: Budget,
+    notes: list[str],
+) -> list[Entry]:
+    """Every date one file carries, itself and every piece inside it.
+
+    Bytes in, rows out: nothing here touches the disk, which is why the web page
+    (that only ever has bytes) can call it as well as `build` below.
+    """
+    entries: list[Entry] = []
+    for visit in walk(
+        data,
+        name,
+        flagset=flagset,
+        budget=budget,
+        decode=False,  # a decoding chain has nothing to say about time
+        notes=notes,
+    ):
+        if visit.opened is None:
+            continue
+        for event in visit.opened.events:
+            if not event.when:
+                continue
+            entries.append(
+                Entry(
+                    when=event.when,
+                    kind=event.kind,
+                    what=event.what,
+                    source=visit.piece.name,
+                    note=_note_for(event.kind, event.when, now),
+                )
+            )
+    return entries
+
+
+def from_files(
+    files: Iterable[tuple[str, bytes]],
     flagset: FlagSet | None = None,
     budget: Budget | None = None,
-    recursive: bool = True,
     since: str = "",
     until: str = "",
-    max_files: int = 500,
-    filesystem: bool = True,
+    root: str = "",
+    mtimes: dict[str, float] | None = None,
 ) -> TimelineReport:
-    """Collect every timestamp under `root` (a file or a folder) and sort them."""
-    budget = budget or Budget(max_attempts=200_000, max_seconds=60)
-    report = TimelineReport(root=str(root))
-    if not root.exists():
-        report.notes.append(f"{root} does not exist")
-        return report
+    """The timeline of files given as (name, bytes) pairs.
 
-    paths = [root] if root.is_file() else list_files(root, recursive, max_files)
-    report.files = len(paths)
+    `files` may be a list or a generator: `build` hands a generator so that a
+    folder of large dumps is read one file at a time, never all at once.
+
+    `mtimes` optionally gives each name's filesystem modification time (a Unix
+    timestamp): `build` passes the real ones, the web page passes none.
+    """
+    budget = budget or Budget(max_attempts=200_000, max_seconds=60)
+    report = TimelineReport(root=root)
     now = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S UTC")
     entries: list[Entry] = []
 
-    for path in paths:
+    for name, data in files:
+        report.files += 1
         if budget.stopped_reason or budget.elapsed() >= budget.max_seconds:
             report.notes.append(
                 f"budget spent after {len(entries)} date(s): raise --seconds for the rest"
             )
             break
-        try:
-            data = path.read_bytes()
-        except OSError as exc:
-            report.notes.append(f"{path}: {exc}")
-            continue
-
-        if filesystem:
+        if mtimes and name in mtimes:
             # The file's own mtime. It is the weakest evidence on the table -
             # copying a folder rewrites it - but its absence is confusing.
-            when = timestamps.from_unix(path.stat().st_mtime)
+            when = timestamps.from_unix(mtimes[name])
             if when:
+                short = Path(name).name
                 entries.append(
-                    Entry(when, "filesystem mtime", path.name, str(path), _note_for("", when, now))
+                    Entry(when, "filesystem mtime", short, name, _note_for("", when, now))
                 )
-
         walk_budget = Budget(
             max_attempts=20_000,
             max_seconds=max(0.5, min(5.0, budget.max_seconds - budget.elapsed())),
             cancel_event=budget.cancel_event,
         )
-        for visit in walk(
-            data,
-            str(path),
-            flagset=flagset,
-            budget=walk_budget,
-            decode=False,  # a decoding chain has nothing to say about time
-            notes=report.notes,
-        ):
-            if visit.opened is None:
-                continue
-            for event in visit.opened.events:
-                if not event.when:
-                    continue
-                entries.append(
-                    Entry(
-                        when=event.when,
-                        kind=event.kind,
-                        what=event.what,
-                        source=visit.piece.name,
-                        note=_note_for(event.kind, event.when, now),
-                    )
-                )
+        entries += events_of(data, name, now, flagset, walk_budget, report.notes)
         budget.spend(walk_budget.attempts)
 
     if since:
@@ -185,4 +199,43 @@ def build(
         kinds = len({entry.kind for entry in entries})
         report.notes.append(f"{len(entries)} date(s) from {kinds} kind(s) of record")
     report.budget = budget.summary()
+    return report
+
+
+def build(
+    root: Path,
+    flagset: FlagSet | None = None,
+    budget: Budget | None = None,
+    recursive: bool = True,
+    since: str = "",
+    until: str = "",
+    max_files: int = 500,
+    filesystem: bool = True,
+) -> TimelineReport:
+    """Collect every timestamp under `root` (a file or a folder) and sort them."""
+    if not root.exists():
+        report = TimelineReport(root=str(root))
+        report.notes.append(f"{root} does not exist")
+        return report
+
+    paths = [root] if root.is_file() else list_files(root, recursive, max_files)
+    unreadable: list[str] = []
+    mtimes: dict[str, float] = {}
+
+    def read_one_by_one() -> Iterator[tuple[str, bytes]]:
+        for path in paths:
+            try:
+                data = path.read_bytes()
+            except OSError as exc:
+                unreadable.append(f"{path}: {exc}")
+                continue
+            if filesystem:
+                mtimes[str(path)] = path.stat().st_mtime
+            yield str(path), data
+
+    report = from_files(
+        read_one_by_one(), flagset, budget, since=since, until=until, root=str(root), mtimes=mtimes
+    )
+    report.files = len(paths)
+    report.notes[:0] = unreadable
     return report

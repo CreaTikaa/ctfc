@@ -83,6 +83,7 @@
         <button class="tab" data-tab="sig" data-t="web_tab_sig">Signatures</button>
         <button class="tab" data-tab="lens" data-t="web_tab_lens">Code Lens</button>
         <button class="tab" data-tab="file" data-t="web_tab_file">Files</button>
+        <button class="tab" data-tab="timeline" data-t="web_tab_timeline">Timeline</button>
         <button class="tab" data-tab="classical" data-t="web_tab_classical">Classical</button>
         <button class="tab" data-tab="crc" data-t="web_tab_crc">CRC32</button>
         <button class="tab" data-tab="hash" data-t="web_tab_hash">Hash</button>
@@ -282,6 +283,15 @@
             <option value="" data-t="web_file_reader_auto">detect it</option>
           </select></label>
         <span class="dim wide" data-t="web_file_help"></span>
+      </div>
+      <!-- Options of the Timeline tab: the file itself goes in the input box -->
+      <div id="options-timeline" class="options hidden">
+        <label><span data-t="web_timeline_since">from (YYYY-MM-DD, empty = no limit)</span>
+          <input id="timeline-since" type="text" spellcheck="false" placeholder="2024-01-31"></label>
+        <label><span data-t="web_timeline_until">until (that day included)</span>
+          <input id="timeline-until" type="text" spellcheck="false" placeholder="2024-02-01"></label>
+        <label><span data-t="web_sym_seconds">time budget (s)</span>
+          <input id="timeline-seconds" type="number" value="20" min="1" max="300"></label>
       </div>
       <!-- Options of the Classical tab -->
       <div id="options-classical" class="options hidden">

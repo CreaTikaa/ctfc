@@ -860,6 +860,37 @@ def _time(data: bytes, flagset: FlagSet | None) -> dict:
     return {"sections": sections, "flags": [], "notes": notes, "commands": []}
 
 
+def timeline(report) -> dict:
+    """`ctfc timeline` in the same display shape, so the Files renderer draws it.
+
+    It is not a reader (it runs *every* reader, through `solve.walk`), which is
+    why it is not in the registry below: the browser reaches it from its own
+    Timeline tab, as a background job, because walking a file takes time.
+    """
+    sections = [
+        facts(
+            "timeline",
+            [("span", report.span), ("dates", len(report.entries)), ("files", report.files)],
+        ),
+        table(
+            "every date, oldest first",
+            ["when (UTC)", "what happened", "to what", "from", "note"],
+            [[e.when, e.kind, e.what, e.source, e.note] for e in report.entries],
+        ),
+    ]
+    return {
+        "sections": sections,
+        "flags": [],
+        "notes": report.notes,
+        "commands": ["ctfc timeline <file or folder>   # a whole folder, with each file's mtime"],
+        "reader": "timeline",
+        "label": "every date the file carries",
+        "command": "ctfc timeline",
+        "sniffed": True,
+        "budget": report.budget,
+    }
+
+
 # ---------------------------------------------------------------------------
 # The registry
 # ---------------------------------------------------------------------------

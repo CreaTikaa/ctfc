@@ -453,6 +453,15 @@ EN: dict[str, str] = {
         "forces one - `repair` and `time` are only reachable that way, because a broken "
         "file and eight raw bytes look like nothing in particular."
     ),
+    "web_tab_timeline": "Timeline",
+    "web_timeline_help": (
+        "drop a file on the left: every date it carries - a shortcut's three times, a "
+        "prefetch run, an event log record, a ZIP or cabinet member, a PE build stamp, a "
+        "mail's Date - and every date inside the pieces it holds, in one table in UTC. A "
+        "date in the future is kept and flagged. For a whole folder: ctfc timeline <folder>."
+    ),
+    "web_timeline_since": "from (YYYY-MM-DD, empty = no limit)",
+    "web_timeline_until": "until (YYYY-MM-DD, that day included)",
     "web_crc_length": "length in bytes (a ZIP's listing has it; empty = try every length)",
     "web_crc_pattern": "pattern, ? for the unknown characters (e.g. CYBN{????})",
     "web_crc_solve": (
