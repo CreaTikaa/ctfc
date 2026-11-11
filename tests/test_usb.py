@@ -16,6 +16,11 @@ def report(code: int, shift: bool = False) -> bytes:
     return bytes([0x02 if shift else 0, 0, code, 0, 0, 0, 0, 0])
 
 
+# "All keys released": a real keyboard sends this between two presses of the
+# same key, and the decoder needs it to tell "ll" from one held "l".
+RELEASE = bytes(8)
+
+
 def test_letters_and_shift():
     # 0x04 = a, 0x05 = b
     text, _ = usb.decode_reports([report(0x04), report(0x05, shift=True)])
@@ -23,7 +28,11 @@ def test_letters_and_shift():
 
 
 def test_digits_and_their_shifted_symbols():
-    text, _ = usb.decode_reports([report(0x1E), report(0x1E, shift=True), report(0x27)])
+    # "1" then shift+"1" needs a release between: the key is physically let go
+    # and pressed again (a real capture has this; a held key does not retype).
+    text, _ = usb.decode_reports(
+        [report(0x1E), RELEASE, report(0x1E, shift=True), report(0x27)]
+    )
     assert text == "1!0"
 
 
@@ -86,9 +95,10 @@ def test_usbpcap_header_declares_its_own_length():
 
 
 def test_usbpcap_capture_is_decoded_end_to_end():
-    frames = []
-    for code in (0x0B, 0x08, 0x0F, 0x0F, 0x12):  # h e l l o
-        frames.append((28).to_bytes(2, "little") + bytes(26) + report(code))
+    # h e l l o - the double "l" has a release between the two presses, as a
+    # real capture does (without it, one held "l" is one character).
+    reports = [report(0x0B), report(0x08), report(0x0F), RELEASE, report(0x0F), report(0x12)]
+    frames = [(28).to_bytes(2, "little") + bytes(26) + r for r in reports]
     typed = usb.extract_keystrokes(frames, usb.LINK_USBPCAP)
     assert typed and typed[0].text == "hello"
 

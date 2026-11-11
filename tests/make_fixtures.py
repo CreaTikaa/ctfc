@@ -9,7 +9,9 @@ from __future__ import annotations
 
 import base64
 import binascii
+import bz2
 import codecs
+import gzip
 import hashlib
 import hmac
 import io
@@ -3414,6 +3416,148 @@ def write_hunt_fixtures() -> None:
     write("hunt_two_stage.ps1", two_stage_dropper())
 
 
+# ---------------------------------------------------------------------------
+# Lot J: readers found missing by the 2026-11-12 public-challenge audit
+# ---------------------------------------------------------------------------
+
+
+def groups_xml(cpassword: str, user: str = "Backup") -> bytes:
+    """A Group Policy Preferences Groups.xml with one cpassword (MS-GPPREF)."""
+    return (
+        '<?xml version="1.0" encoding="utf-8"?>\n'
+        '<Groups clsid="{3125E937-EB16-4b4c-9934-544FC6D24D26}">'
+        f'<User clsid="{{DF5F1855-51E5-4d24-8B1A-D9BDE98BA1D1}}" name="{user}">'
+        f'<Properties action="U" newName="" fullName="" description="" '
+        f'cpassword="{cpassword}" changeLogon="0" noChange="1" userName="{user}"/>'
+        "</User></Groups>"
+    ).encode()
+
+
+def gpp_cpassword(plaintext: str) -> str:
+    """Encrypt a password the way GPP does, so the fixture needs no network."""
+    import base64 as _b64
+
+    from Crypto.Cipher import AES as _AES
+    from Crypto.Util.Padding import pad as _pad
+
+    key = bytes.fromhex("4e9906e8fcb66cc9faf49310620ffee8f496e806cc057990209b09a433b66c1b")
+    blob = _AES.new(key, _AES.MODE_CBC, bytes(16)).encrypt(_pad(plaintext.encode("utf-16-le"), 16))
+    return _b64.b64encode(blob).decode().rstrip("=")
+
+
+def fiveview_capture(frames: list[bytes]) -> bytes:
+    """Wrap Ethernet frames in an InfoVista 5View container (wiretap/5views.c)."""
+    info = struct.pack("<4sIIII", b"\xaa\xaa\xaa\xaa", 32, 1, 8, 0x18001000) + bytes(12)
+    attributes = struct.pack("<II", 0x5F55EB35, len(frames))  # creation time, count
+    records = b""
+    for frame in frames:
+        header = struct.pack("<IHHIII", 0x3333EEEE, 36, 0, 0x80000000, 0x42, len(frame))
+        header += struct.pack("<IIII", 0x5F55EB35, 0, 0, 0)  # seconds, nanoseconds, info, pad
+        assert len(header) == 36, len(header)
+        records += header + frame
+    return info + attributes + records
+
+
+def dns_literal_query(name: str) -> bytes:
+    """A DNS query whose name is written as plain dotted text (a forged packet).
+
+    scapy with a bare string produces "remote.<blob>.example.com" after the one
+    real first-label length byte, which no DNS parser reads back.
+    """
+    first, rest = name.split(".", 1)
+    body = bytes([len(first)]) + first.encode() + b"." + rest.encode() + b"\x00"
+    return struct.pack(">HHHHHH", 0x1234, 0x0100, 1, 0, 0, 0) + body + b"\x00\x01\x00\x01"
+
+
+def usb_typed_frames(text: str) -> list[bytes]:
+    """Type `text` the way a real keyboard does: hold the keys, then release.
+
+    A key already held is NOT retyped - the opposite of one-report-per-key - so
+    this exercises the "new press" detection. "ll" needs a release between the
+    two presses, "Ab" needs shift held only for A.
+    """
+    frames = []
+    held = 0, 0  # (modifier byte, keycode)
+    for char in text:
+        code, shift = USB_KEYCODES[char]
+        modifier = 0x02 if shift else 0
+        if (modifier, code) == held:  # same key again: release first
+            frames.append(usbmon_frame(bytes(8)))
+        frames.append(usbmon_frame(bytes([modifier, 0, code, 0, 0, 0, 0, 0])))
+        held = (modifier, code)
+    frames.append(usbmon_frame(bytes(8)))
+    return frames
+
+
+def usbmon_pcap(frames: list[bytes]) -> bytes:
+    """A classic-pcap file of usbmon-mmapped frames (link type 220)."""
+    header = struct.pack("<IHHiIII", 0xA1B2C3D4, 2, 4, 0, 0, 262144, 220)
+    records = b"".join(pcap_packet(frame, 0) for frame in frames)
+    return header + records
+
+
+def _write_zipcrypto_wordlist() -> None:
+    """A real ZipCrypto zip (password 'dragon'), via Info-ZIP if it is installed."""
+    import shutil
+    import subprocess
+    import tempfile
+
+    if shutil.which("zip") is None:
+        print("  zipcrypto_wordlist.zip SKIPPED (Info-ZIP `zip` not installed)")
+        return
+    with tempfile.TemporaryDirectory() as folder:
+        flag = Path(folder) / "flag.txt"
+        flag.write_bytes(b"CYBN{zip_wordlist_crack}")
+        archive = Path(folder) / "out.zip"
+        subprocess.run(
+            ["zip", "-P", "dragon", "-j", str(archive), str(flag)],
+            check=True,
+            capture_output=True,
+        )
+        write("zipcrypto_wordlist.zip", archive.read_bytes())
+
+
+def write_lotj_fixtures() -> None:
+    print("lot J readers:")
+    write("gpp_groups.xml", groups_xml(gpp_cpassword("CYBN{gpp_pub1ished_k3y}")))
+    # A ZipCrypto archive whose password is in the tiny word list below. Built
+    # with Info-ZIP `zip -P` so that Python's own zipfile reads it back - the
+    # ground-truth tool for the wordlist cracker, which uses zipfile.read.
+    _write_zipcrypto_wordlist()
+    write(
+        "gpp_groups.zip", small_zip("Groups.xml", groups_xml(gpp_cpassword("CYBN{gpp_in_a_zip}")))
+    )
+    # A .tar.gz: gzip outside, a tar with the flag inside.
+    import io as _io
+    import tarfile as _tar
+
+    buffer = _io.BytesIO()
+    with _tar.open(fileobj=buffer, mode="w") as archive:
+        payload = b"CYBN{flag_in_a_tar_gz}\n"
+        info = _tar.TarInfo("secret/flag.txt")
+        info.size = len(payload)
+        archive.addfile(info, _io.BytesIO(payload))
+    write("compressed_flag.tar.gz", gzip.compress(buffer.getvalue()))
+    write("compressed_flag.bz2", bz2.compress(b"the flag is CYBN{bzip2_stream}\n"))
+    # A 5View capture carrying an HTTP response with the flag.
+    body = b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\nCYBN{fiveview_capture}\n"
+    request = b"GET /f HTTP/1.1\r\nHost: x\r\n\r\n"
+    frames = [
+        ethernet_ipv4("10.0.0.2", "10.0.0.1", 6, tcp_segment(5000, 80, 1, request)),
+        ethernet_ipv4("10.0.0.1", "10.0.0.2", 6, tcp_segment(80, 5000, 1, body)),
+    ]
+    write("fiveview_http.pcap", fiveview_capture(frames))
+    # A DNS exfiltration written as one literal-text query (base64 of the flag).
+    payload = base64.b64encode(b"CYBN{literal_dns_name}").decode().rstrip("=")
+    query = dns_literal_query(f"remote.{payload}.reallylegit.invalid")
+    datagram = udp_datagram(40000, 53, query)
+    one = ethernet_ipv4("10.0.0.2", "10.0.0.1", 17, datagram)
+    header = struct.pack("<IHHiIII", 0xA1B2C3D4, 2, 4, 0, 0, 65535, 1)
+    write("dns_literal.pcap", header + pcap_packet(one, 1700000000))
+    # A USB keyboard capture typed the realistic way (held keys, releases).
+    write("usb_typed.pcap", usbmon_pcap(usb_typed_frames("CYBN{ll_held_keys}")))
+
+
 def main() -> None:
     FIXTURES.mkdir(exist_ok=True)
     print(f"writing fixtures to {FIXTURES}")
@@ -3615,6 +3759,7 @@ def main() -> None:
     write_audio_fixtures()
     write_php_fixtures()
     write_hunt_fixtures()
+    write_lotj_fixtures()
 
 
 if __name__ == "__main__":

@@ -2543,3 +2543,53 @@ capture has thousands of objects, and the DNS tunnel was number 1240. The
 capture's objects are now walked by kind - keystrokes and passwords, mail,
 HTTP, DNS (the biggest stream first: a tunnel has thousands of queries, a CDN
 a handful), then raw TCP/UDP.
+
+## 44. Readers the second public audit added (lot J)
+
+The 2026-11-12 audit ran ctfc on three more CTFs (ImaginaryCTF 2024, BuckeyeCTF
+2023/24, DownUnderCTF 2020). Five things it could not read, each now a reader
+with an external ground truth.
+
+**Group Policy Preferences passwords (`core/gpp.py`).** A `cpassword="..."` in a
+`Groups.xml` pushed over a domain is AES-256-CBC with an all-zero IV and a key
+Microsoft **published** (MS-GPPREF 2.2.1.1.4) - so it is not a secret, every
+domain user can read it. `detect`, `solve` and `workspace` decrypt it directly
+(the plaintext is UTF-16LE); `solve` makes the password a piece of its own, so a
+flag inside it is found and the domain account is named. Ground truth: the
+canonical public vector, and the real DUCTF "badpolicies" flag.
+
+**gzip / bzip2 / xz streams (`compressed` reader).** A `.tar.gz` is two formats,
+and `auto`'s chains decompressed the outer gzip but a tar is mostly zeros and
+scored too low to follow - so `solve` stopped at "gzip compressed data". As a
+reader, the stream is decompressed (output capped against a bomb, partial output
+kept from a truncated stream) and its content walked like any file. Ground
+truth: the stdlib's own gzip/bz2/lzma.
+
+**InfoVista 5View captures (`.5vw`).** A third capture container, handed over as
+`.pcap` by challenge authors (DUCTF "sneaky"). The info header, its attributes,
+then length-prefixed records, each with a timestamp and an Ethernet frame. Read
+by hand from Wireshark's `wiretap/5views.c`; the 499 frames of "sneaky" are
+**identical to `editcap -F pcap`**.
+
+**DNS names written as literal text.** A query forged with scapy carries
+`remote.<blob>.example.com` as plain dotted text after the one real first-label
+length byte, which no DNS parser reads back (Wireshark: "Unknown extended
+label"). When the labels do not parse and the bytes are printable, that text is
+taken as the name; one query carrying 64+ characters is treated as exfiltration
+on its own.
+
+**USB keystrokes, the realistic way.** A keyboard report lists the keys HELD at
+that instant, not the key just pressed: "ll" arrives as [l] [l-released] [l], and
+a fast typist's "tr" as [t] [t,r] [r]. The decoder now types a character only
+for a key not in the previous report (so the empty "all released" reports are
+kept), and applies Ctrl+Backspace as a word delete. The 10950 HID reports of
+BuckeyeCTF "duck-pics" are **identical to tshark's `usbhid.data`**, and the
+exact flag comes out.
+
+**A word list on `ctfc zip`.** `ctfc zip --wordlist rockyou.txt` tries each word
+as the archive password through the stdlib `zipfile` (which verifies the check
+byte and the CRC32, so a hit is real), and prints the `unzip -P` command. It is
+the "the password is in rockyou" counterpart to the known-plaintext attack that
+`ctfc tools` prints for ZipCrypto. It recovered DUCTF "sneaky"'s
+`narutoshippudengoku`. Ground truth: an encrypted zip made by Info-ZIP `zip -P`,
+which Python's zipfile reads back.

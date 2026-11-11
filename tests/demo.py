@@ -68,6 +68,17 @@ def commands(scratch: Path) -> list[Demo]:
             why="solve: reversed stage 2",
         ),
         Demo(["solve", f("hunt_utf16.bin")], "CYBN{wid3_ch4r_fl4g}", why="solve: UTF-16 flag"),
+        Demo(["solve", f("gpp_groups.xml")], "CYBN{gpp_pub1ished_k3y}", why="solve: GPP cpassword"),
+        Demo(["solve", f("compressed_flag.tar.gz")], "CYBN{flag_in_a_tar_gz}", why="solve: tar.gz"),
+        Demo(
+            ["solve", f("fiveview_http.pcap")], "CYBN{fiveview_capture}", why="solve: 5View capture"
+        ),
+        Demo(
+            ["solve", f("dns_literal.pcap")],
+            "CYBN{literal_dns_name}",
+            why="solve: literal DNS name",
+        ),
+        Demo(["solve", f("usb_typed.pcap")], "CYBN{ll_held_keys}", why="solve: USB keystrokes"),
         Demo(["timeline", f("winartifact_dropper.lnk")], "shortcut target", why="timeline: a .lnk"),
         Demo(
             ["timeline", FIXTURES, "--no-filesystem"],

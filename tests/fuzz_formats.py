@@ -54,6 +54,7 @@ from ctfc.core import (  # noqa: E402
     embedded,
     evtx,
     executable,
+    gpp,
     hive,
     lnk,
     luks,
@@ -67,6 +68,7 @@ from ctfc.core import (  # noqa: E402
     protobuf,
     radius,
     rar,
+    readers,
     repair,
     sevenzip,
     sqlitedb,
@@ -208,6 +210,15 @@ READERS: tuple[Reader, ...] = (
     Reader("radius", radius.parse_access_request, (), ("*.pcap",)),
     Reader("repair", repair.repair, (), ("*.fun", "*.png", "*.bin", "*.zip")),
     Reader("timestamps", timestamps.from_bytes, (), ("*.bin",)),
+    # A GPP cpassword reader and a compressed-stream reader both parse untrusted
+    # bytes and must never raise (lot J).
+    Reader("gpp", gpp.find_cpasswords, (), ("*.xml", "*.txt", "*.bin")),
+    Reader(
+        "compressed",
+        lambda data: readers.decompress_stream(data),
+        (),
+        ("*.gz", "*.bz2", "*.xz", "compressed_*", "*.bin"),
+    ),
     # detect is the one that is *always* handed unknown bytes, so it is the one
     # that must never raise at all.
     Reader("detect", detect.detect, (), ("*",)),
