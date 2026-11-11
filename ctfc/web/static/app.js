@@ -156,6 +156,15 @@ function currentPayload() {
   return { input: $("input-text").value, format };
 }
 
+// The "your own wordlist" fields shared by the Symmetric, Hash and JWT tabs.
+// The path is read by the server, which runs on this machine (--wordlist).
+function wordlistOptions(tab) {
+  return {
+    wordlist: $(tab + "-wordlist").value,
+    wordlist_limit: $(tab + "-wordlist-limit").value,
+  };
+}
+
 // Options of the active tab.
 function currentOptions() {
   if (state.tab === "xor") {
@@ -181,7 +190,7 @@ function currentOptions() {
     };
   }
   if (state.tab === "hash") {
-    return { no_passwords: $("hash-no-passwords").checked };
+    return { no_passwords: $("hash-no-passwords").checked, ...wordlistOptions("hash") };
   }
   if (state.tab === "pipeline") {
     return { recipe: $("pipeline-recipe").value };
@@ -193,7 +202,7 @@ function currentOptions() {
     return { authenticator: $("radius-authenticator").value, secret: $("radius-secret").value };
   }
   if (state.tab === "jwt") {
-    return { no_secrets: $("jwt-no-secrets").checked };
+    return { no_secrets: $("jwt-no-secrets").checked, ...wordlistOptions("jwt") };
   }
   if (state.tab === "extend") {
     return {
@@ -264,6 +273,7 @@ function currentOptions() {
       mode: $("sym-mode").value,
       seconds: $("sym-seconds").value,
       passwords: $("sym-passwords").checked,
+      ...wordlistOptions("sym"),
     };
   }
   return {};
@@ -1207,6 +1217,7 @@ function renderJwt(report) {
     facts.append(row);
   }
   results.append(facts);
+  if (report.notes && report.notes.length) renderNotes(report.notes);
 
   for (const finding of report.findings) {
     const card = el("div", "card " + (finding.severity === "high" ? "good" : ""));

@@ -154,6 +154,39 @@ def _small_int(options: dict, name: str, default: int, low: int, high: int) -> i
     return max(low, min(high, value))
 
 
+def _wordlist(options: dict) -> tuple[tuple[bytes, ...] | None, str]:
+    """The `wordlist` option: a path on the machine running `ctfc serve`.
+
+    It is the web twin of `--wordlist`: the server is local, so the path is read
+    exactly as the terminal reads it (`~/Documents/rockyou.txt` works), up to
+    `wordlist_limit` unique entries. The note says how much was used, and the
+    answer carries it, because a search over 0.7% of a list must not look like a
+    search over all of it.
+
+    Safe to accept here because the server binds to 127.0.0.1 and only reads a
+    JSON body sent as application/json - a page on another site cannot send that
+    without a CORS preflight this server never answers. The words themselves are
+    never sent back; only a password that *worked* is.
+    """
+    raw = str(options.get("wordlist") or "").strip()
+    if not raw:
+        return None, ""
+    from ctfc.core.datafiles import load_wordlist
+
+    limit = _small_int(options, "wordlist_limit", 100_000, 1, 5_000_000)
+    try:
+        words, note = load_wordlist(Path(raw).expanduser(), limit)
+    except (OSError, ValueError, RuntimeError) as exc:
+        # OSError: missing, a folder, no permission. ValueError: a NUL byte.
+        # RuntimeError: "~someone" for a user this machine does not have.
+        reason = getattr(exc, "strerror", None) or exc
+        raise InputError(
+            f"cannot read the wordlist {raw[:200]!r}: {reason}. The path is read "
+            "on the machine running `ctfc serve`, e.g. ~/Documents/rockyou.txt"
+        ) from exc
+    return words, note
+
+
 def candidate_from_dict(raw: dict) -> Candidate:
     """Back from the JSON a tool returned to a Candidate (to record it in a session)."""
     return Candidate(
@@ -472,6 +505,7 @@ def create_app(config: Config | None = None) -> Flask:
                 cipher = str(options.get("cipher") or "").strip() or None
                 mode = str(options.get("mode") or "").strip() or None
                 try_passwords = bool(options.get("passwords"))
+            words, words_note = _wordlist(options) if kind == "sym" else (None, "")
             seconds = _seconds(options, 30, cap=120)
             budget = Budget(max_attempts=1_000_000, max_seconds=seconds)
 
@@ -486,10 +520,14 @@ def create_app(config: Config | None = None) -> Flask:
                     blob=blob_bytes,
                     passphrase=passphrase,
                     try_passwords=try_passwords,
+                    passwords=words,
                     budget=budget,
                     top_n=config.top_n,
                 )
-                return {"input": input_summary(inp), **report.to_dict()}
+                answer = {"input": input_summary(inp), **report.to_dict()}
+                if words_note:
+                    answer["notes"] = [words_note, *answer["notes"]]
+                return answer
 
             return work_sym, budget
 
@@ -618,8 +656,14 @@ def create_app(config: Config | None = None) -> Flask:
         if not value:
             raise InputError(t("web_empty_input"))
         options = options_of(payload)
-        report = identify_hash(value, try_passwords=not options.get("no_passwords"))
-        return jsonify(report.to_dict())
+        words, words_note = _wordlist(options)
+        report = identify_hash(
+            value, try_passwords=not options.get("no_passwords"), passwords=words
+        )
+        answer = report.to_dict()
+        if words_note:
+            answer["notes"] = [words_note, *answer["notes"]]
+        return jsonify(answer)
 
     @app.get("/api/file/readers")
     def api_file_readers():
@@ -696,10 +740,15 @@ def create_app(config: Config | None = None) -> Flask:
         if not token:
             raise InputError(t("web_empty_input"))
         options = options_of(payload)
+        words, words_note = _wordlist(options)
         report = jwt_module.analyse(
-            token, flagset=flagset, try_secrets=not options.get("no_secrets")
+            token,
+            flagset=flagset,
+            secrets=list(words) if words else None,
+            try_secrets=not options.get("no_secrets"),
         )
         answer = report.to_dict()
+        answer["notes"] = [words_note] if words_note else []
         record(payload, "jwt", None, answer)
         return jsonify(answer)
 

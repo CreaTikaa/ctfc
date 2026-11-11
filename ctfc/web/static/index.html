@@ -163,6 +163,10 @@
           <input id="sym-seconds" type="number" min="1" max="120" value="30"></label>
         <label class="checkbox"><input id="sym-passwords" type="checkbox">
           <span data-t="web_sym_passwords">try the embedded password list</span></label>
+        <label class="wide"><span data-t="web_wordlist">your own wordlist: a path on the machine running ctfc serve</span>
+          <input id="sym-wordlist" type="text" spellcheck="false" placeholder="~/Documents/rockyou.txt"></label>
+        <label><span data-t="web_wordlist_limit">how many entries to read</span>
+          <input id="sym-wordlist-limit" type="number" min="1" max="5000000" value="100000"></label>
       </div>
       <!-- Options of the RSA tab: a key file, or the raw numbers -->
       <div id="options-rsa" class="options hidden">
@@ -333,6 +337,10 @@
       <div id="options-jwt" class="options hidden">
         <label class="checkbox"><input id="jwt-no-secrets" type="checkbox">
           <span data-t="web_jwt_no_secrets">do not try the embedded password list as the HMAC secret</span></label>
+        <label class="wide"><span data-t="web_wordlist">your own wordlist: a path on the machine running ctfc serve</span>
+          <input id="jwt-wordlist" type="text" spellcheck="false" placeholder="~/Documents/rockyou.txt"></label>
+        <label><span data-t="web_wordlist_limit">how many entries to read</span>
+          <input id="jwt-wordlist-limit" type="number" min="1" max="5000000" value="100000"></label>
       </div>
       <!-- Options of the PRNG tab: the numbers go in the input box on the left -->
       <div id="options-prng" class="options hidden">
@@ -370,6 +378,10 @@
       <div id="options-hash" class="options hidden">
         <label class="checkbox"><input id="hash-no-passwords" type="checkbox">
           <span data-t="web_hash_no_passwords">do not try the embedded password list</span></label>
+        <label class="wide"><span data-t="web_wordlist">your own wordlist: a path on the machine running ctfc serve</span>
+          <input id="hash-wordlist" type="text" spellcheck="false" placeholder="~/Documents/rockyou.txt"></label>
+        <label><span data-t="web_wordlist_limit">how many entries to read</span>
+          <input id="hash-wordlist-limit" type="number" min="1" max="5000000" value="100000"></label>
       </div>
       <div class="toolbar">
         <button id="run" class="primary" data-t="web_run">Run</button>

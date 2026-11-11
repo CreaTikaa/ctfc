@@ -1,5 +1,6 @@
 """Tests for the Flask app, using Flask's test client (no real server)."""
 
+import base64
 from pathlib import Path
 
 import pytest
@@ -814,3 +815,92 @@ def test_a_time_budget_is_clamped_rather_than_trusted():
     assert _seconds({"seconds": -5}, 20) == 1
     assert _seconds({}, 20) == 20
     assert _seconds({"seconds": "45"}, 20, cap=120) == 45
+
+
+# ---------------------------------------------------------------------------
+# Your own wordlist, in the Symmetric, Hash and JWT tabs (`--wordlist`)
+# ---------------------------------------------------------------------------
+
+# Not in the embedded 10000, so only the user's list can find it.
+OWN_PASSWORD = "Zyx!tr0ub4dor-77"
+
+
+def _own_list(tmp_path) -> str:
+    words = tmp_path / "list.txt"
+    words.write_bytes(b"nope\n" + OWN_PASSWORD.encode() + b"\nlater\n")
+    return str(words)
+
+
+def test_the_hash_tab_reads_a_wordlist_from_disk(client, tmp_path):
+    import hashlib
+
+    digest = hashlib.md5(OWN_PASSWORD.encode()).hexdigest()
+    plain = client.post("/api/hash", json={"input": digest}).get_json()
+    assert not any(match["cracked"] for match in plain["matches"])
+
+    answer = client.post(
+        "/api/hash", json={"input": digest, "options": {"wordlist": _own_list(tmp_path)}}
+    ).get_json()
+    assert OWN_PASSWORD in [match["cracked"] for match in answer["matches"]]
+    assert answer["notes"][0].startswith("list.txt: 3 password(s) used")
+
+
+def test_the_jwt_tab_reads_a_wordlist_from_disk(client, tmp_path):
+    import hashlib
+    import hmac
+
+    def b64(data: bytes) -> str:
+        return base64.urlsafe_b64encode(data).rstrip(b"=").decode()
+
+    head = b64(b'{"alg":"HS256","typ":"JWT"}') + "." + b64(b'{"user":"guest"}')
+    signature = hmac.new(OWN_PASSWORD.encode(), head.encode(), hashlib.sha256).digest()
+    token = head + "." + b64(signature)
+
+    answer = client.post(
+        "/api/jwt", json={"input": token, "options": {"wordlist": _own_list(tmp_path)}}
+    ).get_json()
+    assert answer["secret"] == OWN_PASSWORD
+    assert any("password(s) used" in note for note in answer["notes"])
+    assert 'id="jwt-wordlist"' in client.get("/").get_data(as_text=True)
+
+
+def test_the_sym_tab_reads_a_wordlist_and_says_how_much(client, tmp_path):
+    import shutil
+    import subprocess
+
+    if shutil.which("openssl") is None:
+        pytest.skip("openssl is not installed")
+    vault = subprocess.run(
+        ["openssl", "enc", "-aes-256-cbc", "-pbkdf2", "-pass", f"pass:{OWN_PASSWORD}"],
+        input=b"CYBN{found_with_a_web_wordlist}\n",
+        check=True,
+        capture_output=True,
+    ).stdout
+    answer = client.post(
+        "/api/sym",
+        json={
+            "input": "b64:" + base64.b64encode(vault).decode(),
+            "options": {"wordlist": _own_list(tmp_path), "seconds": 60},
+        },
+    ).get_json()
+    assert "CYBN{found_with_a_web_wordlist}" in answer["candidates"][0]["data_text"]
+    assert answer["notes"][0].startswith("list.txt: 3 password(s) used")
+
+
+def test_a_wordlist_limit_is_stated_in_the_answer(client, tmp_path):
+    words = tmp_path / "big.txt"
+    words.write_bytes(b"\n".join(f"pw{index}".encode() for index in range(30)))
+    answer = client.post(
+        "/api/hash",
+        json={"input": "0" * 32, "options": {"wordlist": str(words), "wordlist_limit": 5}},
+    ).get_json()
+    assert "the first 5 unique of 30 line(s)" in answer["notes"][0]
+
+
+@pytest.mark.parametrize("where", ["missing.txt", ".", "~no_such_user_ctfc/list.txt", "a\x00b"])
+def test_a_wordlist_that_cannot_be_read_is_a_400(client, tmp_path, where):
+    # "~user/..." must stay as typed: expanding it is the part under test.
+    path = where if where.startswith("~") else str(tmp_path / where)
+    answer = client.post("/api/hash", json={"input": "0" * 32, "options": {"wordlist": path}})
+    assert answer.status_code == 400
+    assert "ctfc serve" in answer.get_json()["error"]

@@ -453,6 +453,8 @@ EN: dict[str, str] = {
         "forces one - `repair` and `time` are only reachable that way, because a broken "
         "file and eight raw bytes look like nothing in particular."
     ),
+    "web_wordlist": "your own wordlist: a path on the machine running ctfc serve",
+    "web_wordlist_limit": "how many entries to read (the first ones, in order)",
     "web_tab_timeline": "Timeline",
     "web_timeline_help": (
         "drop a file on the left: every date it carries - a shortcut's three times, a "
