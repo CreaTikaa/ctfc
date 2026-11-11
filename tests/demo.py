@@ -79,6 +79,8 @@ def commands(scratch: Path) -> list[Demo]:
             why="solve: literal DNS name",
         ),
         Demo(["solve", f("usb_typed.pcap")], "CYBN{ll_held_keys}", why="solve: USB keystrokes"),
+        Demo(["solve", f("wifi_open.pcap")], "CYBN{open_wifi_flag}", why="solve: open 802.11"),
+        Demo(["pcap", f("wifi_wpa.pcap")], "hashcat -m 22000", why="pcap: WPA handshake"),
         Demo(["timeline", f("winartifact_dropper.lnk")], "shortcut target", why="timeline: a .lnk"),
         Demo(
             ["timeline", FIXTURES, "--no-filesystem"],

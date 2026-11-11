@@ -2593,3 +2593,31 @@ the "the password is in rockyou" counterpart to the known-plaintext attack that
 `ctfc tools` prints for ZipCrypto. It recovered DUCTF "sneaky"'s
 `narutoshippudengoku`. Ground truth: an encrypted zip made by Info-ZIP `zip -P`,
 which Python's zipfile reads back.
+
+## 45. Wi-Fi captures (`core/wifi.py`, lot K)
+
+A third public audit (IrisCTF 2024) handed over two `.pcap` files that ctfc read
+as "0 packets": they are raw **IEEE 802.11** captures (link type 105, or 127
+with a radiotap header), not Ethernet. A whole forensics subcategory. Two things
+matter, and ctfc now does both without aircrack:
+
+**Open traffic.** An unprotected 802.11 data frame carries, after the MAC header
+and an LLC/SNAP shim (`AA AA 03 00 00 00` + ethertype), an ordinary IP packet.
+`wifi.ip_payload` strips to that, and the capture reader feeds it through the
+same IP/TCP/HTTP/DNS walk as any Ethernet capture - so an open-network capture
+is read end to end.
+
+**The WPA handshake.** A protected network cannot be decrypted without the
+passphrase, but the 4-way EAPOL handshake in the capture is what hashcat cracks.
+`wifi.analyse_wifi` finds the handshake (EAPOL frames grouped by access point and
+client), names the network (the SSID from the beacons), counts the encrypted
+data frames, and the capture reader prints the `hcxpcapngtool` +
+`hashcat -m 22000` (or `aircrack-ng`) commands. It does **not** forge the
+hc22000 hash line itself: there is no tool on this machine to validate that
+against, so it points at the one that makes it (the ground-truth rule). The SSID
+is also emitted as a searchable object, because it is sometimes the answer.
+
+Ground truth: tshark, which reads the same SSIDs and EAPOL frames from the
+fixtures. The MAC-header length is computed from the frame-control bits (the
+fourth address for WDS, the QoS control field for QoS data), the way
+Wireshark's dissector does.

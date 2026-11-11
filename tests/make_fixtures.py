@@ -3558,6 +3558,83 @@ def write_lotj_fixtures() -> None:
     write("usb_typed.pcap", usbmon_pcap(usb_typed_frames("CYBN{ll_held_keys}")))
 
 
+# ---------------------------------------------------------------------------
+# Lot K: IEEE 802.11 (Wi-Fi) captures
+# ---------------------------------------------------------------------------
+
+
+def dot11_mac_data(
+    src: bytes,
+    dst: bytes,
+    bssid: bytes,
+    payload: bytes,
+    ethertype: int = 0x0800,
+    protected: bool = False,
+    qos: bool = True,
+) -> bytes:
+    """One 802.11 data frame (QoS) with an LLC/SNAP shim and a payload."""
+    subtype = 0x08 if qos else 0x00
+    fc0 = (subtype << 4) | (2 << 2)  # type 2 = data
+    fc1 = 0x40 if protected else 0x00
+    header = bytes([fc0, fc1]) + b"\x00\x00" + dst + src + bssid + b"\x00\x00"
+    if qos:
+        header += b"\x00\x00"
+    if protected:
+        return header + payload  # the body is ciphertext; no SNAP visible
+    snap = b"\xaa\xaa\x03\x00\x00\x00" + struct.pack(">H", ethertype)
+    return header + snap + payload
+
+
+def dot11_beacon(bssid: bytes, ssid: str) -> bytes:
+    """A beacon frame advertising `ssid` (SSID is tagged parameter 0)."""
+    fc = bytes([0x80, 0x00])  # mgmt, subtype 8 (beacon)
+    header = fc + b"\x00\x00" + b"\xff\xff\xff\xff\xff\xff" + bssid + bssid + b"\x00\x00"
+    fixed = bytes(8) + struct.pack("<H", 100) + struct.pack("<H", 0x0401)  # ts, interval, caps
+    ssid_bytes = ssid.encode()
+    tag_ssid = bytes([0, len(ssid_bytes)]) + ssid_bytes
+    return header + fixed + tag_ssid
+
+
+def dot11_eapol(src: bytes, dst: bytes, bssid: bytes, message: int) -> bytes:
+    """An EAPOL key frame (one message of the WPA 4-way handshake)."""
+    # EAPOL: version(1)=2, type(1)=3 (key), length(2), then the key descriptor.
+    key_info = {1: 0x008A, 2: 0x010A, 3: 0x13CA, 4: 0x030A}[message]
+    body = struct.pack(">BBH", 2, 3, 95) + bytes([2]) + struct.pack(">H", key_info) + bytes(92)
+    return dot11_mac_data(src, dst, bssid, body, ethertype=0x888E)
+
+
+def _pcap_linktype(frames: list[bytes], link_type: int) -> bytes:
+    header = struct.pack("<IHHiIII", 0xA1B2C3D4, 2, 4, 0, 0, 65535, link_type)
+    return header + b"".join(pcap_packet(frame, 1700000000) for frame in frames)
+
+
+def ip_udp_packet(payload: bytes, sport: int = 4444, dport: int = 80) -> bytes:
+    """A minimal IPv4/UDP packet carrying `payload` (no checksums)."""
+    udp = struct.pack(">HHHH", sport, dport, 8 + len(payload), 0) + payload
+    total = 20 + len(udp)
+    iph = struct.pack(">BBHHHBBH", 0x45, 0, total, 0, 0, 64, 17, 0)
+    iph += bytes([10, 0, 0, 2]) + bytes([10, 0, 0, 1])
+    return iph + udp
+
+
+def write_wifi_fixtures() -> None:
+    print("wifi (802.11):")
+    ap = bytes.fromhex("a028edc3cc01")
+    client = bytes.fromhex("c24e9d0579e5")
+    # 1. An OPEN network: a data frame carries an IP/UDP payload with the flag.
+    frame = dot11_mac_data(client, ap, ap, ip_udp_packet(b"the flag is CYBN{open_wifi_flag}"))
+    beacon = dot11_beacon(ap, "CYBNet")
+    write("wifi_open.pcap", _pcap_linktype([beacon, frame], 105))
+    # 2. A WPA network: a beacon, the 4-way handshake, and encrypted data frames.
+    frames = [dot11_beacon(ap, "SecureNet")]
+    for message in (1, 2, 3, 4):
+        src, dst = (ap, client) if message % 2 else (client, ap)
+        frames.append(dot11_eapol(src, dst, ap, message))
+    for _ in range(5):
+        frames.append(dot11_mac_data(client, ap, ap, RNG.randbytes(80), protected=True))
+    write("wifi_wpa.pcap", _pcap_linktype(frames, 105))
+
+
 def main() -> None:
     FIXTURES.mkdir(exist_ok=True)
     print(f"writing fixtures to {FIXTURES}")
@@ -3760,6 +3837,7 @@ def main() -> None:
     write_php_fixtures()
     write_hunt_fixtures()
     write_lotj_fixtures()
+    write_wifi_fixtures()
 
 
 if __name__ == "__main__":

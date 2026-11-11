@@ -75,6 +75,7 @@ from ctfc.core import (  # noqa: E402
     stego,
     tarfmt,
     timestamps,
+    wifi,
     winartifact,
     zipinfo,
 )
@@ -130,6 +131,12 @@ class Reader:
 def _tiny_budget() -> Budget:
     """Searches inside a reader get a short leash: we are testing parsing."""
     return Budget(max_attempts=20_000, max_seconds=2)
+
+
+def _fuzz_wifi(data: bytes):
+    """Feed a mutated Wi-Fi capture through the 802.11 parser."""
+    frames, link_type, _ = pcap.read_packets(data)
+    return wifi.analyse_wifi(frames, link_type)
 
 
 READERS: tuple[Reader, ...] = (
@@ -205,6 +212,7 @@ READERS: tuple[Reader, ...] = (
     Reader("protobuf", protobuf.parse, (protobuf.ProtobufError,), ("*.pb",)),
     Reader("protobuf_text", protobuf.decode_to_text, (protobuf.ProtobufError,), ("*.pb",)),
     Reader("pcap", pcap.analyse, (pcap.PcapError,), ("*.pcap", "*.pcapng")),
+    Reader("wifi", _fuzz_wifi, (pcap.PcapError,), ("wifi_*.pcap",)),
     Reader("mail", mail.extract, (), ("audit_mail_imap.pcap", "*.txt")),
     Reader("luks", luks.parse_header, (), ("*.raw", "audit_luks_mem.raw")),
     Reader("radius", radius.parse_access_request, (), ("*.pcap",)),
