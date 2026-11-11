@@ -115,6 +115,10 @@ SOUP_CHARS = set("&$#%+=:,'@ ")
 # prefix does not say "flag" or "ctf", is as likely to be chance as a flag.
 SHORT_BODY = 12
 FLAGGY_PREFIX_RE = re.compile(r"flag|ctf", re.IGNORECASE)
+# Characters a flag body uses where a word would use a vowel: the vowels
+# themselves, and the leet digits that stand in for them (0=o, 1=i, 3=e, 4=a).
+# A body with almost none of these is consonant soup from a decode, not words.
+VOWELISH = set("aeiouAEIOU0134")
 
 
 def _strong_body(flag: str) -> bool:
@@ -141,12 +145,23 @@ def _chance_body(flag: str) -> bool:
     The configured prefix (CYBN) never goes through this check.
     """
     prefix, body = flag[: flag.index("{")], flag[flag.index("{") + 1 : -1]
-    if "_" in body:
-        return False
     if any(ch in SOUP_CHARS for ch in body):
         return True
     if FLAGGY_PREFIX_RE.search(prefix):
-        return False
+        return False  # the prefix says "flag"/"ctf": trust it
+    hexdigits = set("0123456789abcdefABCDEF")
+    if len(body) >= 8 and all(ch in hexdigits for ch in body):
+        return False  # a hash is a real flag body
+    # Real flag bodies read like (leet) words, so they carry vowels. A decode
+    # artifact ("CmvGTKDTDvh2g", "PYXSTSSSRSQP", "vcxs_") is consonant soup.
+    alnum = [ch for ch in body if ch.isalnum()]
+    vowelish = sum(ch in VOWELISH for ch in alnum)
+    if len(alnum) >= 3 and vowelish == 0:
+        return True
+    if len(alnum) >= 6 and vowelish <= len(alnum) // 5:
+        return True
+    if "_" in body:
+        return False  # an underscored, vowel-bearing body is a real multi-word flag
     return len(body) < SHORT_BODY
 
 

@@ -172,6 +172,25 @@ def test_realm_prefixed_duplicate_is_deduped_by_solve():
     assert "LOCALflag{w1n_th3_w3st}" not in texts
 
 
+def test_consonant_soup_decode_is_not_a_flag():
+    # Brute-forcing binary (XOR a PDF stream, a two-symbol covert channel) lands
+    # xx{...} shapes with vowel-free bodies. They are leads, not flags.
+    for junk in [
+        "CL{CmvGTKDTDvh2g}",
+        "SSSQSRRSRQRRQQP{PYXSTSSSRSQP}",
+        "YE{vcxs_}",
+        "JY{GYzGYzEXxFZzGZ}",
+    ]:
+        hits = plain_hits(junk, default_flagset())
+        assert hits and all(s <= WEAK_GENERIC_STRENGTH for _f, s, _p in hits), junk
+
+
+def test_real_flags_with_vowels_stay_strong():
+    for flag in ["CTF{javai_java_with_100x_ai}", "BCCTF{ThisIsANeedle}", "HTB{w1ll_y0u_St4nd}"]:
+        hits = plain_hits(flag, default_flagset())
+        assert any(f == flag and s > WEAK_GENERIC_STRENGTH for f, s, _p in hits), flag
+
+
 def test_configured_prefix_is_never_weakened():
     hits = plain_hits("\x9a\xe1\xff\x93CYBN{ab}\xfa\x81\xee\x99", default_flagset())
     assert any(found == "CYBN{ab}" and strength > 0.8 for found, strength, _p in hits)
