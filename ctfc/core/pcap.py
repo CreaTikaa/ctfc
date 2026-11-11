@@ -152,6 +152,9 @@ def read_packets(data: bytes) -> tuple[list[bytes], int, str]:
         return _read_pcapng(data)
     if magic == FIVEVIEWS_MAGIC:
         return _read_5views(data)
+    recovered = _recover_pcap(data)
+    if recovered is not None:
+        return recovered
     raise PcapError(
         f"unknown magic {magic.hex()}: not a pcap or pcapng file "
         "(a .pcap from tcpdump/Wireshark starts with d4c3b2a1 or 0a0d0d0a)"
@@ -175,6 +178,90 @@ def _read_pcap(data: bytes, endian: str, _resolution: int) -> tuple[list[bytes],
         frames.append(data[offset : offset + captured])
         offset += captured
     return frames, link_type, "pcap"
+
+
+# Known DLTs, so a header with a smashed magic can still be recognised by its
+# link type (https://www.tcpdump.org/linktypes.html) rather than guessed.
+KNOWN_LINKTYPES = frozenset(
+    {0, 1, 101, 105, 113, 127, 189, 220, 228, 229, 249, 276, 12, 14, 163, 192}
+)
+MAX_SANE_SNAPLEN = 1 << 24  # 16 MiB: a real snaplen is never larger
+
+
+def looks_like_recoverable_pcap(data: bytes) -> bool:
+    """Cheap check: a classic pcap header whose magic was overwritten.
+
+    Header fields only (major version, snaplen, link type) in either byte order
+    - no record walk, so it is safe to call on every file during sniffing.
+    """
+    if len(data) < 24 or data[:4] in PCAP_MAGICS or data[:4] == FIVEVIEWS_MAGIC:
+        return False
+    for endian in ("<", ">"):
+        major = struct.unpack(endian + "H", data[4:6])[0]
+        snaplen = struct.unpack(endian + "I", data[16:20])[0]
+        link_type = struct.unpack(endian + "I", data[20:24])[0]
+        if major == 2 and 0 < snaplen <= MAX_SANE_SNAPLEN and link_type in KNOWN_LINKTYPES:
+            return True
+    return False
+
+
+def _recover_pcap(data: bytes):
+    """Parse a classic pcap whose MAGIC was overwritten (a corruption challenge).
+
+    The magic is gone, but a real pcap global header still has a plausible
+    version (major 2), a sane snaplen and a known link type at their fixed
+    offsets. When those hold in either byte order, the file is a pcap with a
+    smashed magic. Per-record, a captured length that is impossible (larger than
+    the snaplen or than what is left) is replaced by the original length field
+    next to it - which is what these challenges leave intact. Returns
+    (frames, link_type, "pcap (header recovered)") or None.
+    """
+    if len(data) < 24:
+        return None
+    for endian in ("<", ">"):
+        major = struct.unpack(endian + "H", data[4:6])[0]
+        snaplen = struct.unpack(endian + "I", data[16:20])[0]
+        link_type = struct.unpack(endian + "I", data[20:24])[0]
+        if major != 2 or not 0 < snaplen <= MAX_SANE_SNAPLEN:
+            continue
+        if link_type not in KNOWN_LINKTYPES:
+            continue
+        # Two things can be smashed: the captured-length field of each record
+        # (a common challenge), or nothing beyond the magic. Walk the records
+        # both ways - trusting the captured length, and trusting the original
+        # length - and keep whichever reaches the end of the file cleanly. A
+        # desynced walk stops early and leaves a big tail.
+        best, best_leftover = None, len(data)
+        for use_original in (False, True):
+            frames, leftover = _walk_records(data, endian, snaplen, use_original)
+            if len(frames) >= 2 and leftover < best_leftover:
+                best, best_leftover = frames, leftover
+        if best is not None:
+            return best, link_type, "pcap (header recovered)"
+    return None
+
+
+def _walk_records(
+    data: bytes, endian: str, snaplen: int, use_original: bool
+) -> tuple[list[bytes], int]:
+    """Walk pcap records one way; return (frames, bytes left unparsed at the end).
+
+    `use_original` reads each record's data by its original-length field instead
+    of its captured-length field - the field these corruption challenges leave
+    intact when they smash the captured length.
+    """
+    frames: list[bytes] = []
+    offset = 24
+    while offset + 16 <= len(data):
+        captured = struct.unpack(endian + "I", data[offset + 8 : offset + 12])[0]
+        original = struct.unpack(endian + "I", data[offset + 12 : offset + 16])[0]
+        length = original if use_original else captured
+        if not 0 < length <= snaplen or offset + 16 + length > len(data):
+            break  # the chosen length is unusable here: stop with what we have
+        offset += 16
+        frames.append(data[offset : offset + length])
+        offset += length
+    return frames, len(data) - offset
 
 
 def _read_pcapng(data: bytes) -> tuple[list[bytes], int, str]:

@@ -965,6 +965,7 @@ READERS: tuple[Reader, ...] = (
             data[:4] in (b"\xd4\xc3\xb2\xa1", b"\xa1\xb2\xc3\xd4", b"\x0a\x0d\x0d\x0a")
             or data[:4] == b"\x4d\x3c\xb2\xa1"
             or data[:4] == b"\xaa\xaa\xaa\xaa"  # InfoVista 5View
+            or pcap.looks_like_recoverable_pcap(data)  # magic smashed, but recoverable
         ),
         _open_pcap,
     ),
