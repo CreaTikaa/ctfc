@@ -824,6 +824,17 @@ def _pcap(data: bytes, flagset: FlagSet | None) -> dict:
     return {"sections": sections, "flags": flags, "notes": report.notes, "commands": []}
 
 
+def _compressed(data: bytes, flagset: FlagSet | None) -> dict:
+    opened = core_readers.open_with("compressed", data, flagset, "stream")
+    rows = [[child.name, len(child.data), _preview(child.data)] for child in opened.children]
+    sections = [
+        facts("compressed stream", [("what", opened.detail)]),
+        table("decompressed content", ["name", "size", "preview"], rows),
+    ]
+    flags = [hit.text for child in opened.children for hit in find_flags(child.data, flagset)]
+    return {"sections": sections, "flags": flags, "notes": opened.notes, "commands": []}
+
+
 def _repair(data: bytes, flagset: FlagSet | None) -> dict:
     report = repair.repair(data)
     sections = [
@@ -991,6 +1002,7 @@ ADAPTERS: dict[str, Callable[[bytes, FlagSet | None], dict]] = {
     "hive": _hive,
     "sqlite": _sqlite,
     "pcap": _pcap,
+    "compressed": _compressed,
     "repair": _repair,
     "zip": _zip,
 }

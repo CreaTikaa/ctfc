@@ -22,9 +22,12 @@ parse is a note, not a crash - so each one is wrapped by `open_with()`.
 
 from __future__ import annotations
 
+import bz2
 import io
+import lzma
 import re
 import zipfile
+import zlib
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC
@@ -208,6 +211,121 @@ def _open_archive(data: bytes, flagset: FlagSet | None, path: str) -> Opened:
         events=events,
         extract="ctfc archive {file} --extract {dir}",
     )
+
+
+# ---------------------------------------------------------------------------
+# A compressed stream (gzip, bzip2, xz): one file inside, nothing else
+# ---------------------------------------------------------------------------
+#
+# A .tar.gz is two formats: the gzip stream, then the tar in it. The decoding
+# chains of `auto` do decompress it, but a tar is mostly zero bytes and scores
+# too low to be followed - so `solve` stopped at "gzip compressed data". As a
+# reader, the stream is simply opened and its content walked like any file.
+
+GZIP_MAGIC = b"\x1f\x8b"
+BZIP2_MAGIC = b"BZh"
+BZIP2_BLOCK = bytes.fromhex("314159265359")  # pi: the start of the first block
+XZ_MAGIC = b"\xfd7zXZ\x00"
+
+
+def _compression_of(data: bytes) -> str:
+    """ "gzip", "bzip2", "xz" or "" - from the stream's magic bytes."""
+    if data[:2] == GZIP_MAGIC and len(data) > 18:
+        return "gzip"
+    if (
+        data[:3] == BZIP2_MAGIC
+        and data[3:4].isdigit()
+        and data[4:10] == b"\x31\x41\x59\x26\x53\x59"
+    ):
+        return "bzip2"
+    if data[:6] == XZ_MAGIC:
+        return "xz"
+    return ""
+
+
+def _gzip_name(data: bytes) -> str:
+    """The original file name a gzip header carries (FNAME, flag bit 3), or ""."""
+    if len(data) < 10 or not data[3] & 0x08:
+        return ""
+    start = 10
+    if data[3] & 0x04:  # FEXTRA comes first: two length bytes, then that much
+        start += 2 + int.from_bytes(data[10:12], "little")
+    end = data.find(b"\x00", start)
+    return data[start:end].decode("latin-1") if end > start else ""
+
+
+def decompress_stream(data: bytes, limit: int = CHILD_MAX_SIZE) -> tuple[bytes, str]:
+    """Decompress a gzip / bzip2 / xz stream, at most `limit` bytes of output.
+
+    Returns (content, note). The cap is what keeps a decompression bomb (a few
+    kB that expand to gigabytes) from filling the memory; the note says when it
+    was hit. A truncated stream gives what could be decoded, and a note.
+    """
+    kind = _compression_of(data)
+    if kind == "gzip":
+        decoder = zlib.decompressobj(wbits=31)  # 31 = expect a gzip header
+    elif kind == "bzip2":
+        decoder = bz2.BZ2Decompressor()
+    elif kind == "xz":
+        decoder = lzma.LZMADecompressor()
+    else:
+        return b"", "not a gzip, bzip2 or xz stream"
+    content = b""
+    broken = ""
+    try:
+        if kind == "gzip":
+            content = decoder.decompress(data, limit)
+            capped = bool(decoder.unconsumed_tail)
+        else:
+            content = decoder.decompress(data, max_length=limit)
+            capped = not decoder.needs_input and not decoder.eof
+    except (zlib.error, OSError, EOFError, lzma.LZMAError) as exc:
+        # A truncated or damaged stream: keep whatever was decoded before it
+        # broke (the flag is often in the first bytes), and say so.
+        content = getattr(decoder, "flush", lambda: b"")() if kind == "gzip" else content
+        capped = False
+        broken = f"; the stream is damaged and stops early ({exc})"
+    note = f"{kind} stream, {len(data)} -> {len(content)} bytes"
+    if capped:
+        note += f" (stopped at {limit} bytes: the rest was not decompressed)"
+    elif broken:
+        note += broken
+    elif not decoder.eof:
+        note += " (the stream is truncated: this is what could be decoded)"
+    if not content and broken:
+        return b"", f"the {kind} stream does not decompress{broken}"
+    return content, note
+
+
+def _open_compressed(data: bytes, flagset: FlagSet | None, path: str) -> Opened:
+    kind = _compression_of(data)
+    content, note = decompress_stream(data)
+    base = path.rsplit("/", 1)[-1]
+    name = _gzip_name(data) if kind == "gzip" else ""
+    if not name:
+        # unknown.tar.gz -> unknown.tar, notes.bz2 -> notes, x.tgz -> x.tar
+        for suffix, replacement in ((".tgz", ".tar"), (".gz", ""), (".bz2", ""), (".xz", "")):
+            if base.lower().endswith(suffix):
+                name = base[: -len(suffix)] + replacement
+                break
+        else:
+            name = f"{base or 'stream'}.out"
+    tool = {"gzip": "gzip", "bzip2": "bzip2", "xz": "xz"}.get(kind, "gzip")
+    opened = Opened(
+        detail=note,
+        children=_keep([Child(name, f"{kind} content", content)]) if content else [],
+        notes=[note],
+        extract=f"mkdir -p {{dir}} && {tool} -dc {{file}} > {{dir}}/{safe_child_name(name)}",
+    )
+    if not content:
+        opened.error = note
+    return opened
+
+
+def safe_child_name(name: str) -> str:
+    """A name that is safe to print in a shell command (no path, no spaces)."""
+    cleaned = re.sub(r"[^A-Za-z0-9._-]", "_", name.split("/")[-1])
+    return cleaned.lstrip(".") or "stream.out"
 
 
 def _open_zip(data: bytes, flagset: FlagSet | None, path: str) -> Opened:
@@ -784,11 +902,12 @@ READERS: tuple[Reader, ...] = (
     ),
     Reader(
         "pcap",
-        "capture (pcap, pcapng)",
+        "capture (pcap, pcapng, 5View)",
         "ctfc pcap",
         lambda data: (
             data[:4] in (b"\xd4\xc3\xb2\xa1", b"\xa1\xb2\xc3\xd4", b"\x0a\x0d\x0d\x0a")
             or data[:4] == b"\x4d\x3c\xb2\xa1"
+            or data[:4] == b"\xaa\xaa\xaa\xaa"  # InfoVista 5View
         ),
         _open_pcap,
     ),
@@ -799,6 +918,13 @@ READERS: tuple[Reader, ...] = (
         "ctfc repair",
         lambda data: False,
         _open_repair,
+    ),
+    Reader(
+        "compressed",
+        "compressed stream (gzip, bzip2, xz)",
+        "ctfc auto",
+        lambda data: bool(_compression_of(data)),
+        _open_compressed,
     ),
     Reader(
         "zip",
