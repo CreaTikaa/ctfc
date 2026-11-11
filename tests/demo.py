@@ -91,6 +91,17 @@ def commands(scratch: Path) -> list[Demo]:
             "CYBN{iso_9660_reader}",
             why="solve: file inside an ISO",
         ),
+        Demo(
+            ["disk", f("disk_fat12.img")],
+            "CYBN{deleted_but_recovered}",
+            why="disk: recover a deleted file (needs TSK)",
+            needs=[Path("/usr/bin/fls")],
+        ),
+        Demo(
+            ["solve", f("disk_fat12.img")],
+            "CYBN{fat12_disk_reader}",
+            why="solve: a file in a disk image",
+        ),
         Demo(["timeline", f("winartifact_dropper.lnk")], "shortcut target", why="timeline: a .lnk"),
         Demo(
             ["timeline", FIXTURES, "--no-filesystem"],

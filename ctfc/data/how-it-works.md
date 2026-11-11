@@ -2662,3 +2662,25 @@ a flag in a text file inside the image is found; a flag drawn in an image inside
 it is extracted for viewing (the usual boundary). Ground truth: 7z lists the
 same files with the same sizes. Joliet/Rock Ridge names are left to the primary
 (uppercase 8.3) tree, which is enough to get the files out.
+
+## 49. Disk images, via The Sleuth Kit (`core/disk.py`, lot L)
+
+A disk or partition image (ext2/3/4, FAT, exFAT, NTFS, HFS+, ...) is one of the
+richest forensics artefacts: the flag is a file inside a filesystem, sometimes a
+**deleted** one still on disk. Parsing ext4 extent trees or NTFS by hand is a
+project of its own and easy to get wrong, so ctfc drives **The Sleuth Kit**
+instead of reimplementing it: `mmls` lists the partitions, `fsstat` names each
+filesystem, `fls -r -p` walks every one recursively (deleted entries included),
+and `icat` reads a file's bytes by inode (`-r` recovers a deleted file whose
+blocks were not reused). TSK only ever reads the image; calls are argument lists
+(no shell), each under a timeout, and the walk is bounded by a file count, a
+per-file size cap, a total-bytes cap and a wall-clock budget, so a 50 GB image
+cannot run for an afternoon. The files a challenge hides things in - small ones,
+and anything under a home, desktop, /tmp or a path mentioning "flag" - are pulled
+out first, before the gigabytes of /usr. `solve` then searches every extracted
+file, so a flag in a text file, or inside a gzip/stego file within the image, is
+found; a deleted file carrying the flag is recovered. When TSK is absent,
+`available()` is False and ctfc falls back to searching the raw image bytes
+(which already finds a flag written in clear anywhere). ISO 9660 is left to the
+dedicated offline reader (section 48). Ground truth: TSK is itself the reference
+tool, and the FAT12 fixture's file list is checked against `fls`.

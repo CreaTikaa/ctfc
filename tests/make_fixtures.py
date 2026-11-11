@@ -3711,6 +3711,86 @@ def write_wifi_fixtures() -> None:
     write("wifi_wpa.pcap", _pcap_linktype(frames, 105))
 
 
+def _fat12_set_entry(fat: bytearray, index: int, value: int) -> None:
+    """Write one 12-bit FAT entry (little-endian nibble packing)."""
+    offset = index + index // 2  # floor(index * 1.5)
+    if index % 2 == 0:
+        fat[offset] = value & 0xFF
+        fat[offset + 1] = (fat[offset + 1] & 0xF0) | ((value >> 8) & 0x0F)
+    else:
+        fat[offset] = (fat[offset] & 0x0F) | ((value << 4) & 0xF0)
+        fat[offset + 1] = (value >> 4) & 0xFF
+
+
+def _fat12_dir_entry(name: str, ext: str, cluster: int, size: int, deleted: bool = False) -> bytes:
+    """A 32-byte FAT directory record for a file."""
+    raw = bytearray(name.ljust(8).encode()[:8] + ext.ljust(3).encode()[:3])
+    if deleted:
+        raw[0] = 0xE5  # the marker that frees the entry; the data stays recoverable
+    entry = bytearray(32)
+    entry[0:11] = raw
+    entry[0x0B] = 0x20  # archive attribute
+    entry[0x1A:0x1C] = struct.pack("<H", cluster)
+    entry[0x1C:0x20] = struct.pack("<I", size)
+    return bytes(entry)
+
+
+def fat12_image(files: list[tuple[str, str, bytes, bool]]) -> bytes:
+    """A minimal valid FAT12 filesystem holding `files` (name, ext, data, deleted).
+
+    One cluster per file (each file must fit in 512 bytes). Written by hand
+    because there is no mkfs here; The Sleuth Kit reads it back.
+    """
+    sector = 512
+    total_sectors = 128
+    boot = bytearray(sector)
+    boot[0:3] = b"\xeb\x3c\x90"
+    boot[3:11] = b"MSWIN4.1"
+    struct.pack_into("<H", boot, 0x0B, sector)  # bytes per sector
+    boot[0x0D] = 1  # sectors per cluster
+    struct.pack_into("<H", boot, 0x0E, 1)  # reserved sectors
+    boot[0x10] = 2  # number of FATs
+    struct.pack_into("<H", boot, 0x11, 16)  # root entries
+    struct.pack_into("<H", boot, 0x13, total_sectors)
+    boot[0x15] = 0xF8  # media descriptor
+    struct.pack_into("<H", boot, 0x16, 1)  # sectors per FAT
+    struct.pack_into("<H", boot, 0x18, 32)  # sectors per track
+    struct.pack_into("<H", boot, 0x1A, 2)  # heads
+    boot[0x24] = 0x80
+    boot[0x26] = 0x29  # extended boot signature
+    struct.pack_into("<I", boot, 0x27, 0x1337C0DE)
+    boot[0x2B:0x36] = b"CTFCDISK   "
+    boot[0x36:0x3E] = b"FAT12   "
+    boot[0x1FE:0x200] = b"\x55\xaa"
+
+    fat = bytearray(sector)
+    _fat12_set_entry(fat, 0, 0xFF8)
+    _fat12_set_entry(fat, 1, 0xFFF)
+    root = bytearray()
+    data = bytearray()
+    cluster = 2
+    for name, ext, content, deleted in files:
+        assert len(content) <= sector, f"{name}.{ext} does not fit in one cluster"
+        _fat12_set_entry(fat, cluster, 0xFFF)  # one-cluster file, end of chain
+        root += _fat12_dir_entry(name, ext, cluster, len(content), deleted)
+        data += content.ljust(sector, b"\x00")
+        cluster += 1
+
+    root = root.ljust(sector, b"\x00")  # the root directory is one sector (16 entries)
+    image = bytearray(boot) + bytes(fat) + bytes(fat) + bytes(root) + bytes(data)
+    return bytes(image).ljust(total_sectors * sector, b"\x00")
+
+
+def write_disk_fixture() -> None:
+    print("disk (FAT12):")
+    files = [
+        ("FLAG", "TXT", b"CYBN{fat12_disk_reader}\n", False),
+        ("README", "TXT", b"the flag is in flag.txt\n", False),
+        ("GONE", "TXT", b"CYBN{deleted_but_recovered}\n", True),
+    ]
+    write("disk_fat12.img", fat12_image(files))
+
+
 def main() -> None:
     FIXTURES.mkdir(exist_ok=True)
     print(f"writing fixtures to {FIXTURES}")
@@ -3918,6 +3998,7 @@ def main() -> None:
     write_corrupt_pcap_fixture()
     write_large_gzip_fixture()
     write_iso_fixture()
+    write_disk_fixture()
 
 
 if __name__ == "__main__":
