@@ -29,7 +29,7 @@ import zlib
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from ctfc.core import mail, usb
+from ctfc.core import mail, usb, wifi
 
 # Capture file magics.
 PCAP_MAGICS = {
@@ -272,6 +272,8 @@ def strip_link_layer(frame: bytes, link_type: int) -> bytes | None:
         return frame[16:] if len(frame) > 16 else None
     if link_type == LINK_LINUX_SLL2:
         return frame[20:] if len(frame) > 20 else None
+    if link_type in wifi.WIFI_LINK_TYPES:
+        return wifi.ip_payload(frame, link_type)
     return None
 
 
@@ -835,6 +837,38 @@ def extract_mail(stream: Stream) -> list[Extracted]:
 # ---------------------------------------------------------------------------
 
 
+def _add_wifi(report: PcapReport, frames: list[bytes], link_type: int, path: str) -> None:
+    """Report a Wi-Fi capture's network names and WPA handshakes (not the IP traffic)."""
+    wifi_report = wifi.analyse_wifi(frames, link_type)
+    name = path.rsplit("/", 1)[-1] or "capture"
+    if wifi_report.ssids:
+        listed = ", ".join(f"{ssid} ({bssid})" for bssid, ssid in wifi_report.ssids.items())
+        report.notes.append(f"Wi-Fi networks seen: {listed}")
+        # The SSID is sometimes the answer itself: make it searchable.
+        report.objects.append(
+            Extracted(
+                kind="wifi-ssid",
+                name="wifi_networks.txt",
+                data="\n".join(wifi_report.ssids.values()).encode(),
+                description="the network names (SSIDs) advertised in the capture",
+            )
+        )
+    if wifi_report.protected_frames:
+        report.notes.append(
+            f"{wifi_report.protected_frames} of {wifi_report.data_frames} data frame(s) are "
+            "WPA-encrypted: the passphrase is needed to read them (crack the handshake below)"
+        )
+    for hs in wifi_report.handshakes:
+        if hs.messages < 2:
+            continue  # a single EAPOL frame is not a crackable handshake
+        label = f"{hs.ssid or '?'} (AP {hs.ap}, client {hs.client})"
+        report.notes.append(
+            f"WPA handshake captured for {label}, {hs.messages} EAPOL message(s). Convert and "
+            f"crack it: hcxpcapngtool {name} -o hash.hc22000 && hashcat -m 22000 hash.hc22000 "
+            "<wordlist>  (or aircrack-ng -w <wordlist> " + name + ")"
+        )
+
+
 def extract_usb(frames: list[bytes], link_type: int) -> list[Extracted]:
     """Decode what was typed on each USB keyboard in the capture (see core/usb.py)."""
     objects = []
@@ -967,11 +1001,19 @@ def analyse(data: bytes, path: str = "") -> PcapReport:
         if packet is not None:
             packets.append(packet)
     report.packets = len(packets)
-    if not packets:
+
+    # A Wi-Fi capture: besides any open IP traffic above, find the WPA handshake
+    # and the network names, and say what to do with them.
+    if link_type in wifi.WIFI_LINK_TYPES:
+        _add_wifi(report, frames, link_type, path)
+
+    if not packets and not report.objects:
         report.notes.append(
             "no IPv4/IPv6 packet could be parsed: unsupported link type, or the "
             "capture holds something else entirely"
         )
+        return report
+    if not packets:
         return report
 
     streams = reassemble_tcp(packets)
