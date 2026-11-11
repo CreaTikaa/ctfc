@@ -2632,3 +2632,18 @@ option that uses them. This reader recognises the NSS key-log format (lines of
 secrets, and prints `tshark -o tls.keylog_file:<file> ...` to decrypt and export
 the objects. It decrypts nothing itself: the capture and the keys together are a
 Wireshark job, and ctfc's part is to name the one command people miss.
+
+## 47. Recovering a pcap with a smashed header (lot K)
+
+ImaginaryCTF 2023 "forensics" overwrites a capture's magic bytes and every
+record's captured-length field with random noise - so ctfc read it as "not a
+capture" and stopped. But a real pcap global header keeps a valid version
+(major 2), a sane snaplen and a known link type at their fixed offsets, in one
+of the two byte orders; that is enough to recognise a pcap whose magic is gone.
+Per record, when the captured-length field is impossible (larger than the
+snaplen or than what is left), the original-length field next to it - which
+these challenges leave intact - is used instead. To decide which field to
+trust, ctfc walks the records both ways and keeps the walk that reaches the end
+of the file cleanly (a desynced walk stops early and leaves a big tail). The
+check used while sniffing is header-only, so it is safe to run on every file.
+Ground truth: the recovered frames are byte-for-byte the clean capture's.

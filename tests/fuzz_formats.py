@@ -211,7 +211,7 @@ READERS: tuple[Reader, ...] = (
     Reader("evtx", evtx.analyse, (evtx.EvtxError,), ("*.evtx",)),
     Reader("protobuf", protobuf.parse, (protobuf.ProtobufError,), ("*.pb",)),
     Reader("protobuf_text", protobuf.decode_to_text, (protobuf.ProtobufError,), ("*.pb",)),
-    Reader("pcap", pcap.analyse, (pcap.PcapError,), ("*.pcap", "*.pcapng")),
+    Reader("pcap", pcap.analyse, (pcap.PcapError,), ("*.pcap", "*.pcapng", "corrupt_magic.pcap")),
     Reader("wifi", _fuzz_wifi, (pcap.PcapError,), ("wifi_*.pcap",)),
     Reader("mail", mail.extract, (), ("audit_mail_imap.pcap", "*.txt")),
     Reader("luks", luks.parse_header, (), ("*.raw", "audit_luks_mem.raw")),
