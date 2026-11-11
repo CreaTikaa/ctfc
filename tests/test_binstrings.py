@@ -169,6 +169,7 @@ def test_ctfc_exe_reports_the_toolchain(go_binary):
     assert report.toolchain.toolchain == "go"
     assert any("pclntab" in note for note in report.notes)
     assert any("go tool nm" in command for command in report.commands)
+    assert GO_FLAG in report.flags  # found in the literals, not only by `solve`
 
 
 def test_solve_reads_a_go_binary(go_binary):
@@ -218,6 +219,37 @@ def test_a_windows_go_binary_is_read_without_any_section_name(tmp_path, go_binar
     # And it must admit what it cannot do here.
     assert any("image base" in note for note in report.notes)
 
+    # The web Files tab shows the same table, and repeats the limit.
+    result = _files_tab(data)
+    facts = next(s for s in result["sections"] if s["title"] == "built by go")
+    assert ["module", "ctfcdemo"] in facts["rows"]
+    assert any("image base" in note for note in result["notes"])
+
+
+def _files_tab(data: bytes) -> dict:
+    """What the web Files tab sends back for a dropped binary."""
+    import base64
+
+    from ctfc.config import Config
+    from ctfc.web.app import create_app
+
+    app = create_app(Config(max_upload_mb=16))
+    app.testing = True
+    payload = {"input": "b64:" + base64.b64encode(data).decode(), "format": "auto", "options": {}}
+    return app.test_client().post("/api/file", json=payload).get_json()
+
+
+def test_the_web_files_tab_shows_the_go_report(go_binary):
+    """The literals are the point of the reader: the page must show them, not only ELF."""
+    result = _files_tab(go_binary.read_bytes())
+    titles = [section["title"] for section in result["sections"]]
+    assert "built by go" in titles
+    literals = next(s for s in result["sections"] if s["title"].startswith("string literals"))
+    assert GO_FLAG in literals["text"].splitlines()  # on its own line, not glued
+    own = next(s for s in result["sections"] if "function(s) of this program" in s["title"])
+    assert own["rows"] == [["main.main"]]
+    assert GO_FLAG in result["flags"]
+
 
 # ---------------------------------------------------------------------------
 # Rust
@@ -233,6 +265,10 @@ def test_a_rust_binary_is_recognised_and_its_limit_stated(rust_binary):
     assert found.sources, "the embedded .rs paths are what is extractable here"
     assert any("immediate" in note for note in found.notes)
     assert any("disassembler" in note or "objdump" in note for note in found.notes)
+
+    result = _files_tab(data)
+    assert "built by rust" in [section["title"] for section in result["sections"]]
+    assert any("source paths" in section["title"] for section in result["sections"])
 
 
 def test_rust_does_not_invent_literals(rust_binary):

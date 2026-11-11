@@ -462,6 +462,9 @@ def _find_flags(report: ExecutableReport, flagset: FlagSet | None) -> None:
         texts += item.strings + item.members
     if report.dex is not None:
         texts += report.dex.strings
+    if report.toolchain is not None:
+        # A Go literal recovered from its length field: the flag is often one.
+        texts += report.toolchain.slices
     for text in texts:
         if not text:
             continue

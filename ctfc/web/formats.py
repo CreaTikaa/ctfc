@@ -451,6 +451,43 @@ def _exif(data: bytes, flagset: FlagSet | None) -> dict:
     }
 
 
+def _toolchain(found) -> list[dict]:
+    """The Go / Rust report, shared by the PE and the ELF adapters.
+
+    Mirrors `render.print_toolchain`: the version, the program's *own*
+    functions (not the runtime's), and the string literals cut exactly where
+    the compiler ended them - which is the whole point, since `strings` glues
+    them into one long run.
+    """
+    if found is None:
+        return []
+    sections = [
+        facts(
+            f"built by {found.toolchain}",
+            [
+                ("version", found.version or "?"),
+                ("module", found.module),
+                ("functions", len(found.functions)),
+                ("string literals", len(found.slices)),
+            ],
+        )
+    ]
+    own = found.own_functions
+    if own:
+        sections.append(
+            table(f"{len(own)} function(s) of this program", ["name"], [[n] for n in own])
+        )
+    if found.slices:
+        sections.append(
+            text("string literals (exact, from their length fields)", "\n".join(found.slices))
+        )
+    if found.sources:
+        sections.append(
+            table("source paths embedded in the binary", ["path"], [[p] for p in found.sources])
+        )
+    return sections
+
+
 def _pe(data: bytes, flagset: FlagSet | None) -> dict:
     report = pe.analyse(data, flagset)
     sections = [
@@ -491,6 +528,7 @@ def _pe(data: bytes, flagset: FlagSet | None) -> dict:
         )
     if report.dotnet_literals:
         sections.append(text(".NET string literals (#US heap)", "\n".join(report.dotnet_literals)))
+    sections += _toolchain(report.toolchain)
     return {
         "sections": sections,
         "flags": list(report.flags),
@@ -553,6 +591,7 @@ def _exe(data: bytes, flagset: FlagSet | None) -> dict:
             )
         if elf.symbols:
             sections.append(text("dynamic symbols", "\n".join(elf.symbols)))
+    sections += _toolchain(report.toolchain)
     for item in report.classes[:20]:
         sections.append(
             facts(
