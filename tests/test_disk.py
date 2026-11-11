@@ -71,6 +71,14 @@ def test_solve_flags_a_file_inside_a_disk_image():
 
 
 @pytest.mark.skipif(not HAS_TSK, reason="The Sleuth Kit not installed")
+def test_a_partitioned_image_is_walked_via_mmls():
+    report = disk.analyse((FIXTURES / "disk_mbr.img").read_bytes())
+    assert report.partitions and report.partitions[0].offset == 1  # the MBR partition
+    assert "FAT12" in report.partitions[0].fs_type
+    assert "CYBN{fat12_disk_reader}" in b"".join(f.data for f in report.files).decode("latin-1")
+
+
+@pytest.mark.skipif(not HAS_TSK, reason="The Sleuth Kit not installed")
 def test_file_list_matches_tsk():
     import shutil
     import subprocess

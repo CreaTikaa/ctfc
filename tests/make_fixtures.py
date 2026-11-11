@@ -3781,6 +3781,18 @@ def fat12_image(files: list[tuple[str, str, bytes, bool]]) -> bytes:
     return bytes(image).ljust(total_sectors * sector, b"\x00")
 
 
+def mbr_partitioned(filesystem: bytes, part_type: int = 0x01) -> bytes:
+    """Wrap a filesystem in an MBR with one partition starting at sector 1."""
+    sector = 512
+    mbr = bytearray(sector)
+    mbr[0x1BE] = 0x00  # not bootable
+    mbr[0x1BE + 4] = part_type
+    mbr[0x1BE + 8 : 0x1BE + 12] = struct.pack("<I", 1)  # start LBA
+    mbr[0x1BE + 12 : 0x1BE + 16] = struct.pack("<I", len(filesystem) // sector)
+    mbr[510:512] = b"\x55\xaa"
+    return bytes(mbr) + filesystem
+
+
 def write_disk_fixture() -> None:
     print("disk (FAT12):")
     files = [
@@ -3788,7 +3800,10 @@ def write_disk_fixture() -> None:
         ("README", "TXT", b"the flag is in flag.txt\n", False),
         ("GONE", "TXT", b"CYBN{deleted_but_recovered}\n", True),
     ]
-    write("disk_fat12.img", fat12_image(files))
+    filesystem = fat12_image(files)
+    write("disk_fat12.img", filesystem)
+    # The same filesystem behind an MBR partition table (exercises mmls).
+    write("disk_mbr.img", mbr_partitioned(filesystem))
 
 
 def main() -> None:
