@@ -190,3 +190,23 @@ SSTV audio (couch_potato), spectrogramme (On-the-spectrum), image dans un core
 dump (wreck → binwalk), PDF/zip à casser par hashcat (the_cia, reduce_recycle),
 NBTExplorer (playful-puppy), mkbootimg (replace-me), steghide (i-love-scomo,
 SpotTheDifference). `ctfc` va jusqu'au fichier et nomme l'outil.
+
+## Troisième audit public (2026-11-12) — lot K
+
+Deux CTF de plus, uniquement forensics : **IrisCTF 2024** (forensics + réseau) et
+**ImaginaryCTF 2023**. Dépôts qui livrent les fichiers (dossier `dist/` par
+challenge). Harnais auto-découvrant (`scratchpad/audit.py` : repère les fichiers
+distribués, scrape les flags attendus, lance `ctfc solve`). Beaucoup de ces
+challenges sont hors scope (puzzle de police MKV, géoloc OSINT, DSSS, SSTV,
+image-dans-les-pixels). Les gains nets, chacun avec vérité terrain :
+
+| Feature | Débloque | Vérité terrain |
+|---|---|---|
+| **802.11 WiFi** (`core/wifi.py`) : trames ouvertes → IP, handshake WPA → hashcat | copper-selachimorpha, skats-network-history (IrisCTF) | tshark (SSID, EAPOL) |
+| **keylog TLS** (`keylog` reader) : reconnaît `sslkeyfile`, sort la commande tshark | skats-network-history | format NSS |
+| **récupération pcap** : magic + `captured_len` écrasés, rejoués via `orig_len` | forensics (ImaginaryCTF) | capture propre = octet à octet |
+
+Note : les deux challenges WiFi restent à cracker (clé WPA, hors scope) ; ctfc
+va désormais jusqu'au handshake + la commande hashcat exacte. La capture
+corrompue est reconstruite à l'identique ; le flag final est ensuite dans une
+image transférée (analyse d'image, hors scope).
