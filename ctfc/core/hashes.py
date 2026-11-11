@@ -296,6 +296,9 @@ def _try_the_password_list(report: HashReport, passwords: tuple[bytes, ...] | No
     if not targets:
         return
     lowered = report.value.lower()
+    # Say which list it was: "the embedded list" for a password that came from
+    # the user's own rockyou would send them looking in the wrong place.
+    source = "your wordlist" if passwords else "the embedded password list"
     for password in passwords or load_passwords():
         for format_id, match in targets.items():
             compute = INSTANT_FORMATS[format_id]
@@ -308,11 +311,10 @@ def _try_the_password_list(report: HashReport, passwords: tuple[bytes, ...] | No
                 match.confidence = 1.0
                 match.reasons.insert(
                     0,
-                    f'found in the embedded password list: the password is "{match.cracked}"',
+                    f'found in {source}: the password is "{match.cracked}"',
                 )
                 report.matches.sort(key=lambda item: -item.confidence)
                 report.notes.append(
-                    f"cracked offline with the embedded list ({match.format.name}): "
-                    f'"{match.cracked}"'
+                    f'cracked offline with {source} ({match.format.name}): "{match.cracked}"'
                 )
                 return

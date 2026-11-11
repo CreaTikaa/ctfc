@@ -843,6 +843,9 @@ def test_the_hash_tab_reads_a_wordlist_from_disk(client, tmp_path):
     ).get_json()
     assert OWN_PASSWORD in [match["cracked"] for match in answer["matches"]]
     assert answer["notes"][0].startswith("list.txt: 3 password(s) used")
+    # It says which list found it: not "the embedded list" when it was yours.
+    assert any("cracked offline with your wordlist" in note for note in answer["notes"])
+    assert answer["matches"][0]["reasons"][0].startswith("found in your wordlist")
 
 
 def test_the_jwt_tab_reads_a_wordlist_from_disk(client, tmp_path):
