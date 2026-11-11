@@ -150,6 +150,8 @@ def read_packets(data: bytes) -> tuple[list[bytes], int, str]:
         return _read_pcap(data, *PCAP_MAGICS[magic])
     if struct.unpack("<I", magic)[0] == PCAPNG_SHB or struct.unpack(">I", magic)[0] == PCAPNG_SHB:
         return _read_pcapng(data)
+    if magic == FIVEVIEWS_MAGIC:
+        return _read_5views(data)
     raise PcapError(
         f"unknown magic {magic.hex()}: not a pcap or pcapng file "
         "(a .pcap from tcpdump/Wireshark starts with d4c3b2a1 or 0a0d0d0a)"
@@ -204,6 +206,46 @@ def _read_pcapng(data: bytes) -> tuple[list[bytes], int, str]:
             frames.append(body[4:])
         offset += block_length
     return frames, link_type, "pcapng"
+
+
+# InfoVista "5View" (.5vw): a third container a challenge may hand over as
+# ".pcap" (DUCTF 2020 "sneaky"). Layout from Wireshark's wiretap/5views.c,
+# every field little-endian:
+#
+#   info header   32 bytes  signature AAAAAAAA, header size, version, data size,
+#                           file type (0x18000000 = capture, low bits = link),
+#                           3 reserved words
+#   attributes    `data size` bytes: creation time, number of frames
+#   records       each one: key EEEE3333, header size (36), header type,
+#                 record type, subtype, record size, count, UTC seconds,
+#                 nanoseconds, info - then `record size` bytes of frame
+FIVEVIEWS_MAGIC = b"\xaa\xaa\xaa\xaa"
+FIVEVIEWS_RECORD_KEY = 0x3333EEEE
+FIVEVIEWS_CAPTURE = 0x18000000
+FIVEVIEWS_ETHERNET = 0x00001000
+
+
+def _read_5views(data: bytes) -> tuple[list[bytes], int, str]:
+    """InfoVista 5View: an info header, its attributes, then timestamped records."""
+    if len(data) < 32:
+        raise PcapError("truncated 5View header")
+    header_size, _version, data_size, file_type = struct.unpack("<IIII", data[4:20])
+    if file_type & 0xFF000000 != FIVEVIEWS_CAPTURE:
+        raise PcapError(f"5View file of type {file_type:#x}, not a capture")
+    if file_type & 0x0000FFFF != FIVEVIEWS_ETHERNET:
+        raise PcapError(f"5View capture of link {file_type & 0xFFFF:#x}: only Ethernet is read")
+    frames: list[bytes] = []
+    offset = header_size + data_size
+    while offset + 36 <= len(data):
+        key, record_header, _kind, _rec_type, _sub, size = struct.unpack(
+            "<IHHIII", data[offset : offset + 20]
+        )
+        if key != FIVEVIEWS_RECORD_KEY or record_header < 36:
+            break  # lost the record chain: keep what was read
+        start = offset + record_header
+        frames.append(data[start : start + size])
+        offset = start + size
+    return frames, LINK_ETHERNET, "5view"
 
 
 # ---------------------------------------------------------------------------
@@ -513,7 +555,14 @@ def extract_http(stream: Stream) -> list[Extracted]:
 
 
 def parse_dns_question(payload: bytes) -> str | None:
-    """The queried name of a DNS message, as dotted text."""
+    """The queried name of a DNS message, as dotted text.
+
+    A name is a list of labels, each preceded by its length. A packet forged by
+    hand (scapy with a plain string) sometimes carries the dotted text itself
+    instead - "remote.UEsDBBQ....reallylegit.com" - which no DNS parser reads
+    (Wireshark shows "<Unknown extended label>"). When the labels do not parse,
+    and the bytes up to the end of the name are printable, that text is the name.
+    """
     if len(payload) < 13:
         return None
     questions = struct.unpack(">H", payload[4:6])[0]
@@ -526,14 +575,31 @@ def parse_dns_question(payload: bytes) -> str | None:
         if length == 0:
             break
         if length & 0xC0:  # a compression pointer has no place in a question
-            return None
+            return _literal_name(payload)
         offset += 1
         label = payload[offset : offset + length]
         if len(label) < length:
-            return None
+            return _literal_name(payload)
         labels.append(label.decode("latin-1"))
         offset += length
-    return ".".join(labels) if labels else None
+    name = ".".join(labels) if labels else None
+    if name is not None and not all(32 < ord(ch) < 127 for ch in name):
+        return _literal_name(payload) or name
+    return name
+
+
+def _literal_name(payload: bytes) -> str | None:
+    """A name written as plain dotted text after a first label (a forged query)."""
+    end = payload.find(b"\x00", 13)
+    raw = payload[13 : end if end > 0 else len(payload)]
+    text = raw.decode("latin-1")
+    if len(text) < 8 or "." not in text or not all(32 < ord(ch) < 127 for ch in text):
+        return None
+    return text
+
+
+# One query is enough when it carries this many characters of labels.
+SINGLE_QUERY_EXFIL = 64
 
 
 def extract_dns(packets: list[Packet]) -> list[Extracted]:
@@ -575,12 +641,19 @@ def extract_dns(packets: list[Packet]) -> list[Extracted]:
 
     objects = []
     for domain, rows in groups.items():
-        if len(rows) < 3:
-            continue  # three queries is the minimum that looks deliberate
-        rows = _drop_constant_labels(rows)
+        single = len(rows) == 1 and sum(map(len, rows[0])) >= SINGLE_QUERY_EXFIL
+        if len(rows) < 3 and not single:
+            continue  # three queries is the minimum that looks deliberate...
+        if not single:  # ... unless one query alone carries a whole payload
+            rows = _drop_constant_labels(rows)
         if not any(rows):
             continue
         variants = [("", rows, "all the labels in front of the domain")]
+        if single and len(rows[0]) > 2 and rows[0][0].isalpha() and len(rows[0][0]) <= 12:
+            # "remote.UEsDBBQ...": the first label is a word, the rest the data.
+            variants.append(
+                ("_data", [rows[0][1:]], f"without the first label ({rows[0][0]}), a word")
+            )
         if _first_label_is_a_counter(rows):
             variants.append(
                 (
@@ -879,6 +952,7 @@ def analyse(data: bytes, path: str = "") -> PcapReport:
     # A USB capture holds no network traffic at all: the payloads are HID reports,
     # so the whole IP/TCP walk below would find nothing.
     if link_type in usb.USB_LINK_TYPES:
+        report.packets = len(frames)  # USB frames are the packets here
         report.objects += extract_usb(frames, link_type)
         if not report.objects:
             report.notes.append(
