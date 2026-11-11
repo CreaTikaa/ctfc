@@ -3793,6 +3793,50 @@ def mbr_partitioned(filesystem: bytes, part_type: int = 0x01) -> bytes:
     return bytes(mbr) + filesystem
 
 
+def _png_chunk(kind: bytes, payload: bytes) -> bytes:
+    import zlib as _zlib
+
+    return (
+        struct.pack(">I", len(payload))
+        + kind
+        + payload
+        + struct.pack(">I", _zlib.crc32(kind + payload) & 0xFFFFFFFF)
+    )
+
+
+def ztxt_png(flag: bytes, interlaced: bool = True) -> bytes:
+    """A PNG whose flag is in a zTXt (compressed) chunk, with pixels ctfc cannot
+    read (interlaced) - so the text chunk must be read on its own."""
+    import zlib as _zlib
+
+    ihdr = struct.pack(">IIBBBBB", 2, 2, 8, 2, 0, 0, 1 if interlaced else 0)
+    ztxt = b"flag\x00\x00" + _zlib.compress(flag)  # keyword, null, method 0, zlib stream
+    idat = _zlib.compress(b"\x00\x00\x00\x00" * 2)  # dummy pixels (never decoded)
+    return (
+        b"\x89PNG\r\n\x1a\n"
+        + _png_chunk(b"IHDR", ihdr)
+        + _png_chunk(b"zTXt", ztxt)
+        + _png_chunk(b"IDAT", idat)
+        + _png_chunk(b"IEND", b"")
+    )
+
+
+def write_plaintext_flag_fixture() -> None:
+    print("plaintext flag:")
+    note = (
+        "Incident notes\n\n"
+        "The attacker left a message in the config, and after decoding the base64\n"
+        "the recovered flag was CYBN{a_flag_in_plain_readable_text} which we then\n"
+        "verified against the challenge server. Nothing else of note in the logs.\n"
+    )
+    write("flag_in_text.txt", note.encode())
+
+
+def write_ztxt_fixture() -> None:
+    print("png ztxt:")
+    write("stego_ztxt.png", ztxt_png(b"CYBN{ztxt_in_a_4bit_png}"))
+
+
 def write_disk_fixture() -> None:
     print("disk (FAT12):")
     files = [
@@ -4013,6 +4057,8 @@ def main() -> None:
     write_corrupt_pcap_fixture()
     write_large_gzip_fixture()
     write_iso_fixture()
+    write_plaintext_flag_fixture()
+    write_ztxt_fixture()
     write_disk_fixture()
 
 

@@ -260,3 +260,17 @@ def test_the_generated_snippet_reproduces_the_message():
     namespace["print"] = lambda value: printed.append(repr(value))
     exec(snippet, namespace)  # noqa: S102 - our own generated code, not a sample
     assert "CYBN{snippet_check}" in printed[0]
+
+
+def test_ztxt_flag_in_an_unreadable_png():
+    """A zTXt (compressed) text chunk is read even when the pixels cannot be
+    (a 4-bit or interlaced PNG), because the flag is often in the text chunk."""
+    from pathlib import Path
+
+    from ctfc.core import stego
+    from ctfc.core.budget import Budget
+
+    data = (Path(__file__).parent / "fixtures" / "stego_ztxt.png").read_bytes()
+    report = stego.analyse(data, None, Budget(max_attempts=2000, max_seconds=5))
+    joined = " ".join(text for _keyword, text in report.texts)
+    assert "CYBN{ztxt_in_a_4bit_png}" in joined

@@ -137,6 +137,26 @@ class Image:
         return self.data[(y * self.width + x) * self.channels + channel]
 
 
+def png_texts(data: bytes) -> list[tuple[str, str]]:
+    """Every tEXt / zTXt / iTXt chunk, read independently of the pixel format.
+
+    The text chunks are where a flag often hides (a zTXt is just zlib-compressed
+    text), and they do not depend on the bit depth or colour type - so they must
+    be read even when the pixels cannot be (a 4-bit palette image, an interlaced
+    one). `load_png` bailing on an unsupported depth used to lose them.
+    """
+    texts: list[tuple[str, str]] = []
+    try:
+        for kind, payload in png_chunks(data):
+            if kind in (b"tEXt", b"zTXt", b"iTXt"):
+                texts.append(_png_text(kind, payload))
+            elif kind == b"IEND":
+                break
+    except (StegoError, ValueError):
+        pass
+    return texts
+
+
 def load_png(data: bytes) -> Image:
     """Decode a non-interlaced PNG to one byte per sample."""
     header: bytes | None = None
@@ -515,7 +535,17 @@ def analyse(data: bytes, flagset=None, budget: Budget | None = None, top_n: int 
     """
     if data[:3] == b"\xff\xd8\xff":
         return _analyse_jpeg(data)
-    image = load(data)
+    is_png = data[:8] == b"\x89PNG\r\n\x1a\n"
+    texts = png_texts(data) if is_png else []
+    try:
+        image = load(data)
+    except StegoError as exc:
+        # The pixels cannot be read (bit depth, interlace, palette), but the
+        # text chunks can, and the flag is often in a zTXt.
+        report = StegoReport(texts=texts, notes=[str(exc)])
+        for keyword, text in texts:
+            report.notes.append(f"text chunk {keyword!r}: {text[:200]}")
+        return report
     report = StegoReport(
         width=image.width,
         height=image.height,
