@@ -37,8 +37,9 @@ the ciphers that belong to dcode.fr. Read `CLAUDE.md` first, then this file.
 | lot D + E (ideas.md 1 and 2.5) | `6b6424c`..`2d897c9` | `ctfc prng`, `ctfc extend`, `make fuzz`, `ctfc rsa --also`, `ctfc sig` (section 5septies) |
 | lot F + G (the rest of ideas.md) | `b6e0fb9`..`5e142f2` | `ctfc archive`, `ctfc msg`, `ctfc msi`, `ctfc crc`, `ctfc winartifact`, `ctfc exe`, the encoding long tail, `ctfc watch`, `ctfc replay` (section 5octies) |
 | lot H (ideas.md section 2) | `6d2c5f7`..`f969f5e` | `ctfc solve`, `ctfc workspace`, PNG surgery, `ctfc timeline`, `ctfc mail`, `--wordlist`, EXIF, WAV LSB, PHP in Lens, Go/Rust strings, `make demo`, `make fuzz-web` (section 5nonies) |
+| lot H in the browser | `793234a`..`ffea512` | Go/Rust report in Files, Timeline tab, wordlist fields, prose passwords in `keyhunt`, every job kind fuzzed (section 5decies) |
 
-1651 tests pass, 1 skipped (`.venv/bin/python -m pytest -q`, ~100 s), `ruff check .` and
+1674 tests pass, 3 skipped (no .NET SDK/assembly, no md4 in this OpenSSL) (`.venv/bin/python -m pytest -q`, ~100 s), `ruff check .` and
 `ruff format --check .` clean. `make fuzz` (the long sweep) is clean on seeds 3, 7, 9, 13, 17,
 42 and 101, over 35 reader entry points; `make fuzz-web` is clean on seeds 0, 1, 2, 3, 5, 7, 11,
 13, 23, 42 and 101. **`make demo` runs the 62 commands of section 7 and checks each one's exit
@@ -923,6 +924,41 @@ said they are the next session's priority.
 LZXPRESS Huffman; parallelism, measured and declined; the keyed classical ciphers; Mach-O) and
 section 2.6's last item: **a regression corpus from his own anonymized challenges**. He has still
 not sent samples - that is the one test that measures the thing he cares about.
+
+## 5decies. Lot H in the browser (2026-11-11)
+
+The audit list of section 5nonies ("Not in the browser"), done in its order:
+
+1. **Go / Rust report in the Files tab** (`793234a`): `formats._toolchain()` is shared by the
+   `_pe` and `_exe` adapters. The test found a terminal bug too: `ctfc exe` did not search the
+   Go literals it recovered for a flag (only `solve` did, via the child file). Fixed in
+   `executable._find_flags`.
+2. **Timeline tab** (`d1ea58d`): `timeline.from_files([(name, bytes)])` is the disk-free core;
+   `build()` feeds it from a folder through a generator (one file in memory at a time). The tab
+   is a job and answers in the Files display shape, so `renderFile` draws it.
+   **Same commit, a fuzzer blind spot:** `fuzz_web.py` filled `/api/jobs/<kind>` with `auto` only.
+   Fuzzing all of `JOB_KINDS` found a 500 in `solve` (`float("abc")`) and the same line in
+   classical/rsa/keys/crc/prng/sig. `_seconds()` / `_small_int()` in `web/app.py` now read those
+   options (400 or clamp, NaN and 1e308 included). Use them for any new numeric option.
+3. **Wordlist fields** in Symmetric, Hash, JWT (`3b5b43b`): `_wordlist(options)` in `web/app.py`,
+   a server-side path (`~` expanded) + a limit; the note goes first in `notes`. Why a path from a
+   request is acceptable is written in its docstring (127.0.0.1 + JSON-only body = no CSRF; the
+   words never go back). Every unreadable path is a 400 (`~unknownuser` was a pathlib 500).
+4. **Prose passwords** (`ccf132a`): not a second list in the Keys tab but a candidate source of
+   `keyhunt` itself (`find_prose`, kind "prose", role passphrase, strength 0.5, first 64 MB, 50
+   max), so `ctfc keys` gains it too. `workspace` skips kind "prose" in its key pool (they are in
+   its secrets pool already).
+5. `ffea512`: `ctfc hash` said "found in the embedded password list" when the user's own list
+   found it - seen in the real browser check.
+
+**Checked in a real headless Chromium** (the DevTools script is in section 3's recipe; set
+`state.file = {name, b64, size}` to simulate a drop): Go binary in Files, `.lnk` in Timeline
+(with and without `since`), Hash with a wordlist, JWT with an unreadable wordlist.
+
+**Still open, and the user's call: `ctfc workspace` in the page.** It takes a folder; a browser
+gives bytes. Either a multi-file drop (the pools do not care where bytes come from, and
+`timeline.from_files` already takes a list, so the Timeline tab would gain folders for free), or
+leave it in the terminal and name it in the Docs tab beside scan/watch/git.
 
 ## 7. Quick verification commands
 
