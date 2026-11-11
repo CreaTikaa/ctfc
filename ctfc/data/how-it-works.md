@@ -2621,3 +2621,14 @@ Ground truth: tshark, which reads the same SSIDs and EAPOL frames from the
 fixtures. The MAC-header length is computed from the frame-control bits (the
 fourth address for WDS, the QoS control field for QoS data), the way
 Wireshark's dissector does.
+
+## 46. A TLS key log file (`keylog` reader, lot K)
+
+A challenge that hands over `sslkeyfile` next to an HTTPS `.pcap` (IrisCTF 2024
+skats-network-history) is handing you the key to the whole capture - the session
+secrets a browser writes to `SSLKEYLOGFILE`. The forgotten step is the tshark
+option that uses them. This reader recognises the NSS key-log format (lines of
+`CLIENT_RANDOM`, `*_TRAFFIC_SECRET_0`, ... each with two hex blobs), counts the
+secrets, and prints `tshark -o tls.keylog_file:<file> ...` to decrypt and export
+the objects. It decrypts nothing itself: the capture and the keys together are a
+Wireshark job, and ctfc's part is to name the one command people miss.

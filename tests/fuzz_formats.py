@@ -218,6 +218,12 @@ READERS: tuple[Reader, ...] = (
     Reader("radius", radius.parse_access_request, (), ("*.pcap",)),
     Reader("repair", repair.repair, (), ("*.fun", "*.png", "*.bin", "*.zip")),
     Reader("timestamps", timestamps.from_bytes, (), ("*.bin",)),
+    Reader(
+        "keylog",
+        lambda d: readers.open_with("keylog", d, None, "k"),
+        (),
+        ("tls_keylog.txt", "*.txt"),
+    ),
     # A GPP cpassword reader and a compressed-stream reader both parse untrusted
     # bytes and must never raise (lot J).
     Reader("gpp", gpp.find_cpasswords, (), ("*.xml", "*.txt", "*.bin")),

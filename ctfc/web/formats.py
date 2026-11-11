@@ -824,6 +824,12 @@ def _pcap(data: bytes, flagset: FlagSet | None) -> dict:
     return {"sections": sections, "flags": flags, "notes": report.notes, "commands": []}
 
 
+def _keylog(data: bytes, flagset: FlagSet | None) -> dict:
+    opened = core_readers.open_with("keylog", data, flagset, "sslkeyfile")
+    sections = [facts("TLS key log", [("what", opened.detail)])]
+    return {"sections": sections, "flags": [], "notes": opened.notes, "commands": opened.commands}
+
+
 def _compressed(data: bytes, flagset: FlagSet | None) -> dict:
     opened = core_readers.open_with("compressed", data, flagset, "stream")
     rows = [[child.name, len(child.data), _preview(child.data)] for child in opened.children]
@@ -1002,6 +1008,7 @@ ADAPTERS: dict[str, Callable[[bytes, FlagSet | None], dict]] = {
     "hive": _hive,
     "sqlite": _sqlite,
     "pcap": _pcap,
+    "keylog": _keylog,
     "compressed": _compressed,
     "repair": _repair,
     "zip": _zip,

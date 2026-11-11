@@ -328,6 +328,63 @@ def safe_child_name(name: str) -> str:
     return cleaned.lstrip(".") or "stream.out"
 
 
+# ---------------------------------------------------------------------------
+# A TLS key log file (what decrypts an HTTPS capture)
+# ---------------------------------------------------------------------------
+#
+# A capture of HTTPS traffic is unreadable without the session keys, and the
+# keys are exactly what a browser or an app writes to an SSLKEYLOGFILE. A
+# challenge that hands over `sslkeyfile` next to a `.pcap` is handing you the
+# key to the whole capture; the one step people forget is the tshark option
+# that uses it. This reader recognises the file and prints that command.
+
+KEYLOG_LABELS = (
+    b"CLIENT_RANDOM",
+    b"CLIENT_HANDSHAKE_TRAFFIC_SECRET",
+    b"SERVER_HANDSHAKE_TRAFFIC_SECRET",
+    b"CLIENT_TRAFFIC_SECRET_0",
+    b"SERVER_TRAFFIC_SECRET_0",
+    b"CLIENT_EARLY_TRAFFIC_SECRET",
+    b"EXPORTER_SECRET",
+    b"EARLY_EXPORTER_SECRET",
+)
+
+
+def keylog_sniff(data: bytes) -> bool:
+    """True when the file is an NSS TLS key log (SSLKEYLOGFILE)."""
+    for line in data[:4096].split(b"\n"):
+        line = line.strip()
+        if not line or line.startswith(b"#"):
+            continue
+        label = line.split(b" ", 1)[0]
+        return label in KEYLOG_LABELS
+    return False
+
+
+def _open_keylog(data: bytes, flagset: FlagSet | None, path: str) -> Opened:
+    counts: dict[str, int] = {}
+    for line in data.split(b"\n"):
+        label = line.strip().split(b" ", 1)[0]
+        if label in KEYLOG_LABELS:
+            counts[label.decode()] = counts.get(label.decode(), 0) + 1
+    total = sum(counts.values())
+    notes = [
+        f"{total} TLS session secret(s): this decrypts an HTTPS capture taken at the same time. "
+        "Give it to Wireshark/tshark with the tls.keylog_file option."
+    ]
+    base = path.rsplit("/", 1)[-1] or "sslkeyfile"
+    commands = [
+        f"tshark -r <capture.pcap> -o tls.keylog_file:{base} -Y http --export-objects http,./out",
+        f"tshark -r <capture.pcap> -o tls.keylog_file:{base} -z follow,http,ascii,0",
+    ]
+    return Opened(
+        detail=f"TLS key log, {total} secret(s): "
+        + ", ".join(f"{k}x{v}" for k, v in counts.items()),
+        notes=notes,
+        commands=commands,
+    )
+
+
 def _open_zip(data: bytes, flagset: FlagSet | None, path: str) -> Opened:
     report = zipinfo.analyse(data, path)
     children = _zip_members(data, "ZIP member")
@@ -918,6 +975,13 @@ READERS: tuple[Reader, ...] = (
         "ctfc repair",
         lambda data: False,
         _open_repair,
+    ),
+    Reader(
+        "keylog",
+        "TLS key log (decrypts an HTTPS capture)",
+        "ctfc detect",
+        keylog_sniff,
+        _open_keylog,
     ),
     Reader(
         "compressed",
