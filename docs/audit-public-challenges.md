@@ -167,3 +167,26 @@ zbarimg sont le maximum possible sans OCR.
   au lieu d'inventer un déchiffrement non vérifié.
 - La **chaîne de carving de solve** (PNG → ZIP appended → PNG interne) marche de
   bout en bout ; seul l'OCR final manque.
+
+## Deuxième audit public (2026-11-12) — lot J
+
+Trois CTF de plus, uniquement forensics, lancés en aveugle avec `ctfc solve` sur
+les vrais fichiers : **ImaginaryCTF 2024, BuckeyeCTF 2023/24, DownUnderCTF 2020**
+(22 challenges). Fichiers dans `corpus/challenges/` (gitignorés) ; harnais
+`scratchpad/harness.py` (non commité). Cinq readers manquants construits, chacun
+avec une vérité terrain externe (voir `ctfc/data/how-it-works.md` §44) :
+
+| Reader | Débloque | Vérité terrain |
+|---|---|---|
+| GPP `cpassword` (`core/gpp.py`) | badpolicies (DUCTF 2024) | vecteur public GPP + flag réel |
+| flux gzip/bzip2/xz (`compressed`) | unknown (Buckeye 2024) | gzip/bz2/lzma stdlib |
+| capture InfoVista 5View | sneaky (DUCTF 2020) | `editcap -F pcap` : 499/499 trames |
+| nom DNS en texte littéral | sneaky | la trame scapy forgée |
+| frappe USB appui/maintien + Ctrl-⌫ | duck-pics (Buckeye 2024) | tshark `usbhid.data` : 10950/10950 |
+| `ctfc zip --wordlist` | sneaky (zip) | zip chiffré par Info-ZIP `zip -P` |
+
+**Ce qui reste hors scope** (pas de ML, pas de crackers externes intégrés) :
+SSTV audio (couch_potato), spectrogramme (On-the-spectrum), image dans un core
+dump (wreck → binwalk), PDF/zip à casser par hashcat (the_cia, reduce_recycle),
+NBTExplorer (playful-puppy), mkbootimg (replace-me), steghide (i-love-scomo,
+SpotTheDifference). `ctfc` va jusqu'au fichier et nomme l'outil.
