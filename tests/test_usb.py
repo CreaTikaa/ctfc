@@ -30,9 +30,7 @@ def test_letters_and_shift():
 def test_digits_and_their_shifted_symbols():
     # "1" then shift+"1" needs a release between: the key is physically let go
     # and pressed again (a real capture has this; a held key does not retype).
-    text, _ = usb.decode_reports(
-        [report(0x1E), RELEASE, report(0x1E, shift=True), report(0x27)]
-    )
+    text, _ = usb.decode_reports([report(0x1E), RELEASE, report(0x1E, shift=True), report(0x27)])
     assert text == "1!0"
 
 
