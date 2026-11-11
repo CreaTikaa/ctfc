@@ -25,7 +25,7 @@ from collections import Counter
 from dataclasses import asdict, dataclass, field
 from functools import lru_cache
 
-from ctfc.core import classical, encodings, keyhunt, prng, secrets
+from ctfc.core import classical, encodings, gpp, keyhunt, prng, secrets
 from ctfc.core.datafiles import load_toml
 from ctfc.core.flags import FlagSet, default_flagset, hunt_flags
 from ctfc.core.magic import (
@@ -140,6 +140,7 @@ def detect(data: bytes, flagset: FlagSet | None = None) -> DetectReport:
     guesses += _check_classical(data, flagset)
     guesses += _check_key_schedules(data)
     guesses += _check_secrets(data)
+    guesses += _check_gpp(data)
     guesses += _check_prng_output(data)
     # Zero-width characters are invisible but not "binary": ignore them here.
     visible = data.decode("utf-8", errors="ignore")
@@ -282,6 +283,32 @@ def _check_secrets(data: bytes, prefix: str = "") -> list[Guess]:
                 label=f"{prefix}{len(found) - 5} more credential(s) in the text",
                 confidence=0.5,
                 reasons=[f"{secret.name} (line {secret.line})" for secret in found[5:12]],
+            )
+        )
+    return guesses
+
+
+def _check_gpp(data: bytes) -> list[Guess]:
+    """A Group Policy Preferences cpassword: encrypted with a key Microsoft published."""
+    guesses = []
+    for entry in gpp.find_cpasswords(data)[:5]:
+        who = f" of {entry.user}" if entry.user else ""
+        if entry.password:
+            reasons = [
+                f"line {entry.line}: cpassword{who} decrypts to {entry.password!r}",
+                "AES-256-CBC, IV zero, with the key published in MS-GPPREF 2.2.1.1.4",
+            ]
+            confidence = 0.95
+        else:
+            reasons = [f"line {entry.line}: cpassword{who} did not decrypt ({entry.error})"]
+            confidence = 0.5
+        guesses.append(
+            Guess(
+                rule="creds.gpp",
+                label=f"GPP cpassword{who}" + (f": {entry.password}" if entry.password else ""),
+                confidence=confidence,
+                reasons=reasons,
+                next_step="gpp-decrypt <cpassword> (Kali); the key is documented in how-it-works",
             )
         )
     return guesses

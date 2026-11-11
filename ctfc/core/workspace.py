@@ -40,7 +40,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from ctfc.core import archive as archive_module
-from ctfc.core import keyhunt, secrets, zipinfo
+from ctfc.core import gpp, keyhunt, secrets, zipinfo
 from ctfc.core.budget import Budget
 from ctfc.core.flags import FlagSet, find_flags, hunt_flags
 from ctfc.core.scan import list_files
@@ -211,6 +211,17 @@ def _looks_like_a_blob(data: bytes, name: str = "") -> bool:
 def _text_secrets(data: bytes, where: str) -> list[Found]:
     """Both kinds of written credential, in one list, deduplicated by value."""
     found: list[Found] = []
+    for entry in gpp.find_cpasswords(data):
+        if entry.password:
+            found.append(
+                Found(
+                    value=entry.password,
+                    raw=entry.password.encode(),
+                    where=where,
+                    why=f"GPP cpassword of {entry.user or 'an account'} (line {entry.line}), "
+                    "decrypted with Microsoft's published key",
+                )
+            )
     for secret in secrets.find_secrets(data) + secrets.find_prose_secrets(data):
         found.append(
             Found(

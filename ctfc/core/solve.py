@@ -38,7 +38,7 @@ import hashlib
 import re
 from dataclasses import dataclass, field
 
-from ctfc.core import readers
+from ctfc.core import gpp, readers
 from ctfc.core.auto import auto_decode
 from ctfc.core.budget import Budget
 from ctfc.core.flags import (
@@ -78,6 +78,8 @@ TEXT_PIECE = 0.85  # printable ratio above which a piece is "a text"
 WEAK_FLAG_LEAD = 0.6
 # The base64 of the flag prefix, with no whole flag behind it.
 PREFIX_LEAD = 0.7
+# A password decrypted from a GPP cpassword.
+GPP_LEAD = 0.85
 
 
 def safe_name(name: str, fallback: str = "piece.bin") -> str:
@@ -323,6 +325,21 @@ def walk(
         # config value): the decoding chains above only see the text as a
         # whole, so each long string is decoded on its own.
         if decode and not visit.reader and piece.size <= AUTO_SIZE_LIMIT:
+            # A GPP cpassword is not guessed: the key is public (MS-GPPREF).
+            for entry in gpp.find_cpasswords(piece.data):
+                if entry.password:
+                    who = f" of {entry.user}" if entry.user else ""
+                    children.append(
+                        (
+                            readers.Child(
+                                name=f"GPP password{who}",
+                                origin=f"GPP cpassword{who}, decrypted (MS-GPPREF key)",
+                                data=entry.password.encode("utf-8"),
+                            ),
+                            "",
+                            "ctfc detect {file}",
+                        )
+                    )
             for name, decoded in embedded_blobs(piece.data):
                 children.append(
                     (readers.Child(name=name, origin=name, data=decoded), "", "ctfc auto {file}")
@@ -514,6 +531,18 @@ def solve(
                 )
         else:
             report.steps.append(f"{piece.name}: {_describe(piece.data)}, no reader claims it")
+
+        if piece.origin.startswith("GPP cpassword"):
+            # A domain password is often the answer itself, flag or not.
+            leads.append(
+                Lead(
+                    title=piece.name,
+                    why=f"{piece.origin}: {piece.data.decode('utf-8', 'replace')[:80]}",
+                    score=GPP_LEAD,
+                    command=piece.trail[-1] if piece.trail else f"ctfc detect {piece.disk}",
+                    preview=piece.data.decode("utf-8", "replace")[:120],
+                )
+            )
 
         if visit.carved is not None:
             report.steps.append(
