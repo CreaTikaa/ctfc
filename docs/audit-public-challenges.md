@@ -221,3 +221,26 @@ Les autres sont hors scope : codebreaker (QR, zbarimg suggéré), tiny_10px (ima
 agrandie), I_wanna_be_a_streamer (flux RTP vidéo), Surveillance_of_sus (cache
 bitmap RDP `RDP8bmp` à reconstruire, bmc-tools). Seul l'ISO était dans le périmètre
 sans OCR ; il est maintenant lu.
+
+## Quatrième audit public (2026-11-12) — DEADFACE + TJCTF
+
+Via le miroir `sajjadium/ctf-archives` (livre les handouts, pas les flags).
+
+**DEADFACE 2024 (net)** : **Data_Breach** et **Wild_Wild_West** sortent le flag
+seuls (fuite dans un en-tête HTTP, Kerberos kerbrute). Les autres challenges
+DEADFACE sont du Q/R d'investigation (le flag est une réponse à déduire, pas une
+chaîne dans le fichier) — ctfc remonte les preuves mais ne peut pas auto-flagger.
+Bug trouvé et corrigé : un flag à corps fort (`flag{kerbrute_finding_users}`)
+noyé dans du binaire était rétrogradé en piste tandis qu'un doublon préfixé par
+la realm (`LOCALflag{...}`) gagnait — la rétrogradation « entouré de binaire »
+ne s'applique plus qu'aux corps faibles (court, sans underscore).
+
+**TJCTF 2024 (forensic)** : **conversations** (`.pcap.xz`) sort le flag via la
+chaîne xz→pcap. **thatsmyjam** (image **ext4** de 199 Mo en `.img.gz`) : le flag
+était à 64 Mo, au-delà du plafond de décompression de 8 Mo — relevé à 512 Mo, le
+disque est décompressé en entier et le flag trouvé sans reader de système de
+fichiers. Restent hors scope : minisculest (PNG aux dimensions truquées, flag
+visuel), pals (visuel), purified (image QOI).
+
+Capacité majeure encore absente, repérée ici : un **reader ext4/FAT** (image
+disque), gros module mais très courant — 7z/`debugfs` seraient la vérité terrain.
