@@ -494,6 +494,21 @@ def _toolchain_child(found) -> list[Child]:
     ]
 
 
+def _exe_claims(data: bytes) -> bool:
+    """Does the executable reader claim this file?
+
+    An APK is a ZIP whose payload is resources and a classes.dex: the ZIP
+    reader walks it and reaches res/, assets/, the manifest - where a flag
+    usually hides - so it is left to that reader, not dead-ended here. A raw
+    .dex, an ELF, a .class or a .jar (read for its class constant pools) are
+    ours.
+    """
+    kind = executable.sniff(data)
+    if kind == "dex" and data[:4] == b"PK\x03\x04":
+        return False  # an APK: let the zip reader walk it
+    return kind in ("elf", "class", "jar", "dex")
+
+
 def _open_exe(data: bytes, flagset: FlagSet | None, path: str) -> Opened:
     report = executable.analyse(data, flagset)
     children: list[Child] = []
@@ -707,7 +722,7 @@ READERS: tuple[Reader, ...] = (
         "exe",
         "ELF, Java class/JAR, Android DEX",
         "ctfc exe",
-        lambda data: executable.sniff(data) in ("elf", "class", "jar", "dex"),
+        _exe_claims,
         _open_exe,
     ),
     Reader(

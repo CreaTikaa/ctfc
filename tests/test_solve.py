@@ -208,3 +208,27 @@ def test_report_round_trips_through_json():
     payload = json.loads(json.dumps(report.to_dict()))
     assert payload["flags"][0]["text"] == FLAG.decode()
     assert payload["path"] == "note.txt"
+
+
+def test_an_apk_is_walked_as_a_zip_not_dead_ended():
+    """An APK is a ZIP full of resources: solve must walk it, not stop at the DEX.
+
+    Found auditing picoCTF "Mob psycho", where the flag is a hex string in
+    res/color/flag.txt inside the APK. The exe reader used to claim the APK and
+    refuse it ("extract classes.dex"); it now leaves an APK to the zip reader.
+    """
+    import binascii
+
+    dex = b"dex\n035\x00" + bytes(200)  # enough to make the sniffer say "dex"
+    members = {"classes.dex": dex, "res/color/flag.txt": binascii.hexlify(FLAG)}
+    report = solve(zip_of(members), "app.apk")
+
+    assert [flag.text for flag in report.flags] == [FLAG.decode()]
+    assert "flag.txt" in report.flags[0].where
+
+
+def test_a_raw_dex_still_goes_to_the_exe_reader():
+    """The APK carve-out must not change a bare .dex: the exe reader keeps it."""
+    from ctfc.core.readers import sniff
+
+    assert sniff(b"dex\n035\x00" + bytes(200)) == "exe"
