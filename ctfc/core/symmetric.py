@@ -399,6 +399,13 @@ def materials(
     salt: bytes | None,
 ) -> Iterator[Material]:
     """Every (key, maybe IV) worth trying for this cipher, likeliest first."""
+    if key is not None and spec.key_range is not None:
+        # A cipher that takes any key length (RC4: 1..256 bytes) uses the key it
+        # was given, at its own length. The loop below only tries the usual
+        # sizes, so a 20-character RC4 key was resized and never worked.
+        for form in decoded_forms(key, "key"):
+            if spec.key_ok(form.data) and len(form.data) not in spec.key_sizes:
+                yield Material(form.data, form.reason)
     for key_size in spec.key_sizes:
         iv_size = spec.block_size if spec.block_size > 1 else (spec.nonce_sizes or (8,))[0]
 

@@ -422,3 +422,19 @@ def test_modes_match_the_openssl_binary(tmp_path, mode, openssl_mode):
     result = subprocess.run(arguments, capture_output=True, timeout=30)
     assert result.returncode == 0, result.stderr.decode()
     assert decrypt_raw(CIPHERS["aes"], mode, key, iv, result.stdout) == plain
+
+
+def test_an_rc4_key_of_an_unusual_length_is_tried_as_given():
+    """RC4 takes any key from 1 to 256 bytes: a 20-character key must be used as is.
+
+    Found on HTB CA2024 "Game Invitation", where the key is a 20-character
+    command-line argument: the solver only tried it resized to 16/32/8/5 bytes,
+    so the right key never decrypted anything.
+    """
+    from Crypto.Cipher import ARC4
+
+    key = b"vF8rdgMHKBrvCoCp0ulm"
+    plaintext = b"var stage = 'this is perfectly readable javascript for the next step';"
+    report = solve_symmetric(ARC4.new(key).encrypt(plaintext), cipher="rc4", key=key)
+    assert report.candidates[0].data == plaintext
+    assert "as given" in report.candidates[0].label
