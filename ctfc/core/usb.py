@@ -49,6 +49,8 @@ USB_LINK_TYPES = (LINK_USB_LINUX, LINK_USB_LINUX_MMAPPED, LINK_USBPCAP)
 HID_REPORT_SIZE = 8  # a boot-protocol keyboard report
 # Modifier bits of byte 0 that mean "shift is held" (left or right).
 SHIFT_BITS = 0x22
+# ... and "Ctrl is held" (left 0x01, right 0x10).
+CTRL_BITS = 0x11
 # Keycodes handled on their own rather than through the table below.
 KEY_ENTER = 0x28
 KEY_BACKSPACE = 0x2A
@@ -168,28 +170,55 @@ class Keystrokes:
     notes: list[str] = field(default_factory=list)
 
 
+def _delete_word(out: list[str]) -> None:
+    """Ctrl+Backspace: delete the word before the cursor, as a text field does.
+
+    Trailing spaces go first, then either a run of word characters (letters,
+    digits, underscore) or, if the cursor sits after punctuation, that one run
+    of punctuation.
+    """
+    while out and out[-1] in " \t":
+        out.pop()
+    if not out:
+        return
+    is_word = out[-1].isalnum() or out[-1] == "_"
+    while out and out[-1] not in " \t\n" and (out[-1].isalnum() or out[-1] == "_") == is_word:
+        out.pop()
+
+
 def decode_reports(reports: list[bytes]) -> tuple[str, list[str]]:
     """Turn a list of 8-byte keyboard reports into the text that was typed.
 
-    Backspace deletes, Enter and Tab become real characters, Caps Lock toggles the
-    letter case. Keys with no printable character (F1, arrows, Ctrl combinations)
-    are skipped but counted, and the count is reported so nothing is silently lost.
+    A report lists every key HELD at that moment, not the keys just pressed: a
+    fast typist's "t" then "r" arrives as [t], [t, r], [r], []. So a character
+    is typed only for a key that was not already in the previous report - and
+    the empty "all released" reports must stay in the list for that to work.
+
+    Backspace deletes a character, Ctrl+Backspace a word, Enter and Tab become
+    real characters, Caps Lock toggles the letter case. Keys with no printable
+    character (F1, arrows, other Ctrl combinations) are skipped but counted, and
+    the count is reported so nothing is silently lost.
     """
     out: list[str] = []
     notes: list[str] = []
     caps = False
     skipped = 0
+    held: set[int] = set()
     for report in reports:
         modifiers = report[0]
         shift = bool(modifiers & SHIFT_BITS)
-        for code in report[2:]:
-            if code == 0:
-                continue
+        ctrl = bool(modifiers & CTRL_BITS)
+        now = {code for code in report[2:] if code > 3}  # 1-3: roll-over error codes
+        pressed = [code for code in report[2:] if code > 3 and code not in held]
+        held = now
+        for code in pressed:
             if code == KEY_CAPSLOCK:
                 caps = not caps
                 continue
             if code == KEY_BACKSPACE:
-                if out:
+                if ctrl:
+                    _delete_word(out)
+                elif out:
                     out.pop()
                 continue
             if code in (KEY_ENTER, KEY_KEYPAD_ENTER):
@@ -199,8 +228,8 @@ def decode_reports(reports: list[bytes]) -> tuple[str, list[str]]:
                 out.append("\t")
                 continue
             pair = KEYMAP.get(code)
-            if pair is None:
-                skipped += 1
+            if pair is None or ctrl:
+                skipped += 1  # no character, or a shortcut (Ctrl+C, Ctrl+V...)
                 continue
             character = pair[1] if shift else pair[0]
             # Caps Lock affects letters only, and flips what shift decided.
@@ -227,15 +256,16 @@ def extract_keystrokes(frames: list[bytes], link_type: int) -> list[Keystrokes]:
         data = usb_payload(frame, link_type)
         if not looks_like_keyboard_report(data):
             continue
-        if not any(data[2:]):
-            continue  # all keys released: carries no character
+        # The "all released" reports are kept: they are what tells a second
+        # press of the same key ("ll") apart from the key being held.
         per_device.setdefault(usb_device(frame, link_type), []).append(data)
     results = []
     for device, reports in per_device.items():
         text, notes = decode_reports(reports)
         if not text:
             continue
-        results.append(Keystrokes(device=device, text=text, reports=len(reports), notes=notes))
+        typed = sum(1 for report in reports if any(report[2:]))
+        results.append(Keystrokes(device=device, text=text, reports=typed, notes=notes))
     # The device that typed the most is almost always the interesting one.
     results.sort(key=lambda item: -len(item.text))
     return results
@@ -260,7 +290,7 @@ def snippet(link_type: int) -> str:
         "reports = []\n"
         "for frame in frames:\n"
         f"    {strip}\n"
-        "    if looks_like_keyboard_report(data) and any(data[2:]):\n"
+        "    if looks_like_keyboard_report(data):  # keep the releases too\n"
         "        reports.append(data)\n"
         "print(decode_reports(reports)[0])\n"
     )
