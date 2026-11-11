@@ -26,6 +26,8 @@ see the disagreements a well-behaved reader hides.
 
 from __future__ import annotations
 
+import io
+import zipfile
 from dataclasses import dataclass, field
 
 from ctfc.core import crc32, timestamps
@@ -259,6 +261,9 @@ class ZipReport:
     trailing: int = 0
     notes: list[str] = field(default_factory=list)
     commands: list[str] = field(default_factory=list)
+    # Filled by crack_with_wordlist: the password and the entry it opened.
+    password: str = ""
+    opened_entry: str = ""
 
     def to_dict(self) -> dict:
         return {
@@ -284,6 +289,8 @@ class ZipReport:
             ],
             "notes": list(self.notes),
             "commands": list(self.commands),
+            "password": self.password,
+            "opened_entry": self.opened_entry,
         }
 
 
@@ -354,3 +361,54 @@ def analyse(data: bytes, path: str = "archive.zip", budget: Budget | None = None
             "appended. `ctfc detect` the whole thing"
         )
     return report
+
+
+def _open_with(data: bytes, entry_name: str, password: bytes) -> bytes | None:
+    """Open one entry with a password, letting `zipfile` verify it.
+
+    `zipfile.read` checks the 1-byte password check AND the CRC32 of the
+    decompressed output, so a value coming back is a real hit, not a 1-in-256
+    coincidence. Any failure (wrong password, unsupported method) is a `None`.
+    """
+    try:
+        with zipfile.ZipFile(io.BytesIO(data)) as archive:
+            archive.setpassword(password)
+            return archive.read(entry_name)
+    except (RuntimeError, zipfile.BadZipFile, NotImplementedError, OSError, ValueError):
+        return None
+
+
+def crack_with_wordlist(
+    data: bytes,
+    report: ZipReport,
+    words: tuple[bytes, ...],
+    budget: Budget | None = None,
+) -> None:
+    """Try each word as the password of the first encrypted entry, stop on a hit.
+
+    This is the "the password is in a word list" case, the counterpart to the
+    known-plaintext attack `ctfc tools` prints for ZipCrypto. The smallest
+    encrypted entry is chosen, because `zipfile` decompresses what it reads and
+    a small entry makes the per-word check cheapest. The recovered password is
+    recorded on the report; nothing is written to disk.
+    """
+    encrypted = [entry for entry in report.entries if entry.encrypted]
+    if not encrypted or not words:
+        return
+    target = min(encrypted, key=lambda entry: entry.compressed_size or 1 << 62)
+    for word in words:
+        if budget is not None and not budget.spend():
+            report.notes.append(
+                f"stopped after {budget.attempts} password(s): none worked (raise the budget "
+                "or the word list)"
+            )
+            return
+        if _open_with(data, target.name, word) is not None:
+            report.password = word.decode("utf-8", "replace")
+            report.opened_entry = target.name
+            report.notes.append(
+                f"the password is {report.password!r} (opens {target.name!r}): "
+                f"unzip -P {report.password} {{file}}"
+            )
+            return
+    report.notes.append(f"none of the {len(words)} word(s) is the password")

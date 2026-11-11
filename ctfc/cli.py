@@ -208,6 +208,8 @@ def build_parser() -> argparse.ArgumentParser:
     p = add("zip")
     p.add_argument("input", help=t("arg_archive"))
     p.add_argument("--seconds", type=float, default=30.0, help=t("opt_seconds"))
+    p.add_argument("--wordlist", help=t("opt_wordlist"))
+    p.add_argument("--wordlist-limit", type=int, default=1_000_000, help=t("opt_wordlist_limit"))
 
     p = add("time")
     p.add_argument("value", help=t("arg_time"))
@@ -1110,6 +1112,10 @@ def cmd_zip(args: argparse.Namespace, config: Config, console: Console) -> int:
     inp = parse_input(args.input, decode_bare=False)
     budget = Budget(max_attempts=20_000_000, max_seconds=args.seconds)
     report = zipinfo.analyse(inp.data, args.input, budget)
+    words = wordlist_from(args, console)
+    if words is not None:
+        crack_budget = Budget(max_attempts=len(words), max_seconds=args.seconds)
+        zipinfo.crack_with_wordlist(inp.data, report, words, crack_budget)
     remember(args, config, inp.data, args.input, summary=report.notes[:4])
     if args.json:
         print(json.dumps({"input": input_to_dict(inp), **report.to_dict()}, indent=2))
