@@ -177,6 +177,8 @@ def score(
             reasons.append(f"matches flag pattern: {hit.text[:80]}")
         elif hit.how == "base64":
             reasons.append(f"contains a base64-encoded flag: {hit.text[:80]}")
+        elif hit.how.startswith("utf-16"):
+            reasons.append(f"matches flag pattern in {hit.how.upper()} text: {hit.text[:80]}")
         else:
             reasons.append(hit.text)
         flag_strength = max(flag_strength, hit.strength)

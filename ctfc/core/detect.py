@@ -27,7 +27,7 @@ from functools import lru_cache
 
 from ctfc.core import classical, encodings, keyhunt, prng, secrets
 from ctfc.core.datafiles import load_toml
-from ctfc.core.flags import FlagSet, default_flagset, find_flags
+from ctfc.core.flags import FlagSet, default_flagset, hunt_flags
 from ctfc.core.magic import (
     find_embedded,
     find_trailing_data,
@@ -225,7 +225,7 @@ def _dedupe(guesses: list[Guess]) -> list[Guess]:
 
 def _check_flags(data: bytes, flagset: FlagSet | None, prefix: str = "") -> list[Guess]:
     guesses = []
-    for hit in find_flags(data, flagset)[:5]:
+    for hit in hunt_flags(data, flagset)[:5]:
         if hit.how == "base64-prefix":
             guesses.append(
                 Guess(
@@ -237,7 +237,9 @@ def _check_flags(data: bytes, flagset: FlagSet | None, prefix: str = "") -> list
                 )
             )
             continue
-        how = "in clear" if hit.how == "plain" else "base64-encoded"
+        how = "in clear" if hit.how == "plain" else f"{hit.how}-encoded"
+        if hit.how == "reversed":
+            how = "written backwards"
         guesses.append(
             Guess(
                 rule="flag",

@@ -20,7 +20,7 @@ from pathlib import Path
 from ctfc.core.auto import auto_decode
 from ctfc.core.budget import Budget
 from ctfc.core.detect import detect
-from ctfc.core.flags import FlagSet, find_flags
+from ctfc.core.flags import FlagSet, hunt_flags
 from ctfc.core.magic import match_signature
 from ctfc.core.scoring import score
 from ctfc.core.types import Candidate
@@ -164,8 +164,9 @@ def scan_file(
     # The interest score is built from independent signals, strongest first. Each
     # one says *why* in its own words, because "0.75" on its own helps nobody.
 
-    # 1. Is the flag simply in there? Cheapest and best signal of all.
-    hits = find_flags(data, flagset)
+    # 1. Is the flag in there, as it is or one layer down (hex, base64, UTF-16,
+    #    backwards)? Cheapest and best signal of all.
+    hits = hunt_flags(data, flagset)
     if hits:
         result.interest = max(hit.strength for hit in hits)
         result.reasons.append(f"contains a flag: {hits[0].text[:60]}")

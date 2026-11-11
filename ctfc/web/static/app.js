@@ -1826,6 +1826,24 @@ function renderSolve(answer) {
       results.append(line);
     }
   }
+  // Parts of a flag (a start with no end, an end with no start): the clue that
+  // sends you to the other half. Hidden when they are inside the flag above.
+  const flagTexts = (answer.flags || []).map((flag) => flag.text);
+  const loose = (answer.fragments || []).filter(
+    (fragment) => !flagTexts.some((text) => text.includes(fragment.text)),
+  );
+  if (loose.length) {
+    results.append(el("p", "", T("web_solve_fragments")));
+    for (const fragment of loose.slice(0, 8)) {
+      const line = el("div", "command");
+      line.append(el("code", "", fragment.text));
+      line.append(copyButton(T("web_copy"), () => fragment.text));
+      line.append(
+        el("div", "dim", fragment.side + ", " + fragment.how + " - " + fragment.where),
+      );
+      results.append(line);
+    }
+  }
   if (answer.notes && answer.notes.length) renderNotes(answer.notes);
 }
 

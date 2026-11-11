@@ -41,9 +41,18 @@ from dataclasses import dataclass, field
 from ctfc.core import readers
 from ctfc.core.auto import auto_decode
 from ctfc.core.budget import Budget
-from ctfc.core.flags import FlagSet, find_flags
+from ctfc.core.flags import (
+    ASSEMBLED_STRENGTH,
+    DECODE_RUN_RE,
+    WEAK_GENERIC_STRENGTH,
+    FlagSet,
+    Fragment,
+    assemble,
+    decode_run,
+    hunt,
+)
 from ctfc.core.magic import match_signature
-from ctfc.core.scoring import score
+from ctfc.core.scoring import printable_ratio, score
 
 # A piece bigger than this is fingerprinted and opened, but not pushed through
 # the decoding chains: `auto` is for payloads, not for disk images.
@@ -60,6 +69,15 @@ LEAD_SCORE = 0.45
 CARVE_ALSO = {"stego", "pdf"}
 # Plain readable text is the weakest finding: cap it, like `ctfc scan` does.
 PLAIN_TEXT_CAP = 0.5
+# Embedded blobs: a base64 / hex string at least this long inside a text piece
+# is decoded, and followed when it turns into readable text or a known file.
+BLOB_MIN_CHARS = 64
+MAX_BLOBS = 10
+TEXT_PIECE = 0.85  # printable ratio above which a piece is "a text"
+# A flag-shaped string that may be chance: shown first among the leads.
+WEAK_FLAG_LEAD = 0.6
+# The base64 of the flag prefix, with no whole flag behind it.
+PREFIX_LEAD = 0.7
 
 
 def safe_name(name: str, fallback: str = "piece.bin") -> str:
@@ -127,6 +145,18 @@ class Lead:
 
 
 @dataclass
+class FragmentFound:
+    """Part of a flag, and the piece it was in."""
+
+    fragment: Fragment
+    where: str
+    trail: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict:
+        return {**self.fragment.to_dict(), "where": self.where, "trail": list(self.trail)}
+
+
+@dataclass
 class SolveReport:
     """What the walk found, in the order a human wants to read it."""
 
@@ -135,6 +165,9 @@ class SolveReport:
     read_as: str = ""  # the reader that claimed the original file
     flags: list[FlagFound] = field(default_factory=list)
     leads: list[Lead] = field(default_factory=list)
+    # Parts of a flag seen along the way ("CYBN{half_one", "half_two}"), with
+    # the piece each came from. They never stop the walk on their own.
+    fragments: list[FragmentFound] = field(default_factory=list)
     steps: list[str] = field(default_factory=list)  # the walk, one line per piece
     notes: list[str] = field(default_factory=list)
     pieces: int = 0
@@ -147,6 +180,7 @@ class SolveReport:
             "read_as": self.read_as,
             "flags": [flag.to_dict() for flag in self.flags],
             "leads": [lead.to_dict() for lead in self.leads],
+            "fragments": [fragment.to_dict() for fragment in self.fragments],
             "steps": list(self.steps),
             "notes": list(self.notes),
             "pieces": self.pieces,
@@ -285,6 +319,15 @@ def walk(
                     )
                 )
 
+        # Blobs written inside a text (a script's `$payload = "<base64>"`, a
+        # config value): the decoding chains above only see the text as a
+        # whole, so each long string is decoded on its own.
+        if decode and not visit.reader and piece.size <= AUTO_SIZE_LIMIT:
+            for name, decoded in embedded_blobs(piece.data):
+                children.append(
+                    (readers.Child(name=name, origin=name, data=decoded), "", "ctfc auto {file}")
+                )
+
         yield visit
 
         # Queue what came out, once each, and remember how to get at it.
@@ -321,6 +364,39 @@ def walk(
             )
 
 
+def embedded_blobs(data: bytes) -> list[tuple[str, bytes]]:
+    """Long base64 / hex strings inside a text that decode to something real.
+
+    "Something real" is readable text (the next stage of a dropper) or bytes
+    that start with a known file signature (a ZIP, a PE, a gzip stream). Random
+    decodings of words that happen to be base64-shaped are neither, so they are
+    dropped here rather than followed.
+
+    Returns [(label, decoded bytes)], at most MAX_BLOBS, longest first.
+    """
+    if printable_ratio(data[:4096])[0] < TEXT_PIECE:
+        return []
+    text = data.decode("latin-1")
+    runs = sorted(
+        (match for match in DECODE_RUN_RE.finditer(text) if len(match.group(0)) >= BLOB_MIN_CHARS),
+        key=lambda match: len(match.group(0)),
+        reverse=True,
+    )
+    found: list[tuple[str, bytes]] = []
+    for match in runs:
+        if len(found) >= MAX_BLOBS:
+            break
+        if match.start() == 0 and match.end() == len(text.rstrip()):
+            continue  # the whole piece is the blob: the decoding chains have it
+        for how, decoded_text in decode_run(match.group(0)):
+            decoded = decoded_text.encode("latin-1")
+            readable = len(decoded) >= 32 and printable_ratio(decoded)[0] >= 0.9
+            if readable or match_signature(decoded) is not None:
+                found.append((f"{how} string at offset {match.start()}", decoded))
+                break
+    return found
+
+
 def solve(
     data: bytes,
     path: str = "file",
@@ -349,14 +425,46 @@ def solve(
             detail = opened.detail if opened else ""
             report.read_as = f"{label} ({detail})" if detail else label
 
-        # 1. Is the flag simply in there? This is the whole point of the walk.
-        for hit in find_flags(piece.data, flagset):
+        # 1. Is the flag in there - as it is, or one layer down (a hex or
+        #    base64 string, UTF-16, backwards)? This is the whole point of the walk.
+        found = hunt(piece.data, flagset)
+        for fragment in found.fragments:
+            if not any(seen.fragment.text == fragment.text for seen in report.fragments):
+                report.fragments.append(FragmentFound(fragment, piece.name, list(piece.trail)))
+        for hit in found.flags:
+            if hit.how == "base64-prefix":
+                # "CYBN{" seen in base64, the rest not decoded into a whole flag:
+                # a part of a flag (the fragments above have it when it decodes),
+                # so the walk goes on - it may find the other part.
+                leads.append(
+                    Lead(
+                        title=f"{piece.name}: base64 of a flag prefix",
+                        why=hit.text,
+                        score=PREFIX_LEAD,
+                        command=f"ctfc auto {piece.disk}",
+                        preview=hit.encoded[:120],
+                    )
+                )
+                continue
+            if hit.strength <= WEAK_GENERIC_STRENGTH:
+                # "W1{!Tgxk3b}": flag-shaped, but as likely chance. Worth a look,
+                # not worth stopping the walk for.
+                leads.append(
+                    Lead(
+                        title=f"{piece.name}: flag-shaped {hit.text[:60]}",
+                        why="has the XXX{...} shape, but a short body and no known prefix",
+                        score=WEAK_FLAG_LEAD,
+                        command=f"ctfc detect {piece.disk}",
+                        preview=hit.text[:120],
+                    )
+                )
+                continue
             if not any(found.text == hit.text for found in report.flags):
                 report.flags.append(
                     FlagFound(
                         text=hit.text,
                         where=piece.name,
-                        how=piece.origin,
+                        how=piece.origin if hit.how == "plain" else f"{piece.origin}; {hit.how}",
                         strength=hit.strength,
                         trail=list(piece.trail),
                     )
@@ -441,6 +549,8 @@ def solve(
                     )
                 )
 
+    if not report.flags:
+        report.flags = _assembled(report.fragments, flagset)
     report.flags = _dedupe_flags(report.flags)
     report.budget = budget.summary()
     if not report.flags:
@@ -453,6 +563,35 @@ def solve(
                 "of `ctfc serve` to run a reader by hand"
             )
     return report
+
+
+def _assembled(fragments: list[FragmentFound], flagset: FlagSet | None) -> list[FlagFound]:
+    """The flag two fragments make together, when the walk found no whole one.
+
+    Challenges split the flag ("half of it in the SSH key comment, backwards,
+    the other half in base64 in a crontab"). When an opening and a closing
+    fragment join into something that passes the flag check, that is the
+    answer - reported with where both halves were, and a lower strength than a
+    flag found whole.
+    """
+    by_text = {found.fragment.text: found for found in fragments}
+    flags = []
+    for flag in assemble([found.fragment for found in fragments], flagset):
+        halves = [found for text, found in by_text.items() if flag.startswith(text)]
+        halves += [found for text, found in by_text.items() if flag.endswith(text)]
+        where = " + ".join(dict.fromkeys(half.where for half in halves))
+        how = " + ".join(f"{half.fragment.side}: {half.fragment.how}" for half in halves)
+        trail = [command for half in halves for command in half.trail]
+        flags.append(
+            FlagFound(
+                text=flag,
+                where=where,
+                how=f"assembled from two fragments ({how})",
+                strength=ASSEMBLED_STRENGTH,
+                trail=list(dict.fromkeys(trail)),
+            )
+        )
+    return flags
 
 
 def _dedupe_flags(flags: list[FlagFound]) -> list[FlagFound]:

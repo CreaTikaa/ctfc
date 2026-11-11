@@ -369,9 +369,38 @@ def _open_msi(data: bytes, flagset: FlagSet | None, path: str) -> Opened:
     )
 
 
+# The order a capture's objects are walked in. A busy capture has thousands of
+# them and only CHILD_LIMIT are followed, so the ones a challenge hides things in
+# come first: what was typed or sent as a password, mail, HTTP, then DNS
+# exfiltration, and only then the raw TCP/UDP payloads, which are mostly noise.
+PCAP_KIND_ORDER = {
+    "usb-keystrokes": 0,
+    "radius-pap": 0,
+    "mail-body": 1,
+    "mail-attachment": 1,
+    "http-body": 2,
+    "http-request": 2,
+    "dns-exfil": 3,
+    "tcp-stream": 4,
+    "udp-payload": 5,
+}
+
+
+def _pcap_priority(item: pcap.Extracted) -> tuple[int, int]:
+    """Sort key for a capture object: by kind, and the biggest DNS stream first.
+
+    Every domain a browser touched becomes a "dns-exfil" candidate (google.com,
+    akamaiedge.net...) with a handful of queries; the real tunnel has thousands.
+    Size sorts it to the front of its kind. Other kinds keep capture order.
+    """
+    rank = PCAP_KIND_ORDER.get(item.kind, 4)
+    return (rank, -len(item.data) if item.kind == "dns-exfil" else 0)
+
+
 def _open_pcap(data: bytes, flagset: FlagSet | None, path: str) -> Opened:
     report = pcap.analyse(data, path)
-    children = [Child(item.name, f"capture: {item.kind}", item.data) for item in report.objects]
+    objects = sorted(report.objects, key=_pcap_priority)  # sorted() keeps ties in order
+    children = [Child(item.name, f"capture: {item.kind}", item.data) for item in objects]
     return Opened(
         detail=f"{report.format}, {report.packets} packets, {len(report.objects)} object(s)",
         children=_keep(children),

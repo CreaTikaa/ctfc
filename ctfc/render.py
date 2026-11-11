@@ -531,6 +531,22 @@ def print_solve(console: Console, report, show_steps: bool = False) -> None:
     else:
         console.print(f"\n[yellow]Nothing came out[/] of {report.pieces} piece(s).")
 
+    # Parts of a flag: shown when they are not already inside the flag above,
+    # because a half flag is exactly the clue that sends you to the other half.
+    loose = [
+        found
+        for found in getattr(report, "fragments", [])
+        if not any(found.fragment.text in flag.text for flag in report.flags)
+    ]
+    if loose:
+        console.print("\n[magenta]Flag fragments[/]: a start with no end, or an end with no start")
+        for found in loose[:8]:
+            fragment = found.fragment
+            console.print(
+                f"  [magenta]{safe(fragment.text, 80)}[/]  [dim]{fragment.side}, {fragment.how},"
+                f" in {safe(found.where, 70)}[/]"
+            )
+
     for note in report.notes:
         console.print(f"[cyan]*[/] {safe(note)}")
     if report.budget:

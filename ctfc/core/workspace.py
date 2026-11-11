@@ -42,7 +42,7 @@ from pathlib import Path
 from ctfc.core import archive as archive_module
 from ctfc.core import keyhunt, secrets, zipinfo
 from ctfc.core.budget import Budget
-from ctfc.core.flags import FlagSet, find_flags
+from ctfc.core.flags import FlagSet, find_flags, hunt_flags
 from ctfc.core.scan import list_files
 from ctfc.core.solve import walk
 from ctfc.core.symmetric import CryptoError, solve_symmetric
@@ -455,7 +455,7 @@ def _read_everything(
             piece = visit.piece
 
             # A flag that simply falls out while reading is still the answer.
-            for hit in find_flags(piece.data, flagset):
+            for hit in hunt_flags(piece.data, flagset):
                 if hit.text not in report.flags:
                     report.flags.append(hit.text)
 

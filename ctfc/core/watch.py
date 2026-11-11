@@ -31,7 +31,7 @@ from pathlib import Path
 from ctfc.core.auto import auto_decode
 from ctfc.core.budget import Budget
 from ctfc.core.detect import detect
-from ctfc.core.flags import FlagSet, find_flags
+from ctfc.core.flags import FlagSet, find_flags, hunt_flags
 from ctfc.core.magic import match_signature
 
 # A file this big is not triaged automatically: `ctfc detect` on a 2 GB memory
@@ -88,7 +88,7 @@ def triage(path: Path, flagset: FlagSet | None = None) -> Finding:
     report = detect(data, flagset)
     finding.kind = signature.name if signature is not None else report.charset or "data"
 
-    found = [hit.text for hit in find_flags(data, flagset)]
+    found = [hit.text for hit in hunt_flags(data, flagset)]
     budget = Budget(max_attempts=ATTEMPTS_PER_FILE, max_seconds=SECONDS_PER_FILE)
     candidates = auto_decode(data, flagset=flagset, budget=budget, top_n=1)
     if candidates:

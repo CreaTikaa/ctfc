@@ -440,6 +440,7 @@ EN: dict[str, str] = {
     "web_solve_read_as": "read as",
     "web_solve_found_in": "found in",
     "web_solve_leads": "No flag. The most promising pieces, best first:",
+    "web_solve_fragments": "Flag fragments (a start with no end, or an end with no start):",
     "web_solve_steps": "what the walk did",
     "web_solve_pieces": "piece(s) looked at",
     "web_solve_depth": "how deep to follow (default 5)",

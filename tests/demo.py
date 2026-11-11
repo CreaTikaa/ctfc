@@ -52,6 +52,22 @@ def commands(scratch: Path) -> list[Demo]:
         Demo(["solve", f("archive_lzma.7z")], "CYBN{sevenzip_lzma}", why="solve: a 7z"),
         Demo(["solve", f("audit_macro.docm")], "CYBN{fixture_vba_macro}", why="solve: a macro"),
         Demo(["solve", f("audit_malicious.pdf")], "CYBN{", why="solve: a PDF"),
+        Demo(
+            ["solve", f("hunt_dns_tunnel.pcap")],
+            "CYBN{dns_tunn3l_in_cl34r}",
+            why="solve: DNS tunnel, hex",
+        ),
+        Demo(
+            ["solve", f("hunt_split_flag.zip")],
+            "CYBN{h4lf_0n3_4nd_h4lf_tw0!}",
+            why="solve: two halves",
+        ),
+        Demo(
+            ["solve", f("hunt_two_stage.ps1")],
+            "CYBN{st4g3_tw0_r3v3rs3d_b64}",
+            why="solve: reversed stage 2",
+        ),
+        Demo(["solve", f("hunt_utf16.bin")], "CYBN{wid3_ch4r_fl4g}", why="solve: UTF-16 flag"),
         Demo(["timeline", f("winartifact_dropper.lnk")], "shortcut target", why="timeline: a .lnk"),
         Demo(
             ["timeline", FIXTURES, "--no-filesystem"],

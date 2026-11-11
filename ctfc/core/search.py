@@ -26,7 +26,7 @@ import binascii
 import re
 from dataclasses import dataclass, field
 
-from ctfc.core.flags import FlagSet, base64_forms, default_flagset, find_flags
+from ctfc.core.flags import FlagSet, base64_forms, default_flagset, hunt_flags
 
 # What is sent back per match. Enough to read it in context and to know where it
 # was, and no more: a search over a 64 MB dump must not answer with 64 MB.
@@ -155,7 +155,7 @@ def search_flags(data: bytes, flagset: FlagSet | None = None) -> SearchReport:
         patterns.append(f"{prefix} in base64 ({regex.pattern})")
     report.searched = patterns
 
-    for hit in find_flags(data, flagset):
+    for hit in hunt_flags(data, flagset):
         offset = _offset_of(data, hit.encoded or hit.text)
         context = ""
         if offset >= 0:
@@ -172,7 +172,8 @@ def search_flags(data: bytes, flagset: FlagSet | None = None) -> SearchReport:
         )
     if not report.matches:
         report.notes.append(
-            "no flag in any of the forms searched (plain, base64 at each alignment). "
+            "no flag in any of the forms searched (plain, UTF-16, backwards, and every "
+            "hex or base64 string decoded). "
             "The prefixes come from ~/.ctfc/config.toml: add the CTF's own there"
         )
         for prefix in {prefix for _regex, prefix in flagset.b64_prefixes}:

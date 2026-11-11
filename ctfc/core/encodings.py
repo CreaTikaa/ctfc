@@ -404,12 +404,23 @@ def rot47_decode(data: bytes) -> bytes:
     return bytes(out)
 
 
+# Below this length, a base64-looking word is not worth reading backwards.
+REVERSE_B64_MIN = 64
+
+
 def reverse_ok(data: bytes) -> bool:
     """Reversed strings are a classic obfuscation (e.g. '==gZ...' = reversed base64)."""
     text = as_text(data)
     if text is None or len(text) < 4:
         return False
     if text.startswith("=") and re.fullmatch(r"=+[A-Za-z0-9+/]+", text):
+        return True
+    # Reversed base64 has no "=" at the front when its length is a multiple of
+    # 4 (PowerShell droppers: 8096 characters, reversed, no padding at all).
+    # A long base64-looking text with no padding at its END could be either
+    # way round, so reading it backwards is worth one branch of the search.
+    stripped = _no_space(text)
+    if len(stripped) >= REVERSE_B64_MIN and re.fullmatch(r"[A-Za-z0-9+/]+", stripped):
         return True
     # A reversed flag looks like "}....{FTC"
     return re.search(r"\}[^{}\n]{3,}\{[A-Za-z0-9_]{2,15}", text) is not None
