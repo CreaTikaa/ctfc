@@ -421,13 +421,24 @@ EN: dict[str, str] = {
     "web_tab_sig": "Signatures",
     "web_docs_pick": "document",
     "web_docs_terminal": (
-        "Three commands take a *folder* rather than a file, so they live in the terminal: "
-        "`ctfc scan <folder>` (detect + auto on everything in it, ranked), "
-        "`ctfc watch <folder>` (triage each new file as it lands) and "
-        "`ctfc git <folder>` (what a .git still holds that the files do not show). "
+        "Every command has its place in this page except the ones that need a *folder* or a "
+        "terminal, which a browser cannot hand over: "
+        "`ctfc scan <folder>` (detect + auto on everything in it, ranked; the Workspace tab "
+        "takes the same files dropped together), "
+        "`ctfc watch <folder>` (triage each new file as it lands), "
+        "`ctfc git <folder>` (what a .git still holds that the files do not show), "
+        "`ctfc serve` itself and `ctfc cheatsheet` (the Cheatsheet tab). "
         "`ctfc replay` writes a session out as one runnable script - the button is in the "
-        "session panel."
+        "session panel. Programs with a window (Audacity, Wireshark, Stegsolve, GIMP) are "
+        "named with their command but cannot be started from the page."
     ),
+    "web_tools_list": "External tools: installed here, or how to get them",
+    "web_rsa_also": (
+        "the same message encrypted again, one per line: <e>=<ciphertext> (same n) or "
+        "<n>,<e>=<ciphertext> (Hastad)"
+    ),
+    "web_rsa_relation": "related messages a,b (m2 = a*m1 + b)",
+    "web_file_wordlist": "ZIP password list (a path on this machine, optional)",
     "web_search": "Search",
     "web_search_pattern": "regex (empty = hunt for a flag in every form)",
     "web_search_flags": "Find a flag",
@@ -454,6 +465,18 @@ EN: dict[str, str] = {
     "web_solve_leads": "No flag. The most promising pieces, best first:",
     "web_solve_fragments": "Flag fragments (a start with no end, or an end with no start):",
     "web_solve_steps": "what the walk did",
+    "web_solve_next": "Next steps: what was found, and what to try",
+    "web_next_means": "Means",
+    "web_next_trail": "Get the piece first",
+    "web_next_by_hand": "By hand",
+    "web_next_also": "also in",
+    "web_next_tool_piece": "runs on the piece above, not on the input: copy the command",
+    "web_tool_gui": "opens a window: run it yourself",
+    "web_pieces_title": "Files inside ({count}): download one, or open it as the next input",
+    "web_piece_download": "Download",
+    "web_piece_open": "Open as input",
+    "web_piece_load": "Load this piece as the input",
+    "web_piece_loaded": "{name} is now the input: run any tab on it",
     "web_solve_pieces": "piece(s) looked at",
     "web_solve_depth": "how deep to follow (default 5)",
     "web_tab_classical": "Classical",

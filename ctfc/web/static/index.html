@@ -185,6 +185,10 @@
           <input id="rsa-q" type="text" spellcheck="false" data-t-placeholder="web_rsa_optional_ph"></label>
         <label class="wide"><span data-t="web_rsa_other">other keys or moduli (one per line): finds a shared prime</span>
           <textarea id="rsa-other" spellcheck="false"></textarea></label>
+        <label class="wide"><span data-t="web_rsa_also">the same message encrypted again, one per line: &lt;e&gt;=&lt;ciphertext&gt; (same n) or &lt;n&gt;,&lt;e&gt;=&lt;ciphertext&gt; (Hastad)</span>
+          <textarea id="rsa-also" spellcheck="false"></textarea></label>
+        <label><span data-t="web_rsa_relation">related messages a,b (m2 = a*m1 + b)</span>
+          <input id="rsa-relation" type="text" spellcheck="false" placeholder="1,1"></label>
         <label><span data-t="web_sym_seconds">time budget (s)</span>
           <input id="rsa-seconds" type="number" min="1" max="120" value="20"></label>
         <label class="checkbox"><input id="rsa-attack" type="checkbox">
@@ -287,6 +291,8 @@
           <select id="file-reader">
             <option value="" data-t="web_file_reader_auto">detect it</option>
           </select></label>
+        <label class="wide"><span data-t="web_file_wordlist">ZIP password list (a path on this machine, optional)</span>
+          <input id="file-wordlist" type="text" spellcheck="false" placeholder="~/Documents/rockyou.txt"></label>
         <span class="dim wide" data-t="web_file_help"></span>
       </div>
       <!-- Options of the Timeline tab: the file itself goes in the input box -->

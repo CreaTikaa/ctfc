@@ -47,6 +47,7 @@ from ctfc.core import readers as core_readers
 from ctfc.core.budget import Budget
 from ctfc.core.errors import FormatError
 from ctfc.core.flags import FlagSet, find_flags
+from ctfc.core.solve import safe_name as core_solve_safe_name
 
 # How much of a long list is sent to the browser. The point of the web view is
 # to see what a file holds, not to scroll a thousand rows - the CLI prints the
@@ -1075,6 +1076,15 @@ READERS_BY_NAME = {reader.name: reader for reader in READERS}
 # Kept under this name because the browser dropdown and the web tests have
 # always known it so; the rule itself now lives in core.
 office_sniff = core_readers.office_sniff
+
+
+def safe_download_name(name: str) -> str:
+    """The name a piece is saved under in the browser: no folders, no dot-files.
+
+    A ZIP member can be called "../../.bashrc"; the browser would sanitise it
+    too, but the page also shows the name, so it is cleaned once, here.
+    """
+    return core_solve_safe_name(name, "piece.bin")
 
 
 def catalogue() -> list[dict]:

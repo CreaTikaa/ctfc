@@ -193,6 +193,8 @@ function currentOptions() {
       p: $("rsa-p").value,
       q: $("rsa-q").value,
       other: $("rsa-other").value,
+      also: $("rsa-also").value,
+      relation: $("rsa-relation").value,
       attack: $("rsa-attack").checked,
       seconds: $("rsa-seconds").value,
     };
@@ -229,7 +231,7 @@ function currentOptions() {
     };
   }
   if (state.tab === "file") {
-    return { reader: $("file-reader").value };
+    return { reader: $("file-reader").value, wordlist: $("file-wordlist").value };
   }
   if (state.tab === "solve") {
     return { seconds: $("solve-seconds").value, depth: $("solve-depth").value };
@@ -430,6 +432,7 @@ function showAnswer(tab, answer) {
   if (tab === "file") {
     renderFile(answer);
     setStatus("");
+    loadPieces(answer.reader);
     return;
   }
   if (tab === "timeline" || tab === "workspace") {
@@ -1163,7 +1166,12 @@ function toolRow(tool, payload) {
   if (tool.kind === "local" && !tool.available && tool.install) {
     actions.append(el("span", "dim", T("web_tool_install") + ": " + tool.install));
   }
-  if (tool.kind === "local" && tool.available) {
+  if (tool.kind === "local" && tool.gui) {
+    actions.append(el("span", "dim", T("web_tool_gui")));
+  } else if (tool.kind === "local" && tool.available && !payload) {
+    actions.append(el("span", "dim", T("web_next_tool_piece")));
+  }
+  if (tool.kind === "local" && tool.available && payload && !tool.gui) {
     // {input} is filled by the server (a temporary copy of the input); the
     // other placeholders the user types here.
     const fields = {};
@@ -1844,7 +1852,134 @@ function renderSolve(answer) {
       results.append(line);
     }
   }
+  renderNextSteps(answer.next_steps || []);
   if (answer.notes && answer.notes.length) renderNotes(answer.notes);
+}
+
+// No flag: one card per finding (core/nextsteps.py + data/leads.toml) - what
+// was found, what it usually means, the ctfc commands, then the external tools
+// with their command filled in. A tool can be run from here only when the
+// finding is about the input itself: a piece found inside it is not on the
+// server's disk, so its command is for copying.
+function renderNextSteps(steps) {
+  if (!steps.length) return;
+  const results = $("results");
+  results.append(el("h3", "", T("web_solve_next")));
+  steps.forEach((step, index) => {
+    const card = el("div", "card next-step");
+    const head = el("div", "card-head");
+    head.append(el("span", "label", index + 1 + ". " + step.found));
+    card.append(head);
+    if (step.also && step.also.length) {
+      card.append(el("div", "dim", T("web_next_also") + ": " + step.also.slice(0, 3).join(", ")));
+    }
+    card.append(el("div", "step-comment", T("web_next_means") + ": " + step.meaning));
+    if (step.trail && step.trail.length) {
+      card.append(el("div", "dim", T("web_next_trail") + ":"));
+      for (const command of step.trail) card.append(commandLine(command));
+    }
+    for (const command of step.ctfc || []) card.append(commandLine(command));
+    const payload = step.on_input ? currentPayload() : null;
+    if (!step.on_input) {
+      // The piece is inside the input: fetch it, and it becomes the input -
+      // then every tab (and the Run buttons) works on it.
+      const load = el("button", "small", T("web_piece_load"));
+      load.addEventListener("click", () => loadSolvePiece(step.piece, load));
+      card.append(load);
+    }
+    for (const tool of step.tools || []) card.append(toolRow(tool, payload));
+    for (const text of step.by_hand || []) {
+      card.append(el("div", "step-comment", T("web_next_by_hand") + ": " + text));
+    }
+    results.append(card);
+  });
+}
+
+// ---------------------------------------------------------------- pieces
+// What `--extract` does in the terminal: the files a reader found inside the
+// input, each one downloadable or usable as the next input. Listed after the
+// main result, so a big capture never delays it.
+async function loadPieces(reader) {
+  const payload = currentPayload();
+  if (!payload.data_b64 && !payload.input) return;
+  let answer;
+  try {
+    answer = await post("/api/file/pieces", { ...payload, options: { reader } });
+  } catch (error) {
+    return; // the list is a bonus: the report above is already there
+  }
+  if (!answer.pieces.length) return;
+  const results = $("results");
+  results.append(el("h3", "", T("web_pieces_title", { count: answer.total })));
+  const table = el("table", "facts pieces");
+  for (const piece of answer.pieces) {
+    const row = el("tr");
+    row.append(el("td", "", piece.name), el("td", "dim", piece.size + " " + T("web_bytes")));
+    row.append(el("td", "dim", piece.origin));
+    const actions = el("td");
+    const download = el("button", "small", T("web_piece_download"));
+    download.addEventListener("click", () => fetchPiece(reader, piece.index, false, download));
+    const open = el("button", "small", T("web_piece_open"));
+    open.addEventListener("click", () => fetchPiece(reader, piece.index, true, open));
+    actions.append(download, open);
+    row.append(actions);
+    table.append(row);
+  }
+  results.append(table);
+}
+
+async function fetchPiece(reader, index, asInput, button) {
+  button.disabled = true;
+  try {
+    const piece = await post("/api/file/piece", { ...currentPayload(), options: { reader, index } });
+    asInput ? adoptPiece(piece) : saveBytes(piece);
+  } catch (error) {
+    setStatus(error.message, true);
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function loadSolvePiece(name, button) {
+  button.disabled = true;
+  setStatus(T("web_running"));
+  try {
+    const options = { piece: name, depth: $("solve-depth").value, seconds: $("solve-seconds").value };
+    adoptPiece(await post("/api/solve/piece", { ...currentPayload(), options }));
+    setStatus(T("web_piece_loaded", { name }));
+  } catch (error) {
+    setStatus(error.message, true);
+  } finally {
+    button.disabled = false;
+  }
+}
+
+// A piece becomes the input, exactly as if it had been dropped in the box.
+function adoptPiece(piece) {
+  state.file = { name: piece.name, b64: piece.data_b64, size: piece.size };
+  state.files = [state.file];
+  $("file-name").textContent = piece.name + " (" + piece.size + " " + T("web_bytes") + ")";
+  $("file-info").classList.remove("hidden");
+  $("input-text").disabled = true;
+  schedulePreview();
+}
+
+function saveBytes(piece) {
+  const binary = atob(piece.data_b64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  const link = document.createElement("a");
+  link.href = URL.createObjectURL(new Blob([bytes], { type: "application/octet-stream" }));
+  link.download = piece.name;
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+}
+
+function commandLine(command) {
+  const line = el("div", "command");
+  line.append(el("code", "", command));
+  line.append(copyButton(T("web_copy"), () => command));
+  return line;
 }
 
 
@@ -1958,9 +2093,32 @@ async function showDoc(name) {
     const terminal = el("p", "dim", T("web_docs_terminal"));
     root.append(el("h3", "", T("web_tab_docs")), terminal);
     $("results").replaceChildren(root);
+    renderToolList(root);
   } catch (error) {
     setStatus(error.message, true);
   }
+}
+
+// `ctfc tools --list` in the page: every external tool the advice can name,
+// whether this machine has it, and how to get it.
+async function renderToolList(root) {
+  let answer;
+  try {
+    answer = await (await fetch("/api/tools/list")).json();
+  } catch (error) {
+    return;
+  }
+  root.append(el("h3", "", T("web_tools_list")));
+  const table = el("table", "facts");
+  for (const tool of answer.tools || []) {
+    const row = el("tr");
+    let state = tool.kind === "online" ? T("web_tool_online") : T("web_tool_local");
+    if (tool.kind === "local") state = tool.available ? T("web_tool_installed") : T("web_tool_missing");
+    row.append(el("td", "", tool.name), el("td", tool.available ? "" : "dim", state));
+    row.append(el("td", "dim", tool.available ? tool.notes : tool.install || tool.notes));
+    table.append(row);
+  }
+  root.append(table);
 }
 
 // ---------------------------------------------------------------- Signatures

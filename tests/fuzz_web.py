@@ -93,6 +93,8 @@ KEYS = (
     "note",
     "query",
     "title",
+    "index",
+    "piece",
     # option names of the job tools, which parse numbers and dates
     "depth",
     "keylen",

@@ -932,3 +932,141 @@ def test_the_keys_tab_tries_a_password_written_in_a_sentence(client):
     ).get_json()
     assert answer["winner"]["kind"] == "prose"
     assert "CYBN{found_in_a_sentence}" in answer["results"][0]["data_text"]
+
+
+def test_the_solve_tab_shows_next_steps_when_there_is_no_flag(client):
+    """No flag: the job answer carries the next steps, and app.js draws them."""
+    import base64
+    import os
+    import time
+
+    script = client.get("/app.js").get_data(as_text=True)
+    assert "renderNextSteps" in script
+    started = client.post(
+        "/api/jobs/solve",
+        json={
+            "data_b64": base64.b64encode(os.urandom(2048)).decode(),
+            "name": "blob.bin",
+            "options": {"seconds": 10},
+        },
+    ).get_json()
+    for _ in range(200):
+        status = client.get(f"/api/jobs/{started['job']}").get_json()
+        if status["state"] in ("done", "error", "cancelled"):
+            break
+        time.sleep(0.05)
+    assert status["state"] == "done", status
+    steps = status["result"]["next_steps"]
+    assert steps[0]["rule"] == "encrypted.blob"
+    assert steps[0]["on_input"] is True
+    assert any(tool["id"] == "binwalk_entropy" for tool in steps[0]["tools"])
+
+
+def test_the_files_tab_hands_over_the_files_inside_a_file(client):
+    """`--extract` in the page: list the members, then fetch one of them."""
+    import base64
+    import io
+    import zipfile
+
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        archive.writestr("notes.txt", "first member")
+        archive.writestr("../../.bashrc", "a name that tries to escape")
+    payload = {"data_b64": base64.b64encode(buffer.getvalue()).decode(), "name": "two.zip"}
+
+    listed = client.post("/api/file/pieces", json={**payload, "options": {}}).get_json()
+    assert listed["reader"] == "zip"
+    names = [piece["name"] for piece in listed["pieces"]]
+    assert "notes.txt" in names
+    index = names.index("notes.txt")
+
+    piece = client.post(
+        "/api/file/piece", json={**payload, "options": {"reader": "zip", "index": index}}
+    ).get_json()
+    assert base64.b64decode(piece["data_b64"]) == b"first member"
+    assert piece["name"] == "notes.txt"
+    # The escaping name is cleaned before the page shows or saves it.
+    other = names.index("../../.bashrc")
+    escaped = client.post(
+        "/api/file/piece", json={**payload, "options": {"reader": "zip", "index": other}}
+    ).get_json()
+    assert "/" not in escaped["name"] and not escaped["name"].startswith(".")
+    # A piece number that does not exist is a sentence, not a 500.
+    missing = client.post("/api/file/piece", json={**payload, "options": {"index": 99}})
+    assert missing.status_code == 400
+
+
+def test_a_solve_piece_can_be_fetched_by_its_name(client):
+    import base64
+    import gzip
+
+    data = gzip.compress(b"inner text, no flag here at all")
+    payload = {"data_b64": base64.b64encode(data).decode(), "name": "outer.gz"}
+    piece = client.post(
+        "/api/solve/piece", json={**payload, "options": {"piece": "outer.gz > outer"}}
+    )
+    if piece.status_code != 200:  # the child's name depends on the gzip header
+        names = client.post("/api/file/pieces", json={**payload, "options": {}}).get_json()
+        wanted = "outer.gz > " + names["pieces"][0]["name"]
+        piece = client.post("/api/solve/piece", json={**payload, "options": {"piece": wanted}})
+    assert base64.b64decode(piece.get_json()["data_b64"]) == b"inner text, no flag here at all"
+    nowhere = client.post("/api/solve/piece", json={**payload, "options": {"piece": "nope"}})
+    assert nowhere.status_code == 400
+
+
+def _job_result(client, kind: str, body: dict) -> dict:
+    import time
+
+    started = client.post(f"/api/jobs/{kind}", json=body).get_json()
+    for _ in range(400):
+        status = client.get(f"/api/jobs/{started['job']}").get_json()
+        if status["state"] in ("done", "error", "cancelled"):
+            break
+        time.sleep(0.05)
+    assert status["state"] == "done", status
+    return status["result"]
+
+
+def test_the_rsa_tab_runs_the_common_modulus_attack(client):
+    """`ctfc rsa --also` in the page: the same message under two exponents."""
+    from Crypto.Util.number import bytes_to_long, getPrime, long_to_bytes
+
+    n = getPrime(256) * getPrime(256)
+    message = bytes_to_long(b"CYBN{common_modulus_web}")
+    first = long_to_bytes(pow(message, 17, n)).hex()
+    second = long_to_bytes(pow(message, 65537, n)).hex()
+    answer = _job_result(
+        client,
+        "rsa",
+        {
+            "input": "hex:" + first,
+            "options": {"n": str(n), "e": "17", "also": f"65537=hex:{second}"},
+        },
+    )
+    texts = [candidate["data_text"] for candidate in answer["candidates"]]
+    assert "CYBN{common_modulus_web}" in texts
+
+
+def test_the_files_tab_cracks_a_zip_with_a_wordlist(client, tmp_path, fixture_bytes):
+    """`ctfc zip --wordlist` in the page: the Files tab's wordlist field."""
+    import base64
+
+    data = fixture_bytes("zipcrypto_wordlist.zip")  # Info-ZIP, password "dragon"
+    wordlist = tmp_path / "words.txt"
+    wordlist.write_text("nope\ndragon\nalso-nope\n")
+    answer = client.post(
+        "/api/file",
+        json={
+            "data_b64": base64.b64encode(data).decode(),
+            "name": "locked.zip",
+            "options": {"reader": "zip", "wordlist": str(wordlist)},
+        },
+    ).get_json()
+    assert any("the password is 'dragon'" in note for note in answer["notes"])
+
+
+def test_the_docs_tab_lists_the_external_tools(client):
+    tools = client.get("/api/tools/list").get_json()["tools"]
+    ids = {tool["id"] for tool in tools}
+    assert {"sox_spectrogram", "aircrack", "zsteg"} <= ids
+    assert all(isinstance(tool["available"], bool) for tool in tools)

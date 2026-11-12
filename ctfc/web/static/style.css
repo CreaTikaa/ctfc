@@ -317,3 +317,8 @@ table.grid td.maybe { color: var(--mid); }
 #search-box { display: flex; flex-direction: column; gap: 0.4rem; margin-bottom: 0.8rem; }
 #search-box input[type="text"] { width: 100%; }
 #search-box .row { align-items: center; margin-bottom: 0; }
+
+/* Next steps (Solve tab, no flag): one card per finding. */
+.next-step { margin: 0.5rem 0; }
+.next-step .command { margin: 0.2rem 0; }
+.next-step .tool { margin-left: 0.8rem; }

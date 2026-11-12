@@ -30,8 +30,9 @@ from pathlib import Path
 from flask import Flask, Response, jsonify, request, send_from_directory
 
 from ctfc import __version__
-from ctfc.config import Config
+from ctfc.config import Config, find_wordlist
 from ctfc.core import keyhunt, pipeline
+from ctfc.core import readers as core_readers
 from ctfc.core import session as sessions
 from ctfc.core import tools as toolbox
 from ctfc.core.auto import auto_decode
@@ -96,6 +97,8 @@ def input_from_payload(payload: dict, decode_bare: bool = True) -> Input:
 # A multi-file drop: how many files one request may carry. The total size is
 # already capped by MAX_CONTENT_LENGTH; this caps the count.
 MAX_DROPPED_FILES = 200
+# How many files inside a file the Files tab lists (a pcap can hold thousands).
+MAX_PIECES_LISTED = 500
 
 
 def files_from_payload(payload: dict) -> list[tuple[str, bytes]]:
@@ -430,6 +433,10 @@ def create_app(config: Config | None = None) -> Flask:
                     flagset=flagset,
                     budget=budget,
                     max_depth=depth,
+                    offline=config.offline,
+                    tool_paths=config.tool_paths,
+                    wordlist=find_wordlist(config),
+                    cyberchef_url=toolbox.cyberchef_base(config.cyberchef_url, for_web=True),
                 )
                 return {"input": input_summary(inp), **report.to_dict()}
 
@@ -613,6 +620,10 @@ def create_app(config: Config | None = None) -> Flask:
             attack = bool(options.get("attack"))
             seconds = _seconds(options, 20, cap=120)
             budget = Budget(max_attempts=50_000_000, max_seconds=seconds)
+            also = [line.strip() for line in str(options.get("also") or "").splitlines()]
+            also = [line for line in also if line]
+            if also:
+                return _rsa_multi(key, inp, also, str(options.get("relation") or "")), budget
 
             def work_rsa(budget: Budget) -> dict:
                 report = solve_rsa(
@@ -743,9 +754,138 @@ def create_app(config: Config | None = None) -> Flask:
         options = options_of(payload)
         reader = str(options.get("reader") or "").strip()
         answer = formats.analyse(inp.data, reader, flagset)
+        if answer["reader"] == "zip" and str(options.get("wordlist") or "").strip():
+            # `ctfc zip --wordlist`: the passwords are tried on the smallest
+            # encrypted entry; only a password that worked is sent back.
+            from ctfc.core import zipinfo
+
+            words, note = _wordlist(options)
+            report = zipinfo.analyse(inp.data, str(payload.get("name") or "input.zip"))
+            seconds = _seconds(options, 60, cap=600)
+            zipinfo.crack_with_wordlist(
+                inp.data,
+                report,
+                words or (),
+                Budget(max_attempts=len(words or ()), max_seconds=seconds),
+            )
+            found = [n for n in report.notes if "the password is" in n or "stopped after" in n]
+            answer["notes"] = [note, *found, *answer.get("notes", [])]
         answer["input"] = input_summary(inp)
         record(payload, answer["reader"], inp, answer)
         return jsonify(answer)
+
+    # --- The files inside a file: what `--extract` writes in the terminal. -----
+    # The Files tab lists what a reader pulled out (archive members, a capture's
+    # objects, a mail's attachments, carved files) and the page fetches ONE of
+    # them on demand, to download it or to make it the next input. They are
+    # computed again from the same bytes rather than kept: the server holds no
+    # state between two requests.
+
+    def _opened_children(payload: dict) -> tuple[str, list]:
+        inp = input_from_payload(payload, decode_bare=False)
+        options = options_of(payload)
+        reader = str(options.get("reader") or "").strip() or formats.sniff(inp.data)
+        if reader not in core_readers.READERS_BY_NAME:
+            return reader, []  # "time" or nothing sniffed: no files inside
+        name = str(payload.get("name") or "input")
+        opened = core_readers.open_with(reader, inp.data, flagset, name)
+        return reader, list(opened.children)
+
+    @app.post("/api/file/pieces")
+    def api_file_pieces():
+        """The files a reader found inside the input: names and sizes, no bytes."""
+        reader, children = _opened_children(read_payload())
+        pieces = [
+            {"index": index, "name": child.name, "origin": child.origin, "size": len(child.data)}
+            for index, child in enumerate(children[:MAX_PIECES_LISTED])
+        ]
+        return jsonify({"reader": reader, "pieces": pieces, "total": len(children)})
+
+    @app.post("/api/file/piece")
+    def api_file_piece():
+        """One file found inside the input, as base64 (to download, or open next)."""
+        payload = read_payload()
+        index = _small_int(options_of(payload), "index", 0, 0, MAX_PIECES_LISTED - 1)
+        _reader, children = _opened_children(payload)
+        if index >= len(children):
+            raise InputError(f"there is no piece number {index} in this file")
+        child = children[index]
+        return jsonify(_piece_answer(child.name, child.data))
+
+    @app.post("/api/solve/piece")
+    def api_solve_piece():
+        """One piece `solve` reached (named as in its report), as base64.
+
+        The walk is run again on the same bytes, the same way, and stops at the
+        piece with that name: it is deterministic, so the name is enough.
+        """
+        from ctfc.core.solve import walk
+
+        payload = read_payload()
+        inp = input_from_payload(payload, decode_bare=False)
+        options = options_of(payload)
+        wanted = str(options.get("piece") or "")
+        depth = _small_int(options, "depth", 5, 1, 10)
+        budget = Budget(max_attempts=1_000_000, max_seconds=_seconds(options, 30))
+        root = str(payload.get("name") or "input")
+        for visit in walk(inp.data, root, flagset=flagset, budget=budget, max_depth=depth):
+            if visit.piece.name == wanted:
+                return jsonify(_piece_answer(wanted.split(" > ")[-1], visit.piece.data))
+        raise InputError(f"the walk did not reach {wanted!r} this time (raise the budget?)")
+
+    def _rsa_multi(key, inp: Input, also: list[str], relation_text: str):
+        """`ctfc rsa --also`: the same message under several keys / exponents.
+
+        Each line is `<e>=<ciphertext>` (same modulus, another exponent: the
+        common-modulus attack) or `<n>,<e>=<ciphertext>` (another key: Hastad's
+        broadcast). The input box holds the first ciphertext, the key fields its key.
+        """
+        import re
+
+        from ctfc.core import rsa_multi
+
+        if not inp.data:
+            raise InputError("put the first ciphertext in the input box, the others in 'also'")
+        messages = [rsa_multi.Message(key.n, key.e, inp.data, label="input")]
+        for line in also:
+            key_part, _, ct_part = line.partition("=")
+            if not ct_part:
+                raise InputError(
+                    f"'also' lines are <e>=<ciphertext> or <n>,<e>=<ciphertext>: {line!r}"
+                )
+            data = parse_input(ct_part.strip()).data
+            numbers = [part for part in re.split(r"[,\s]+", key_part.strip()) if part]
+            if len(numbers) == 1:
+                messages.append(rsa_multi.Message(key.n, _number(numbers[0]), data, ct_part[:20]))
+            elif len(numbers) == 2:
+                n, e = (_number(part) for part in numbers)
+                messages.append(rsa_multi.Message(n, e, data, ct_part[:20]))
+            else:
+                raise InputError(f"cannot read the key part of {line!r}: <e> or <n>,<e>")
+        relation = None
+        if relation_text.strip():
+            parts = [part for part in re.split(r"[,;\s]+", relation_text) if part]
+            if len(parts) != 2:
+                raise InputError("the relation is a,b for m2 = a*m1 + b")
+            relation = (_number(parts[0]), _number(parts[1]))
+
+        def work_multi(budget: Budget) -> dict:
+            try:
+                report = rsa_multi.solve_multi(messages, relation=relation, flagset=flagset)
+            except rsa_multi.MultiError as exc:
+                raise InputError(str(exc)) from exc
+            answer = report.to_dict()
+            answer["notes"] = answer["notes"] + [f"tried: {', '.join(answer['tried'])}"]
+            return {"input": input_summary(inp), **answer}
+
+        return work_multi
+
+    def _piece_answer(name: str, data: bytes) -> dict:
+        return {
+            "name": formats.safe_download_name(name),
+            "size": len(data),
+            "data_b64": base64.b64encode(data).decode(),
+        }
 
     @app.post("/api/crc")
     def api_crc():
@@ -1002,12 +1142,14 @@ def create_app(config: Config | None = None) -> Flask:
             if not Path(wordlist).expanduser().is_file():
                 raise InputError(f"wordlist not found: {wordlist}")
             values["wordlist"] = str(Path(wordlist).expanduser())
+        elif find_wordlist(config):
+            values["wordlist"] = find_wordlist(config)
         if options.get("password"):
             values["password"] = str(options["password"])
         # Tools read files: give it a private copy of the input, removed afterwards.
         with tempfile.TemporaryDirectory(prefix="ctfc-") as folder:
             values["input"] = str(toolbox.write_input(inp.data, Path(folder)))
-            result = toolbox.run_tool(tool, values)
+            result = toolbox.run_tool(tool, values, tool_paths=config.tool_paths)
         return jsonify(result.to_dict())
 
     @app.get("/api/docs")
@@ -1016,6 +1158,23 @@ def create_app(config: Config | None = None) -> Flask:
         from ctfc.core.datafiles import list_docs
 
         return jsonify({"docs": list_docs()})
+
+    @app.get("/api/tools/list")
+    def api_tools_list():
+        """Every external tool ctfc knows, and whether it is installed here."""
+        rows = []
+        for tool in toolbox.load_tools():
+            rows.append(
+                {
+                    "id": tool.id,
+                    "name": tool.name,
+                    "kind": tool.kind,
+                    "available": toolbox.tool_available(tool, config.tool_paths),
+                    "install": tool.install,
+                    "notes": tool.notes,
+                }
+            )
+        return jsonify({"tools": rows})
 
     @app.get("/api/docs/<name>")
     def api_doc(name: str):
