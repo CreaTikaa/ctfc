@@ -2684,3 +2684,62 @@ found; a deleted file carrying the flag is recovered. When TSK is absent,
 (which already finds a flag written in clear anywhere). ISO 9660 is left to the
 dedicated offline reader (section 48). Ground truth: TSK is itself the reference
 tool, and the FAT12 fixture's file list is checked against `fls`.
+
+## 50. When there is no flag: next steps (`core/nextsteps.py`, lot M)
+
+A "no flag" answer used to end on three ctfc commands or a generic sentence.
+But the walk *saw* things: a WAV with nothing in its low bits, a Wi-Fi capture
+with a WPA handshake, 4 KB of random bytes with no header, a SAM hive. Each has a
+usual meaning in a CTF and a usual next tool, and that is what `solve` now
+prints under **Next steps**: what was found, what it usually means, the ctfc
+commands to try, then the external tools with their command **already filled
+in** (installed or not, and how to install them), and what no command does for
+you ("listen to it", "look at the picture at 100%").
+
+It is two small steps, both deterministic (no ML):
+
+1. **Facts.** For each piece, `observe()` writes short strings: `reader:wav`,
+   `magic:jpg`, `entropy:high` (random-looking, no header), `kind:unknown`,
+   `kind:text`, `kind:core` (an ELF core file), `pcap:tls` (TLS record headers
+   in a capture), `detect:xor.repeating` (a `ctfc detect` rule at 0.7 or more)...
+   An MP3 with no ID3 tag is recognised by two consecutive frame headers.
+2. **Rules.** `ctfc/data/leads.toml` is a table: `when` (fact patterns), an
+   optional `notes` regex the reader's notes must match ("WPA handshake"),
+   `unless` (a WAV is RIFF, not a video), and what to say and run. `plan()`
+   keeps one step per rule (other pieces it fired on are listed as "also in"),
+   drops a generic rule when a specific one speaks of the same piece ("a
+   capture" after "a Wi-Fi capture with WPA"), and shows the four most specific.
+
+Adding a case is adding a block to `leads.toml`; a test checks that every tool
+id exists in `tools.toml` and every ctfc command is a real subcommand.
+
+**Tools behind an alias.** A shell alias (`vol`, `stegsolve`) is invisible to
+a program. `~/.ctfc/config.toml` says it instead, and the command is shown (and
+run) with the real program:
+
+    wordlist = "~/Documents/rockyou.txt"
+    [tool_paths]
+    vol = ["python3", "/home/me/volatility3/vol.py"]
+    stegsolve = ["java", "-jar", "/home/me/stegsolve.jar"]
+
+Without `wordlist`, the usual places are tried (`/usr/share/wordlists/rockyou.txt`,
+`~/Documents/rockyou.txt`...). Commands are printed shell-quoted, so an empty
+argument (`steghide ... -p '' -f`) survives a copy-paste.
+
+**In the browser** the Solve tab draws the same cards. A tool can be run from
+the page only when the step is about the input itself (the server has the input,
+not a piece found three levels down); for a piece, **Load this piece as the
+input** fetches it (the walk is run again and stops at that name: it is
+deterministic) and every tab then works on it. Programs with a window
+(Audacity, Wireshark, Stegsolve) show their command but no Run button.
+
+**What the corpus run taught** (docs/audit-public-challenges.md, seventh
+audit): pieces bigger than 8 MB were dropped *in silence* by every reader (a 22
+MB capture in a ZIP made `solve` say "nothing came out"); the cap is now 256 MB
+and anything over it is named in a note. `ctfc zip --wordlist` crashed on the
+first wrong password that passed ZipCrypto's 1-byte check (1 in 256): the
+inflater's `zlib.error` is now a wrong password. "Is this a classical cipher?"
+said yes to logs, HTML and VBA; a text whose letter pairs are ordinary ("th",
+"en", "re": 0.42+ of its pairs, against 0.28 for a rail fence and < 0.1 for a
+substitution) is now text in clear. And `F2B3AF0D{...}` is a hex number before a
+brace, not a flag.

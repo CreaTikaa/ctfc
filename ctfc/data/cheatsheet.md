@@ -10,7 +10,11 @@ everything that comes out of it (archive members, a mail's attachments, a
 capture's objects, an overlay, a Docker layer, a decoding chain), and prints the
 flag - with the commands that reproduce it - or the three best leads. It never
 guesses a password or a key: when one is needed it prints the command that
-cracks it. Everything below is what it does, step by step, when you want control.
+cracks it. With no flag it ends on **Next steps**: what it found (a sound, a
+WPA handshake, random bytes, a SAM hive...), what that usually means, and the
+external tool to run next with its command filled in (sox spectrogram,
+multimon-ng, aircrack-ng, zsteg, steghide, Volatility...). Everything below is
+what it does, step by step, when you want control.
 
 ### A folder, not a file?
 

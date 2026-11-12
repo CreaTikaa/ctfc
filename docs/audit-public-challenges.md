@@ -294,3 +294,87 @@ no_end_in_sight (`btctf{...}`), BSidesSF undelete (chaîne complète xz→tar→
 dessiné dans des pixels, caché dans un son, ou une réponse à déduire) — hors
 périmètre sans OCR/ML. ctfc résout ce qui est « flag dans un fichier / encodé /
 réseau / archive / disque / chunk » et remonte les preuves pour le reste.
+
+## Septième audit — les « pistes » quand il n'y a pas de flag (lot M, 2026-11-12)
+
+Nouvelle fonctionnalité : quand `ctfc solve` ne trouve pas de flag, il finit par
+**Next steps** — ce qu'il a trouvé, ce que ça veut dire en CTF, les commandes ctfc
+puis les **outils externes avec la commande déjà remplie** (installé ou non, et
+comment l'installer). Table de règles : `ctfc/data/leads.toml`, moteur :
+`ctfc/core/nextsteps.py`, doc : `how-it-works.md` §50.
+
+Mesuré sur les **62 fichiers** du corpus (`corpus/challenges/`, 10 CTF), relancés
+quatre fois au fil des corrections. Harnais : `scratchpad/steps.py` (une ligne par
+fichier : le flag, ou les règles qui ont tiré).
+
+### Flags sortis seuls : 15 → 17 (+ une moitié de flag)
+
+| Challenge | Avant | Maintenant | Cause |
+|---|---|---|---|
+| DUCTF 2021 Thats_Not_My_Name | rien | `DUCTF{c4t_g07_y0ur_n4m3}` (15 s) | le pcapng de 69 Mo dans le 7z était **jeté en silence** (plafond 8 Mo des pièces) ; et `hunt` passait 8 s en UTF-16 sur 69 Mo |
+| picoCTF Mob psycho | budget brûlé (61 s) | `picoCTF{ax8mC0RU6ve_…}` (0,8 s) | la récupération par CRC32 tournait sur les 772 membres **non chiffrés** de l'APK ; puis `res/color/flag.txt` était au-delà du plafond de 120 pièces |
+| HTB Fake Boost | rien | 1re moitié `HTB{fr33_N17r0G3n_3xp053d!_` | même plafond 8 Mo (pcapng de 22 Mo dans le ZIP) |
+
+### Les pistes, jugées contre la vraie solution (fichiers sans flag)
+
+**La piste mène à la solution** (l'outil nommé est celui des writeups) :
+
+| Challenge | Piste n°1 | Vérifié en lançant la commande affichée |
+|---|---|---|
+| picoCTF WPA-ingOut | aircrack-ng -w rockyou | **oui** : `KEY FOUND! [ mickeymouse ]` = le flag |
+| DUCTF i-love-scomo | steghide '' puis stegseek rockyou | **oui** : stegseek extrait le texte ; ctfc sur ce texte → règle `whitespace` → stegsnow (2e couche) |
+| DUCTF on-the-spectrum | sox spectrogram | **oui** : le motif est visible (commande agrandie à 2000×1000 après ce test, l'image par défaut était trop petite) |
+| DUCTF do_the_loop, blinky-bill | multimon-ng Morse + spectrogramme | multimon-ng décode mal sur fond musical ; la note le dit et renvoie au spectrogramme |
+| Buckeye couch_potato | audio → sstv / qsstv | (SSTV, 3e outil de la carte) |
+| DUCTF samiam | secretsdump.py -sam … -system SYSTEM | règle `windows.sam` (le faux flag `F2B3AF0D{…}` qui la masquait est corrigé) |
+| DUCTF emuc2 | keylog → tshark -o tls.keylog_file ; pcap → TLS | oui (les deux fichiers ont chacun leur piste) |
+| Buckeye the_cia, reduce_recycle ×2, picoCTF FindAndOpen/flag.zip, HTB Phreaky | fichier protégé → workspace, zip2john/bkcrack, pdf2john | oui |
+| picoCTF endianness-v2 | JPEG remis dans l'ordre (nouveau : `repair` détecte les mots de 2/4/8 octets inversés) → « regarde l'image » | oui (flag dessiné) |
+| DUCTF how-to-pronounce-gif | frames ImageMagick/ffmpeg + zbarimg | oui |
+| picoCTF Scan Surprise | zbarimg (QR) | oui |
+| picoCTF c0rrupt, DUCTF spot-the-difference | `ctfc repair` + pngcheck | oui |
+| picoCTF hideme, iCTF elf-sunset | zsteg / stegsolve | oui |
+| picoCTF Secret Of The Polyglot | image **et** PDF (nouveau : magic PNG même si lu comme PDF) | oui |
+| DUCTF doxme, picoCTF extensions | image → « regarde-la » | oui (flag dessiné) |
+| Buckeye wreck | core ELF → strings/binwalk (nouveau `kind:core`) | oui (image dans le core dump) |
+| Buckeye replace-me | image de boot Android (nouveau magic `ANDROID!`) → unpack_bootimg | oui |
+| Buckeye hall-effect, duck-pics | capture USB | oui |
+| HTB Persue The Tracks | `$MFT` (nouveau magic) → MFTECmd / analyzeMFT | oui (Q/R) |
+| DUCTF macromagic, HTB Game Invitation | document Office → olevba | oui |
+| HTB Data Siege | exécutable → ILSpy/dnSpy (.NET) | oui |
+| iCTF sleepy-alarm | MP3 sans tag ID3 → audio (avant : « blob chiffré ») | plausible |
+
+**Piste générique (correcte mais pas décisive)** : babys-first-forensics et An
+unusual sighting (Q/R sur une capture / des logs), playful-puppy (fichier Minecraft
+`.mca` → « inconnu », il faut NBTExplorer), routed/packed (`.pkt` Packet Tracer
+chiffré → « blob chiffré », il faut pka2xml), breaking-away, just-hang-man, dog-mom.
+
+### Bugs trouvés et corrigés pendant cet audit
+
+1. **Pièces > 8 Mo jetées sans un mot** par tous les readers → plafond 256 Mo et une
+   note pour ce qui dépasse.
+2. **Plafond de 120 pièces appliqué dans l'ordre du ZIP** → les noms prometteurs
+   (flag, secret, key, .txt…) passent d'abord, et une note dit combien sont écartées.
+3. **Récupération CRC32 sur les membres non chiffrés** (une minute sur un APK) →
+   uniquement sur les membres chiffrés.
+4. **`ctfc zip --wordlist` plantait** au premier mauvais mot de passe qui passe le
+   contrôle d'un octet de ZipCrypto (1 sur 256 : `zlib.error`), donc dès les premières
+   centaines de mots de rockyou.
+5. **`hunt` UTF-16 lent** sur les gros fichiers (4,5 s sur 69 Mo) → au-delà de 8 Mo,
+   seulement autour des accolades UTF-16 (0,5 s).
+6. **« Chiffre classique » sur du texte en clair** (README, logs sshd, HTML, VBA) →
+   garde-fou par taux de bigrammes courants (texte ≥ 0,36 ; rail fence 0,28 ;
+   substitution < 0,1), et `flag_shift` non-César affaibli dans un texte en clair.
+7. **Faux flag `F2B3AF0D{…}`** (valeur hex dans une hive SAM) → un préfixe purement
+   hexadécimal avec chiffres n'est pas un nom de CTF.
+8. Commandes affichées **non quotées** (`steghide … -p  -f` : `-f` devenait la
+   passphrase au copier-coller) → `shlex.join`.
+9. `ctfc tools --list` exigeait un fichier d'entrée.
+
+### Ce qui reste (backlog de cet audit)
+
+- `.mca` (Minecraft, NBT) et `.pkt` (Packet Tracer) : signatures + règle, le jour où
+  un challenge le justifie.
+- Décoder SNOW soi-même (stegsnow n'est pas installé ici : pas de vérité terrain).
+- Quelques faux « classical » restent sur des requêtes HTTP très courtes (bruit, pas de
+  blocage).

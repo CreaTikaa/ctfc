@@ -2,6 +2,19 @@
 
 ## Before (at home, with internet)
 
+Tell ctfc where your wordlist is and which tools hide behind a shell alias, so
+the "Next steps" print commands you can paste as they are
+(`~/.ctfc/config.toml`):
+
+```toml
+wordlist = "~/Documents/rockyou.txt"
+[tool_paths]
+vol = ["python3", "/home/me/volatility3/vol.py"]
+stegsolve = ["java", "-jar", "/home/me/stegsolve.jar"]
+```
+
+`ctfc tools --list` (or the Docs tab) says which external tools are installed.
+
 ```sh
 cd ctfc
 make venv          # once
@@ -23,6 +36,7 @@ On a machine without internet: copy `dist/ctfc-bundle/`, then
 ctfc session new cave-expedition --title "Cave Expedition" --ctf "Cyber Apocalypse 2025" --category Forensics
 # from now on every command is recorded in that session
 
+ctfc solve challenge.zip            # the one command: the flag, or what to try next
 ctfc detect suspicious.bin          # what is it?
 ctfc auto suspicious.bin            # peel the encodings
 ctfc lens dropper.ps1 --against map.pdf.secured   # you have the encryptor: mirror it

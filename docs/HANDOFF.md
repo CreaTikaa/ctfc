@@ -993,6 +993,45 @@ fragments; built-in famous prefixes for the encoded hunt; UTF-16LE flag search.
 Rank-2 readers: .NET Rfc2898 KDF (Data Siege), SAM-hash decryption (samiam,
 secretsdump+samdump2 present for ground truth), audio Morse, MFT, dnscat2.
 
+## 5duodecies. Lot M: next steps when there is no flag + web coverage (2026-11-12)
+
+The user's request: when ctfc finds no flag, give **several leads based on what
+WAS found, with example external tools**. Built as a table, not code:
+
+- `ctfc/core/nextsteps.py`: `observe()` writes facts per piece (`reader:wav`,
+  `magic:jpg`, `entropy:high`, `kind:unknown|text|whitespace|core|apk|bigraw`,
+  `pcap:tls`, `detect:<rule>` >= 0.7); `plan()` runs `ctfc/data/leads.toml`
+  (when / notes regex / unless / ctfc / tools / by_hand / weight), one step per
+  rule, generic rules dropped next to specific ones (`GENERIC_OF`), max 4.
+  `solve()` fills `SolveReport.next_steps` only when no flag; solve passes the
+  reader's notes + commands + children origins as "notes" to the rules.
+- `tools.toml` got ~40 tools reached only through leads (`suggest_when = []`),
+  `gui = true` for windowed programs (no Run). `tools.program_argv()` +
+  config **`tool_paths`** (aliases: the user's `vol` and `stegsolve` are set in
+  his `~/.ctfc/config.toml`, created this session) and config **`wordlist`**
+  (`find_wordlist()` also tries the usual places). Commands display via
+  `shlex.join`.
+- `repair.byte_order()`: a file whose 2/4/8-byte words (or whole body) are
+  reversed is handed back as a carved piece (picoCTF endianness-v2).
+- Web: Solve tab draws the cards (`renderNextSteps`); Run only when the step is
+  about the input itself (`on_input`); otherwise **Load this piece as the input**
+  (`/api/solve/piece` re-walks and stops at that name). Files tab lists the
+  pieces inside a file with **Download / Open as input** (`/api/file/pieces`,
+  `/api/file/piece`) = the page's `--extract`. Also new in the page: ZIP
+  wordlist field (Files), RSA `--also`/`--relation` (RSA tab), external tool
+  list (Docs tab, `/api/tools/list`). Terminal-only and why: `web_docs_terminal`
+  in strings.py (scan/watch/git take a folder).
+- `scripts/browser_check.mjs`: the headless-Chromium driver, now committed
+  (`node scripts/browser_check.mjs <tab> <file> [url] [button label]`).
+
+**Seventh audit** (`docs/audit-public-challenges.md`, end): 62 corpus files.
+Thats_Not_My_Name and Mob psycho now solve alone; nine bugs fixed (silent 8 MB
+piece cap, ZIP-order 120-piece cap, CRC32 recovery on open members, zip
+`--wordlist` crash on zlib.error, slow UTF-16 hunt on big files, classical
+false positives on clear text via a bigram rate, hex-prefix false flag,
+unquoted commands, `tools --list` needing an input). Suggested commands were
+run for real: aircrack-ng gives WPA-ingOut's key, stegseek opens i-love-scomo.
+
 ## 7. Quick verification commands
 
 **`make demo` now runs this list and checks it** (`tests/demo.py`): 60 commands, each with the
