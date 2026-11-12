@@ -190,7 +190,9 @@ def test_zip_recovers_a_six_byte_file_from_its_crc():
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
         archive.writestr("password.txt", b"dragon")
-    report = zipinfo.analyse(buffer.getvalue())
+    from tests.test_zipinfo import mark_encrypted  # noqa: PLC0415
+
+    report = zipinfo.analyse(mark_encrypted(buffer.getvalue()))
     assert report.entries[0].recovered == b"dragon"
 
 
@@ -203,7 +205,9 @@ def test_zip_does_not_report_a_fabricated_preimage():
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
         archive.writestr("blob.bin", bytes(range(8)))
-    report = zipinfo.analyse(buffer.getvalue())
+    from tests.test_zipinfo import mark_encrypted  # noqa: PLC0415
+
+    report = zipinfo.analyse(mark_encrypted(buffer.getvalue()))
     assert report.entries[0].recovered is None
 
 

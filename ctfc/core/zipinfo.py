@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import io
 import zipfile
+import zlib
 from dataclasses import dataclass, field
 
 from ctfc.core import crc32, timestamps
@@ -319,7 +320,9 @@ def analyse(data: bytes, path: str = "archive.zip", budget: Budget | None = None
                 "check the size before extracting it"
             )
         # The CRC is the plaintext's, and it is in clear even when encrypted.
-        if 0 < entry.uncompressed_size <= CRC_RECOVER_MAX and entry.crc:
+        # Only for a LOCKED entry: an open one is simply read. Running it on
+        # every tiny member of an APK (772 entries) took a minute.
+        if entry.encrypted and 0 < entry.uncompressed_size <= CRC_RECOVER_MAX and entry.crc:
             entry.recovered = recover_from_crc(entry.crc, entry.uncompressed_size, budget)
             if entry.recovered is not None:
                 report.notes.append(
@@ -369,12 +372,25 @@ def _open_with(data: bytes, entry_name: str, password: bytes) -> bytes | None:
     `zipfile.read` checks the 1-byte password check AND the CRC32 of the
     decompressed output, so a value coming back is a real hit, not a 1-in-256
     coincidence. Any failure (wrong password, unsupported method) is a `None`.
+
+    A wrong ZipCrypto password passes that 1-byte check once in 256 tries; the
+    "decrypted" bytes are then garbage and the inflater raises `zlib.error` (or
+    `EOFError`). With rockyou that happens within the first few hundred words,
+    so those are wrong passwords too, not crashes.
     """
     try:
         with zipfile.ZipFile(io.BytesIO(data)) as archive:
             archive.setpassword(password)
             return archive.read(entry_name)
-    except (RuntimeError, zipfile.BadZipFile, NotImplementedError, OSError, ValueError):
+    except (
+        RuntimeError,
+        zipfile.BadZipFile,
+        NotImplementedError,
+        OSError,
+        ValueError,
+        EOFError,
+        zlib.error,
+    ):
         return None
 
 

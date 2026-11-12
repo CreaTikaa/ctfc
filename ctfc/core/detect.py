@@ -583,6 +583,10 @@ def _check_classical(data: bytes, flagset: FlagSet | None) -> list[Guess]:
         prefix.rstrip("{") for _regex, prefix in (flagset or default_flagset()).b64_prefixes
     }
     seen_words: set[str] = set()
+    # In text that is already in clear, a word before "{" that is NOT a clean
+    # Caesar shift of the prefix is chance ("body{" in CSS, a typed "Blog{"):
+    # only a single consistent shift stays a strong guess there.
+    in_clear = classical.bigram_rate(data) >= classical.READABLE_BIGRAMS
     for crib in classical.find_cribs(data, flagset):
         if crib.word in seen_words:
             continue
@@ -594,7 +598,7 @@ def _check_classical(data: bytes, flagset: FlagSet | None) -> list[Guess]:
             Guess(
                 rule="classical.flag_shift",
                 label=f"'{crib.word}{{' could be '{crib.prefix}{{' shifted: {how}",
-                confidence=0.8 if strong and caesar else 0.75 if strong else 0.5,
+                confidence=0.8 if strong and caesar else 0.75 if strong and not in_clear else 0.5,
                 reasons=[
                     f"a flag-shaped word with the length of the known prefix '{crib.prefix}'",
                     "shifts letter by letter: " + ", ".join(str(k) for k in crib.shifts),
@@ -607,6 +611,10 @@ def _check_classical(data: bytes, flagset: FlagSet | None) -> list[Guess]:
     stats = classical.analyse(data)
     if stats.letters < 20 or text_stats(data).word_rate >= 0.3:
         return guesses  # too few letters to measure, or it already reads as words
+    if classical.bigram_rate(data) >= classical.READABLE_BIGRAMS:
+        # Ordinary letter pairs ("th", "en", "re"): language in clear, even when
+        # its words are not in our list (HTML, logs, names, rare words).
+        return guesses
     facts = f"{stats.letters} letters, IoC {stats.ioc:.3f} (English ~0.067, random 0.038)"
     if stats.family == "natural":
         guesses.append(

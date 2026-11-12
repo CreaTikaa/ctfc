@@ -277,6 +277,16 @@ ext = "dmp"
 hex = "4d444d5093a7"
 
 [[sig]]
+name = "Windows kernel crash dump (64-bit)"
+ext = "dmp"
+hex = "5041474544553634"
+
+[[sig]]
+name = "Windows kernel crash dump (32-bit)"
+ext = "dmp"
+hex = "5041474544554d50"
+
+[[sig]]
 name = "LiME memory dump"
 ext = "lime"
 hex = "454d694c"
@@ -301,6 +311,16 @@ name = "BitLocker volume (out of scope)"
 ext = "bitlocker"
 hex = "2d4656452d46532d"
 offset = 3
+
+[[sig]]
+name = "Android boot image"
+ext = "androidboot"
+hex = "414e44524f494421"
+
+[[sig]]
+name = "NTFS master file table ($MFT)"
+ext = "mft"
+hex = "46494c4530"
 
 [[sig]]
 name = "VMDK disk image"

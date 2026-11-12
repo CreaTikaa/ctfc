@@ -276,6 +276,42 @@ def pasted_header(data: bytes) -> tuple[Signature, list[Signature]] | None:
     return best
 
 
+def swap_words(data: bytes, width: int) -> bytes:
+    """Reverse the bytes inside every `width`-byte word (endianness swap).
+
+    `e0 ff d8 ff` -> `ff d8 ff e0`. A tail shorter than one word is reversed on
+    its own, which is what a naive "write as little-endian ints" also does.
+    """
+    return b"".join(data[index : index + width][::-1] for index in range(0, len(data), width))
+
+
+# Word sizes a file is swapped in (16-, 32- and 64-bit integers), then "the
+# whole file backwards", which is the same idea with one giant word.
+BYTE_ORDERS = ((2, "2-byte words"), (4, "4-byte words"), (8, "8-byte words"), (0, "the whole file"))
+
+
+def byte_order(data: bytes) -> tuple[Signature, bytes, str] | None:
+    """A file written with its bytes in the wrong order: (format, fixed bytes, how).
+
+    The trick: write every 32-bit word of a JPEG little-endian, and `ff d8 ff
+    e0` becomes `e0 ff d8 ff` - `file` says "data". Swapping back puts a known
+    magic at offset 0. To trust it, the magic must be at least 4 bytes, or the
+    format's END marker must also land at the very end (a 3-byte JPEG magic plus
+    `ff d9` at the end is 5 bytes agreeing: no coincidence).
+    """
+    if len(data) < 16 or match_signature(data) is not None:
+        return None
+    for width, how in BYTE_ORDERS:
+        fixed = data[::-1] if width == 0 else swap_words(data, width)
+        sig = match_signature(fixed)
+        if sig is None or sig.weak or sig.offset != 0:
+            continue
+        ends_right = bool(sig.end) and fixed.rstrip(b"\x00").endswith(sig.end)
+        if len(sig.magic) >= MIN_MAGIC or ends_right:
+            return sig, fixed, how
+    return None
+
+
 def carve(data: bytes, limit: int = 8) -> list[Carved]:
     """Files hidden inside `data`, found by their signature (offset > 0).
 
@@ -348,6 +384,27 @@ def repair(data: bytes) -> RepairReport:
             )
         )
         report.notes.append(f"the file is a {sig.name} with one corrupted byte")
+
+    # Bytes in the wrong order (every 32-bit word swapped, or the whole file
+    # backwards): the fixed file is handed back like a carved one, at offset 0,
+    # so `--out` writes it and `ctfc solve` reads it.
+    if not report.fixes:
+        swapped = byte_order(data)
+        if swapped is not None:
+            sig, fixed, how = swapped
+            report.carved.append(
+                Carved(
+                    offset=0,
+                    name=f"{sig.name}, bytes put back in order ({how} reversed)",
+                    ext=sig.ext,
+                    data=fixed,
+                    why=f"reversing the bytes of {how} puts a {sig.name} magic at offset 0",
+                )
+            )
+            report.notes.append(
+                f"the file is a {sig.name} written in the wrong byte order ({how} reversed): "
+                "CyberChef 'Swap endianness' does the same"
+            )
 
     data = report.repaired
     trailing = find_trailing_data(data)

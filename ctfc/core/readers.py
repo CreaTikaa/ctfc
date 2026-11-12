@@ -59,10 +59,12 @@ from ctfc.core import (
 from ctfc.core.budget import Budget
 from ctfc.core.flags import FlagSet, find_flags
 
-# A piece smaller than this holds nothing anyone wants; a piece bigger than this
-# is a disk image, not a payload, and following it is a different job (`ctfc scan`).
+# A piece smaller than this holds nothing anyone wants. A piece bigger than the
+# max is not followed - but it is SAID (a note), never dropped in silence: a 22 MB
+# capture inside a ZIP is a normal challenge (HTB Fake Boost), and the old 8 MB
+# cap made `solve` answer "nothing came out" about it.
 CHILD_MIN_SIZE = 4
-CHILD_MAX_SIZE = 8 * 1024 * 1024
+CHILD_MAX_SIZE = 256 * 1024 * 1024
 # A decompressed stream may be a whole disk image; only a bomb is refused.
 DECOMPRESS_MAX = 512 * 1024 * 1024
 # How many children one reader may hand over. A 2000-file tar would otherwise
@@ -143,12 +145,58 @@ def _iso(value: str) -> str:
 
 def _keep(children: list[Child]) -> list[Child]:
     """Drop the pieces that are too small, too big, or empty, and cap the count."""
-    kept = [
-        child
+    # The count is capped in `open_with` (`_likeliest`), where it can be said.
+    return [child for child in children if child.data and CHILD_MIN_SIZE <= len(child.data)]
+
+
+# Names that say "look at me", then the files a person writes, then containers.
+# Images are NOT promoted: an APK carries hundreds of icons.
+NAME_RANKS = (
+    re.compile(r"flag|secret|key|pass|hidden|cred|token|note|readme|backup", re.IGNORECASE),
+    re.compile(
+        r"\.(txt|md|json|csv|log|ps1|py|js|sh|bat|vbs|php|conf|cfg|ini|sql|eml)$", re.IGNORECASE
+    ),
+    re.compile(r"\.(zip|7z|rar|gz|xz|bz2|tar|pdf|docx?|xlsx?|pcapng|pcap)$", re.IGNORECASE),
+)
+
+
+def _rank(child: Child) -> int:
+    """0 for the likeliest piece, len(NAME_RANKS) for an ordinary one."""
+    for rank, pattern in enumerate(NAME_RANKS):
+        if pattern.search(child.name):
+            return rank
+    return len(NAME_RANKS)
+
+
+def _likeliest(children: list[Child]) -> tuple[list[Child], list[str]]:
+    """At most CHILD_LIMIT pieces, the likeliest first - and a note for the rest.
+
+    Under the limit nothing moves: the readers' own order means something (a
+    capture's mail bodies before its UDP noise). Over it, an APK's 772 members
+    used to be cut at 120 in ZIP order, and `res/color/flag.txt` (picoCTF Mob
+    psycho) never got looked at. So the names that say "flag", "secret", ".txt"
+    go first, then the rest in the reader's order.
+    """
+    if len(children) <= CHILD_LIMIT:
+        return children, []
+    ranked = sorted(children, key=_rank)  # stable: the reader's order within a rank
+    note = (
+        f"{len(children)} pieces inside, only {CHILD_LIMIT} followed (names that look "
+        "like a flag, a secret or a document first): extract it to see them all"
+    )
+    return ranked[:CHILD_LIMIT], [note]
+
+
+def _too_big(children: list[Child]) -> tuple[list[Child], list[str]]:
+    """Split off the pieces too big to follow, with a note naming each one."""
+    kept = [child for child in children if len(child.data) <= CHILD_MAX_SIZE]
+    notes = [
+        f"{child.name} ({len(child.data) // (1024 * 1024)} MB) is too big to follow here: "
+        "extract it and run `ctfc solve` on it"
         for child in children
-        if child.data and CHILD_MIN_SIZE <= len(child.data) <= CHILD_MAX_SIZE
+        if len(child.data) > CHILD_MAX_SIZE
     ]
-    return kept[:CHILD_LIMIT]
+    return kept, notes
 
 
 def _zip_members(data: bytes, origin: str) -> list[Child]:
@@ -429,6 +477,12 @@ def _open_zip(data: bytes, flagset: FlagSet | None, path: str) -> Opened:
             children.append(Child(entry.name, "recovered from the CRC32", entry.recovered))
     encrypted = [entry.name for entry in report.entries if entry.encrypted]
     notes = list(report.notes)
+    notes += [
+        f"{entry.name} ({entry.uncompressed_size // (1024 * 1024)} MB) is too big to follow "
+        "here: extract it and run `ctfc solve` on it"
+        for entry in report.entries
+        if entry.uncompressed_size > CHILD_MAX_SIZE and not entry.encrypted
+    ]
     if encrypted:
         notes.append(
             f"{len(encrypted)} encrypted entr(ies): a password is needed, "
@@ -1078,6 +1132,9 @@ def open_with(
         opened = reader.open(data, flagset, path)
     except Exception as exc:  # noqa: BLE001 - a file that will not parse is a note
         opened = Opened(error=f"{type(exc).__name__}: {exc}")
+    opened.children, skipped = _too_big(opened.children)
+    opened.children, cut = _likeliest(opened.children)
+    opened.notes += skipped + cut
     opened.reader = reader.name
     opened.label = reader.label
     opened.command = reader.command + " {file}"

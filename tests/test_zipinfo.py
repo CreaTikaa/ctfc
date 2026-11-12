@@ -25,6 +25,22 @@ def build(entries: list[tuple[str, bytes]], comment: bytes = b"") -> bytes:
     return buffer.getvalue()
 
 
+def mark_encrypted(data: bytes) -> bytes:
+    """Set the "encrypted" bit of every entry (Python's zipfile cannot encrypt).
+
+    CRC recovery only runs on locked entries - an open one is just read - so
+    the tests need an entry that SAYS it is locked. The CRC stays the
+    plaintext's, which is exactly the situation the feature is for.
+    """
+    out = bytearray(data)
+    for signature, flags_at in ((b"PK\x03\x04", 6), (b"PK\x01\x02", 8)):
+        position = out.find(signature)
+        while position != -1:
+            out[position + flags_at] |= 0x01
+            position = out.find(signature, position + 4)
+    return bytes(out)
+
+
 # ---------------------------------------------------------------------------
 # Structure
 # ---------------------------------------------------------------------------
@@ -142,7 +158,7 @@ def test_the_budget_stops_the_search():
 
 
 def test_the_recovered_content_shows_up_in_the_report():
-    report = zipinfo.analyse(build([("tiny.txt", b"CYB")]))
+    report = zipinfo.analyse(mark_encrypted(build([("tiny.txt", b"CYB")])))
     entry = report.entries[0]
     assert entry.recovered == b"CYB"
     assert any("gives the content away" in note for note in report.notes)
@@ -193,3 +209,10 @@ def test_a_real_winzip_aes_archive_is_told_apart(tmp_path):
     # AE-2 zeroes the CRC, which is exactly why the short-file trick cannot work.
     assert entry.crc == 0
     assert any("AE-2" in note for note in report.notes)
+
+
+def test_an_open_entry_is_read_not_recovered_from_its_crc():
+    """An APK has hundreds of tiny open members: recovering each from its CRC
+    took a minute (picoCTF Mob psycho) for bytes `zipfile` reads at once."""
+    report = zipinfo.analyse(build([("tiny.txt", b"CYB")]))
+    assert report.entries[0].recovered is None

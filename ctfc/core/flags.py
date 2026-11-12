@@ -115,6 +115,9 @@ SOUP_CHARS = set("&$#%+=:,'@ ")
 # prefix does not say "flag" or "ctf", is as likely to be chance as a flag.
 SHORT_BODY = 12
 FLAGGY_PREFIX_RE = re.compile(r"flag|ctf", re.IGNORECASE)
+# A prefix made only of hex digits, with at least two digits in it, is a number
+# printed in hex (F2B3AF0D), not a CTF name. "DEADFACE" has no digit: not caught.
+HEX_VALUE_PREFIX_RE = re.compile(r"(?=(?:[A-Fa-f]*\d){2})[0-9A-Fa-f]{4,}")
 # Characters a flag body uses where a word would use a vowel: the vowels
 # themselves, and the leet digits that stand in for them (0=o, 1=i, 3=e, 4=a).
 # A body with almost none of these is consonant soup from a decode, not words.
@@ -146,6 +149,10 @@ def _chance_body(flag: str) -> bool:
     """
     prefix, body = flag[: flag.index("{")], flag[flag.index("{") + 1 : -1]
     if any(ch in SOUP_CHARS for ch in body):
+        return True
+    if HEX_VALUE_PREFIX_RE.fullmatch(prefix):
+        # "F2B3AF0D{...}": a hex value (a GUID chunk, a hash, a registry
+        # value) followed by a brace, not a CTF's name. Seen on a SAM hive.
         return True
     if FLAGGY_PREFIX_RE.search(prefix):
         return False  # the prefix says "flag"/"ctf": trust it
@@ -312,11 +319,43 @@ def _utf16_runs(data: bytes) -> list[tuple[str, str]]:
     if data.count(0) < UTF16_MIN_ZEROS:
         return []
     runs = []
-    for match in UTF16LE_RUN_RE.finditer(data):
-        runs.append((match.group(0).decode("utf-16-le"), "utf-16-le"))
-    for match in UTF16BE_RUN_RE.finditer(data):
-        runs.append((match.group(0).decode("utf-16-be"), "utf-16-be"))
+    for chunk in _utf16_windows(data):
+        for match in UTF16LE_RUN_RE.finditer(chunk):
+            runs.append((match.group(0).decode("utf-16-le"), "utf-16-le"))
+        for match in UTF16BE_RUN_RE.finditer(chunk):
+            runs.append((match.group(0).decode("utf-16-be"), "utf-16-be"))
     return runs
+
+
+# Above this size the two UTF-16 regexes over the whole file cost seconds (4.5 s
+# on a 69 MB capture, measured), so only the bytes around a UTF-16 brace are read:
+# a flag, or a fragment of one, has a "{" or a "}". What is lost on a big file:
+# a UTF-16 base64 payload with no brace (a PowerShell -enc in a memory dump),
+# which `ctfc keys` / `strings -el` still find.
+UTF16_FULL_SCAN = 8 * 1024 * 1024
+UTF16_WINDOW = 1024  # bytes kept on each side of a brace
+UTF16_MAX_WINDOWS = 20_000
+UTF16_BRACES = (b"{\x00", b"\x00{", b"}\x00", b"\x00}")
+
+
+def _utf16_windows(data: bytes) -> list[bytes]:
+    """The parts of `data` worth reading as UTF-16: all of it, or around braces."""
+    if len(data) <= UTF16_FULL_SCAN:
+        return [data]
+    starts: list[int] = []
+    for brace in UTF16_BRACES:
+        position = data.find(brace)
+        while position != -1 and len(starts) < UTF16_MAX_WINDOWS:
+            starts.append(position)
+            position = data.find(brace, position + 1)
+    windows: list[list[int]] = []
+    for position in sorted(starts):
+        low, high = max(0, position - UTF16_WINDOW), position + UTF16_WINDOW
+        if windows and low <= windows[-1][1]:
+            windows[-1][1] = max(windows[-1][1], high)  # overlapping: one window
+        else:
+            windows.append([low, high])
+    return [data[low:high] for low, high in windows]
 
 
 def _drop_shifted(hits: list[FlagHit]) -> list[FlagHit]:

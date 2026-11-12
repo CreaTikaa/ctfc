@@ -220,6 +220,35 @@ def letters_of(data: bytes) -> str:
     return "".join(chr(b | 0x20) for b in data if 65 <= b <= 90 or 97 <= b <= 122)
 
 
+# The commonest letter pairs of English and French. Running text has about half
+# its adjacent pairs in this set (0.42 for a log, VBA or HTML, 0.5+ for prose);
+# a transposition breaks them up (0.28 on the rail fence fixture) and a
+# substitution renames them (< 0.1). Measured on the fixtures and on the
+# public-challenge corpus (docs/audit-public-challenges.md).
+COMMON_BIGRAMS = frozenset(
+    "th he in er an re on at en nd ti es or te of ed is it al ar st to nt ng se ha as "
+    "ou io le ve co me de hi ri ro ic ne ea ra ce el la ai et ie em ur ue qu".split()
+)
+READABLE_BIGRAMS = 0.36  # at or above this rate, the text is in clear
+WHOLE_WORD_RE = re.compile(r"(?<![a-z0-9])[a-z]{2,}(?![a-z0-9])")
+
+
+def bigram_rate(data: bytes) -> float:
+    """The share of letter pairs, inside words, that are common EN/FR bigrams.
+
+    A cheap "is this already language?" test that, unlike a word list, does not
+    care whether the words are in our dictionary: "Permanently", "hangman" and a
+    name all have ordinary bigrams. 0 when there are no pairs at all.
+    """
+    # Whole words only: a base64 token or a hash ("0Dl0wlHUXRL3L") is letters
+    # glued to digits, and its random pairs would drag the rate down.
+    words = WHOLE_WORD_RE.findall(data.decode("latin-1").lower())
+    pairs = [word[index : index + 2] for word in words for index in range(len(word) - 1)]
+    if not pairs:
+        return 0.0
+    return sum(pair in COMMON_BIGRAMS for pair in pairs) / len(pairs)
+
+
 def index_of_coincidence(letters: str) -> float:
     """Chance that two letters picked at random are equal (EN ~0.067, random 0.038)."""
     total = len(letters)
