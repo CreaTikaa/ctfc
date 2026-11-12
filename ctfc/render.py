@@ -7,6 +7,7 @@ bytes from a sample can never inject rich markup or terminal escape sequences.
 from __future__ import annotations
 
 import json
+import shlex
 
 from rich.console import Console
 from rich.markup import escape
@@ -547,10 +548,51 @@ def print_solve(console: Console, report, show_steps: bool = False) -> None:
                 f" in {safe(found.where, 70)}[/]"
             )
 
+    print_next_steps(console, getattr(report, "next_steps", []))
+
     for note in report.notes:
         console.print(f"[cyan]*[/] {safe(note)}")
     if report.budget:
         console.print(f"[dim]{safe(report.budget)}[/]")
+
+
+def print_next_steps(console: Console, steps) -> None:
+    """No flag: what was found, what it means, and what to run next.
+
+    One block per finding, the most specific first. ctfc commands come before
+    the external tools, because they need nothing installed; each tool says
+    whether it is here, and how to get it when it is not.
+    """
+    if not steps:
+        return
+    console.print("\n[bold cyan]Next steps[/] (what was found, and what to try):")
+    for number, step in enumerate(steps, start=1):
+        console.print(f"\n[bold]{number}. Found:[/] {safe(step.found, 200)}")
+        if step.also:
+            more = ", ".join(step.also[:3]) + (" ..." if len(step.also) > 3 else "")
+            console.print(f"   [dim]also in: {safe(more, 160)}[/]")
+        console.print(f"   [dim]Means:[/] {safe(step.meaning, 600)}")
+        if step.trail:
+            console.print("   [dim]get the piece first:[/]")
+            for command in step.trail:
+                console.print(f"     [green]$[/] {escape(command)}")
+        for command in step.ctfc:
+            console.print(f"   [green]$[/] {escape(command)}")
+        for tool in step.tools:
+            if tool.tool.kind == "local":
+                state = "[green]installed[/]" if tool.available else "[yellow]not installed[/]"
+            else:
+                state = "[magenta]online[/]" if tool.tool.kind == "online" else "[green]local[/]"
+            line = shlex.join(tool.command) if tool.command else tool.url
+            console.print(f"   [bold]{safe(tool.tool.name)}[/] ({state}): {escape(line)}")
+            if tool.tool.notes:
+                console.print(f"     [dim]{safe(tool.tool.notes, 170)}[/]")
+            if tool.warning:
+                console.print(f"     [yellow]! {safe(tool.warning)}[/]")
+            if tool.tool.kind == "local" and not tool.available and tool.tool.install:
+                console.print(f"     [dim]install: {safe(tool.tool.install, 200)}[/]")
+        for text in step.by_hand:
+            console.print(f"   [cyan]by hand:[/] {safe(text, 300)}")
 
 
 def print_scan(
@@ -1202,7 +1244,7 @@ def print_tools(console: Console, suggestions, public_url: str = "", offline: bo
             lines.append(f"  {safe(item.tool.notes)}")
         if item.command:
             lines.append("")
-            lines.append("  " + escape(" ".join(item.command)))
+            lines.append("  " + escape(shlex.join(item.command)))
         if item.placeholders:
             lines.append(f"  [dim]fill in: {escape(', '.join(item.placeholders))}[/]")
         if not item.available and item.tool.install:
@@ -1243,7 +1285,7 @@ def print_tool_list(console: Console, entries) -> None:
 
 def print_tool_run(console: Console, tool, result) -> None:
     """`ctfc tools <input> --run <id>`: the command, then its output."""
-    console.print(f"[bold]{safe(tool.name)}[/]: {escape(' '.join(result.command))}")
+    console.print(f"[bold]{safe(tool.name)}[/]: {escape(shlex.join(result.command))}")
     if result.error:
         console.print(f"[red]{safe(result.error)}[/]")
         return

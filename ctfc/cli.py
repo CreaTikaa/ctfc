@@ -16,7 +16,7 @@ from pathlib import Path
 from rich.console import Console
 
 from ctfc import __version__, render
-from ctfc.config import Config, ConfigError, load_config
+from ctfc.config import Config, ConfigError, find_wordlist, load_config
 from ctfc.core import classical, keyhunt, pipeline
 from ctfc.core import session as sessions
 from ctfc.core import tools as toolbox
@@ -301,7 +301,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--min-interest", type=float, default=0.4, help=t("opt_scan_min"))
 
     p = add("tools")
-    p.add_argument("input", help=t("arg_input"))
+    # Optional only so that `ctfc tools --list` works on its own.
+    p.add_argument("input", nargs="?", help=t("arg_input"))
     p.add_argument("--list", action="store_true", help=t("opt_tools_list"))
     p.add_argument("--run", help=t("opt_tools_run"))
     p.add_argument("--wordlist", help=t("opt_tools_wordlist"))
@@ -1710,6 +1711,10 @@ def cmd_solve(args: argparse.Namespace, config: Config, console: Console) -> int
         budget=budget,
         max_depth=args.depth,
         top_leads=args.leads,
+        offline=config.offline,
+        tool_paths=config.tool_paths,
+        wordlist=find_wordlist(config),
+        cyberchef_url=toolbox.cyberchef_base(config.cyberchef_url, for_web=False),
     )
     summary = [flag.text for flag in report.flags] or [lead.title for lead in report.leads[:3]]
     remember(args, config, inp.data, args.input, summary=summary)
@@ -1900,8 +1905,11 @@ def escape_path(path: str) -> str:
 def cmd_tools(args: argparse.Namespace, config: Config, console: Console) -> int:
     """Suggest the external tools that fit this input, and run one on request."""
     if args.list:
-        render.print_tool_list(console, toolbox.installed_tools())
+        render.print_tool_list(console, toolbox.installed_tools(config.tool_paths))
         return 0
+    if not args.input:
+        console.print("[red]ctfc tools needs an input (or --list)[/]")
+        return 2
 
     inp = parse_input(args.input)
     # The tools read files: a pasted hex:/text: input has no path to give them.

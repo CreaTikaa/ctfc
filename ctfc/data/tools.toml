@@ -314,3 +314,437 @@ suggest_when = ["zip.known_plaintext"]
 offline_safe = true
 install = "https://github.com/kimci86/bkcrack/releases"
 notes = "traditional ZipCrypto only (not WinZip AES). Once it prints the keys: bkcrack -C file.zip -c entry -k <keys> -d out.bin"
+
+# --- Tools that only the "next steps" table points at (data/leads.toml): when
+# `ctfc solve` finds no flag, it says what it DID find and which of these to try.
+# Most have no `suggest_when`: they are reached through a lead, not a detect rule.
+# `gui = true` marks a program with a window: the web page shows the command but
+# no Run button (a window cannot open inside a web request).
+
+[[tool]]
+id = "sox_spectrogram"
+name = "sox (spectrogram)"
+kind = "local"
+command_template = ["sox", "{input}", "-n", "remix", "-", "spectrogram", "-x", "2000", "-Y", "1000", "-o", "{input}.spectrogram.png"]
+suggest_when = []
+offline_safe = true
+install = "apt install sox libsox-fmt-all"
+notes = "draws the frequencies over time into a big PNG (all channels mixed): text or a dot pattern in the spectrogram is the commonest audio trick. Too small to read? zoom on the low frequencies with `rate 12k` before `spectrogram` (shows 0-6 kHz)"
+
+[[tool]]
+id = "sox_reverse"
+name = "sox (play it backwards)"
+kind = "local"
+command_template = ["sox", "{input}", "{input}.reversed.wav", "reverse"]
+suggest_when = []
+offline_safe = true
+install = "apt install sox libsox-fmt-all"
+notes = "a voice that sounds like gibberish is often just reversed"
+
+[[tool]]
+id = "multimon_morse"
+name = "multimon-ng (Morse)"
+kind = "local"
+command_template = ["multimon-ng", "-t", "wav", "-a", "MORSE_CW", "{input}"]
+suggest_when = []
+offline_safe = true
+install = "apt install multimon-ng"
+notes = "decodes Morse beeps from a sound file. Over music or noise it may fail: then read the dots and dashes in the spectrogram and paste them into `ctfc auto 'text:.... ..'`"
+
+[[tool]]
+id = "multimon_dtmf"
+name = "multimon-ng (DTMF)"
+kind = "local"
+command_template = ["multimon-ng", "-t", "wav", "-a", "DTMF", "{input}"]
+suggest_when = []
+offline_safe = true
+install = "apt install multimon-ng"
+notes = "phone keypad tones -> digits. The digits are often A1Z26 or T9 text: paste them into `ctfc auto`"
+
+[[tool]]
+id = "sstv"
+name = "sstv (SSTV decoder)"
+kind = "local"
+command_template = ["sstv", "-d", "{input}", "-o", "{input}.sstv.png"]
+suggest_when = []
+offline_safe = true
+install = "pipx install sstv"
+notes = "slow-scan TV: an image sent as a warbling sound (ISS, Robot36, Martin, Scottie). qsstv does the same with a window"
+
+[[tool]]
+id = "qsstv"
+name = "QSSTV"
+kind = "local"
+gui = true
+command_template = ["qsstv"]
+suggest_when = []
+offline_safe = true
+install = "apt install qsstv"
+notes = "graphical SSTV decoder: play the file into it (pavucontrol: record from the monitor of your output)"
+
+[[tool]]
+id = "audacity"
+name = "Audacity"
+kind = "local"
+gui = true
+command_template = ["audacity", "{input}"]
+suggest_when = []
+offline_safe = true
+install = "apt install audacity"
+notes = "track menu -> Spectrogram view; Effect -> Reverse, Change speed. Look at each channel apart: a message can sit in one channel only"
+
+[[tool]]
+id = "sonic_visualiser"
+name = "Sonic Visualiser"
+kind = "local"
+gui = true
+command_template = ["sonic-visualiser", "{input}"]
+suggest_when = []
+offline_safe = true
+install = "apt install sonic-visualiser"
+notes = "Layer -> Add Spectrogram, with a log frequency scale: shows text drawn in the high frequencies better than Audacity"
+
+[[tool]]
+id = "ffprobe"
+name = "ffprobe"
+kind = "local"
+command_template = ["ffprobe", "-hide_banner", "{input}"]
+suggest_when = []
+offline_safe = true
+install = "apt install ffmpeg"
+notes = "lists every stream of a media file: a second audio track, a subtitle track or an attached font is a hiding place"
+
+[[tool]]
+id = "ffmpeg_frames"
+name = "ffmpeg (every frame as a PNG)"
+kind = "local"
+command_template = ["ffmpeg", "-hide_banner", "-i", "{input}", "{input}.frame_%04d.png"]
+suggest_when = []
+offline_safe = true
+install = "apt install ffmpeg"
+notes = "a GIF or video can flash the flag in one frame, or spread a QR code over several: then `zbarimg` each frame"
+
+[[tool]]
+id = "imagemagick_frames"
+name = "ImageMagick (GIF frames)"
+kind = "local"
+command_template = ["convert", "-coalesce", "{input}", "{input}.frame_%03d.png"]
+suggest_when = []
+offline_safe = true
+install = "apt install imagemagick"
+notes = "splits an animated GIF into full frames (-coalesce redraws the partial ones); `identify {input}` lists the frame delays, which can be Morse or binary too"
+
+[[tool]]
+id = "identify"
+name = "ImageMagick identify"
+kind = "local"
+command_template = ["identify", "-verbose", "{input}"]
+suggest_when = []
+offline_safe = true
+install = "apt install imagemagick"
+notes = "every property of an image: the palette, the comment, the real size, the frame list"
+
+[[tool]]
+id = "pngcheck"
+name = "pngcheck"
+kind = "local"
+command_template = ["pngcheck", "-vtp7", "{input}"]
+suggest_when = []
+offline_safe = true
+install = "apt install pngcheck"
+notes = "lists every chunk with its CRC: a wrong CRC, an odd chunk or bytes after IEND. `ctfc repair` fixes the CRCs and the IHDR height"
+
+[[tool]]
+id = "stegsolve"
+name = "Stegsolve"
+kind = "local"
+gui = true
+command_template = ["stegsolve"]
+suggest_when = []
+offline_safe = true
+install = "download stegsolve.jar (java -jar stegsolve.jar), and set tool_paths.stegsolve in ~/.ctfc/config.toml"
+notes = "flip through the bit planes and colour filters one by one: text hidden in one plane, or a faint image, jumps out. Analyse -> Data Extract for a custom LSB order"
+
+[[tool]]
+id = "gimp"
+name = "GIMP"
+kind = "local"
+gui = true
+command_template = ["gimp", "{input}"]
+suggest_when = []
+offline_safe = true
+install = "apt install gimp"
+notes = "Colors -> Curves / Levels pulls out text drawn in a colour one shade away from the background; Image -> Canvas size shows what a cropped header hid"
+
+[[tool]]
+id = "aperisolve"
+name = "Aperi'Solve"
+kind = "online"
+url_template = "https://www.aperisolve.com/"
+suggest_when = []
+offline_safe = false
+install = ""
+notes = "runs zsteg, steghide, binwalk, exiftool and the bit planes on an uploaded image in one go. You upload the image yourself"
+
+[[tool]]
+id = "steghide_empty"
+name = "steghide (empty passphrase)"
+kind = "local"
+command_template = ["steghide", "extract", "-sf", "{input}", "-p", "", "-f"]
+suggest_when = []
+offline_safe = true
+install = "apt install steghide"
+notes = "half the steghide challenges use no passphrase at all; if this fails, stegseek with a wordlist"
+
+[[tool]]
+id = "outguess"
+name = "outguess"
+kind = "local"
+command_template = ["outguess", "-r", "{input}", "{input}.outguess.txt"]
+suggest_when = []
+offline_safe = true
+install = "apt install outguess"
+notes = "the other JPEG steganography tool (steghide's rival); -k for a key"
+
+[[tool]]
+id = "tshark_hierarchy"
+name = "tshark (protocol list)"
+kind = "local"
+command_template = ["tshark", "-r", "{input}", "-q", "-z", "io,phs"]
+suggest_when = []
+offline_safe = true
+install = "apt install tshark"
+notes = "which protocols the capture holds, with the byte count of each: the odd one out (ICMP, DNS volume, USB, FTP-DATA) is usually the channel"
+
+[[tool]]
+id = "tshark_objects"
+name = "tshark (export HTTP objects)"
+kind = "local"
+command_template = ["tshark", "-r", "{input}", "-q", "--export-objects", "http,{input}.http_objects"]
+suggest_when = []
+offline_safe = true
+install = "apt install tshark"
+notes = "writes every file downloaded over HTTP into a folder (also smb, imf, tftp, ftp-data instead of http)"
+
+[[tool]]
+id = "wireshark"
+name = "Wireshark"
+kind = "local"
+gui = true
+command_template = ["wireshark", "{input}"]
+suggest_when = []
+offline_safe = true
+install = "apt install wireshark"
+notes = "Statistics -> Conversations and Protocol Hierarchy, then right click -> Follow -> TCP/UDP stream"
+
+[[tool]]
+id = "aircrack"
+name = "aircrack-ng"
+kind = "local"
+command_template = ["aircrack-ng", "-w", "{wordlist}", "{input}"]
+suggest_when = []
+offline_safe = true
+install = "apt install aircrack-ng"
+notes = "cracks the WPA handshake in the capture with a wordlist; then decrypt the traffic with airdecap-ng -p <passphrase> -e <SSID> capture"
+
+[[tool]]
+id = "hcxpcapngtool"
+name = "hcxpcapngtool"
+kind = "local"
+command_template = ["hcxpcapngtool", "-o", "{input}.22000", "{input}"]
+suggest_when = []
+offline_safe = true
+install = "apt install hcxtools"
+notes = "turns the handshake into a hashcat line: hashcat -m 22000 capture.22000 wordlist (GPU, much faster than aircrack)"
+
+[[tool]]
+id = "vol_info"
+name = "Volatility 3 (windows.info)"
+kind = "local"
+command_template = ["vol", "-f", "{input}", "windows.info"]
+suggest_when = []
+offline_safe = true
+install = "pipx install volatility3 (or set tool_paths.vol in ~/.ctfc/config.toml)"
+notes = "is it a Windows memory image, and which build? Then windows.pslist, windows.cmdline, windows.filescan, windows.dumpfiles, windows.hashdump. Linux: banners.Banners"
+
+[[tool]]
+id = "vol_pslist"
+name = "Volatility 3 (windows.pstree)"
+kind = "local"
+command_template = ["vol", "-f", "{input}", "windows.pstree"]
+suggest_when = []
+offline_safe = true
+install = "pipx install volatility3 (or set tool_paths.vol in ~/.ctfc/config.toml)"
+notes = "the process tree: the odd process (notepad.exe, mspaint.exe, a renamed svchost) is the one to dump with windows.memmap --dump --pid N"
+
+[[tool]]
+id = "vol_cmdline"
+name = "Volatility 3 (windows.cmdline)"
+kind = "local"
+command_template = ["vol", "-f", "{input}", "windows.cmdline"]
+suggest_when = []
+offline_safe = true
+install = "pipx install volatility3 (or set tool_paths.vol in ~/.ctfc/config.toml)"
+notes = "every process's command line: a file name, a password or an encoded PowerShell often sits right there"
+
+[[tool]]
+id = "strings_wide"
+name = "strings (UTF-16)"
+kind = "local"
+command_template = ["strings", "-n", "6", "-el", "{input}"]
+suggest_when = []
+offline_safe = true
+install = "apt install binutils"
+notes = "Windows writes text as UTF-16: plain `strings` misses all of it. Pipe it into grep -i for a name or a prefix"
+
+[[tool]]
+id = "strings_ascii"
+name = "strings"
+kind = "local"
+command_template = ["strings", "-n", "8", "{input}"]
+suggest_when = []
+offline_safe = true
+install = "apt install binutils"
+notes = "the printable runs; long base64 / hex runs in there can be pasted into `ctfc auto`"
+
+[[tool]]
+id = "binwalk_entropy"
+name = "binwalk (entropy graph)"
+kind = "local"
+command_template = ["binwalk", "-E", "-N", "{input}"]
+suggest_when = []
+offline_safe = true
+install = "apt install binwalk"
+notes = "where the high-entropy (encrypted / compressed) regions start and stop: a block of 1.0 inside low entropy is the payload to cut out"
+
+[[tool]]
+id = "xxd_head"
+name = "xxd (first bytes)"
+kind = "local"
+command_template = ["xxd", "-l", "256", "{input}"]
+suggest_when = []
+offline_safe = true
+install = "apt install xxd"
+notes = "look at the header yourself: a magic one byte off, reversed, XORed (the same byte everywhere a header has zeros) or a format ctfc does not know"
+
+[[tool]]
+id = "file"
+name = "file"
+kind = "local"
+command_template = ["file", "-k", "{input}"]
+suggest_when = []
+offline_safe = true
+install = "apt install file"
+notes = "libmagic knows thousands more formats than ctfc's table; -k lists every match, not just the first"
+
+[[tool]]
+id = "pdftotext"
+name = "pdftotext"
+kind = "local"
+command_template = ["pdftotext", "-layout", "{input}", "-"]
+suggest_when = []
+offline_safe = true
+install = "apt install poppler-utils"
+notes = "the text as drawn on the page, including white-on-white text and text under an image"
+
+[[tool]]
+id = "pdfimages"
+name = "pdfimages"
+kind = "local"
+command_template = ["pdfimages", "-all", "-list", "{input}"]
+suggest_when = []
+offline_safe = true
+install = "apt install poppler-utils"
+notes = "lists the embedded images (drop -list and add an output prefix to save them): a flag under an image, or a stego image"
+
+[[tool]]
+id = "qpdf_qdf"
+name = "qpdf (uncompressed copy)"
+kind = "local"
+command_template = ["qpdf", "--qdf", "--object-streams=disable", "{input}", "{input}.qdf.pdf"]
+suggest_when = []
+offline_safe = true
+install = "apt install qpdf"
+notes = "rewrites the PDF with every stream decompressed, so you can read it in a text editor; also opens a PDF with an owner password"
+
+[[tool]]
+id = "apktool"
+name = "apktool"
+kind = "local"
+command_template = ["apktool", "d", "-f", "{input}", "-o", "{input}.apktool"]
+suggest_when = []
+offline_safe = true
+install = "apt install apktool"
+notes = "decodes the APK's binary XML (AndroidManifest, res/values/strings.xml) and the smali code; then grep -r the folder"
+
+[[tool]]
+id = "jadx"
+name = "jadx"
+kind = "local"
+command_template = ["jadx", "-d", "{input}.jadx", "{input}"]
+suggest_when = []
+offline_safe = true
+install = "https://github.com/skylot/jadx/releases"
+notes = "decompiles the DEX back to Java source: read the class that builds the flag; then `ctfc lens` on it"
+
+[[tool]]
+id = "sqlite3"
+name = "sqlite3"
+kind = "local"
+command_template = ["sqlite3", "{input}", ".dump"]
+suggest_when = []
+offline_safe = true
+install = "apt install sqlite3"
+notes = "every table as SQL. Deleted rows survive in free pages: `ctfc sqlite` reads those, sqlite3 does not"
+
+[[tool]]
+id = "photorec"
+name = "PhotoRec"
+kind = "local"
+gui = true
+command_template = ["photorec", "{input}"]
+suggest_when = []
+offline_safe = true
+install = "apt install testdisk"
+notes = "recovers deleted files by their content, without a file system: for a damaged disk image or a raw dump"
+
+[[tool]]
+id = "ghidra"
+name = "Ghidra"
+kind = "local"
+gui = true
+command_template = ["ghidraRun"]
+suggest_when = []
+offline_safe = true
+install = "https://github.com/NationalSecurityAgency/ghidra/releases"
+notes = "a binary that builds or checks the flag itself is reverse engineering: decompile the function that compares the input"
+
+[[tool]]
+id = "secretsdump"
+name = "secretsdump.py (impacket)"
+kind = "local"
+command_template = ["secretsdump.py", "-sam", "{input}", "-system", "SYSTEM", "LOCAL"]
+suggest_when = []
+offline_safe = true
+install = "pipx install impacket"
+notes = "decrypts the NT hashes of a SAM hive with the boot key of the SYSTEM hive (give the real SYSTEM path); prints user:rid:lm:nt lines"
+
+[[tool]]
+id = "samdump2"
+name = "samdump2"
+kind = "local"
+command_template = ["samdump2", "SYSTEM", "{input}"]
+suggest_when = []
+offline_safe = true
+install = "apt install samdump2"
+notes = "the same as secretsdump, older; fails on Windows 10+ hives that use AES instead of RC4"
+
+[[tool]]
+id = "stegsnow"
+name = "stegsnow (SNOW whitespace)"
+kind = "local"
+command_template = ["stegsnow", "-C", "{input}"]
+suggest_when = []
+offline_safe = true
+install = "apt install stegsnow"
+notes = "reads a message hidden as spaces and tabs at the ends of lines (SNOW); add -p <password> when it prints garbage, the password is often elsewhere in the challenge"

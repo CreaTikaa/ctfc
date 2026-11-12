@@ -1,0 +1,368 @@
+# What to do when `ctfc solve` finds no flag: one rule per kind of finding.
+#
+# `ctfc solve` notes a few FACTS about every piece it looked at, then runs this
+# table over them. Each rule that fires becomes one "next step": what was found,
+# what that usually means in a CTF, and what to try - ctfc commands first, then
+# the external tools (ids from tools.toml, with the command already filled in).
+# Everything is deterministic: a fact is a string, a rule is a pattern.
+#
+# The facts a piece can have:
+#   reader:<name>        a reader claimed it (wav, stego, exif, pcap, zip, pdf,
+#                        office, pe, exe, disk, iso, sqlite, evtx, hive, archive...)
+#   reader-error:<name>  that reader could not parse it
+#   magic:<ext>          its first bytes are a known signature (png, jpg, gif, mp3,
+#                        ogg, flac, mp4, mkv, riff, dmp, lime, kdbx, luks, ...)
+#   detect:<rule>        a `ctfc detect` rule fired with confidence >= 0.6
+#                        (hash.*, xor.*, classical.*, pem, embedded, ...)
+#   entropy:high         looks random (encrypted or compressed), no known header
+#   kind:unknown         no reader, no signature, nothing decoded
+#   kind:text            readable text, and no flag in it
+#   kind:bigraw          over 64 MB, no reader, no signature (a raw dump?)
+#   kind:apk             a ZIP with an AndroidManifest.xml
+#   kind:whitespace      a text with spaces / tabs at the ends of many lines
+#   kind:core            an ELF core file (one process's memory)
+#   pcap:tls             a capture with TLS records in it
+#
+# Fields of a rule:
+#   id        short name, also used in the tests
+#   when      the rule fires if ANY of these patterns matches a fact (`*` allowed)
+#   notes     (optional) a regex; then it ALSO needs a reader note to match it
+#             (the pcap reader writes "WPA handshake captured for ...")
+#   unless    (optional) patterns that stop the rule even when `when` matched
+#   found     what was found, shown to the user; {detail} = the reader's summary
+#   meaning   what that usually means in a CTF, and why the tools below
+#   ctfc      ctfc commands to try ({file} = the piece on disk)
+#   tools     tools.toml ids, best first
+#   by_hand   (optional) things no command does for you
+#   weight    0..1, how specific the rule is: the most specific steps come first
+#
+# To add a rule: copy a block, change the values, run `pytest tests/test_nextsteps.py`
+# (it checks that every tool id exists).
+
+# ---------------------------------------------------------------- media
+
+[[lead]]
+id = "audio"
+when = ["reader:wav", "magic:mp3", "magic:ogg", "magic:flac"]
+found = "a sound file ({detail})"
+meaning = "ctfc found no message in the low bits of the samples. A CTF sound usually hides the flag in its spectrogram (text drawn in the frequencies), as Morse or DTMF tones, as SSTV (a picture sent as sound), or simply played backwards or slowed down."
+ctfc = ["ctfc stego {file}"]
+tools = ["sox_spectrogram", "multimon_morse", "sstv", "multimon_dtmf", "audacity", "sox_reverse", "sonic_visualiser", "qsstv"]
+by_hand = ["listen to it: a voice, beeps, a modem noise or a warble each point at a different tool", "Morse read by eye from the spectrogram: paste it as `ctfc auto 'text:-.-. -.-- -... -.'`"]
+weight = 0.8
+
+[[lead]]
+id = "image.lossless"
+# magic:png too: a PNG/PDF polyglot is read as a PDF, but it is still an image.
+when = ["reader:stego", "magic:png", "magic:bmp"]
+found = "an image ({detail})"
+meaning = "ctfc tried the common LSB orders and found nothing. The flag may be drawn in the pixels (look at it, zoom, play with levels), hidden in one bit plane or one colour, in the palette, in a QR code, or below a cropped height (`ctfc repair` puts a shrunk IHDR height back)."
+ctfc = ["ctfc repair {file}", "ctfc stego {file}"]
+tools = ["zsteg", "stegsolve", "zbarimg", "pngcheck", "aperisolve", "gimp"]
+by_hand = ["open the image and look at it at 100% and zoomed: a faint text one shade off the background is common"]
+weight = 0.7
+
+[[lead]]
+id = "image.jpeg"
+when = ["magic:jpg"]
+found = "a JPEG photo"
+meaning = "a JPEG has no usable low bits (the compression destroys them), so JPEG steganography means steghide, outguess or jsteg, a comment or EXIF field, an embedded thumbnail, or a flag drawn in the picture itself."
+ctfc = ["ctfc stego {file}", "ctfc repair {file}"]
+tools = ["steghide_empty", "stegseek", "exiftool", "outguess", "zbarimg", "aperisolve"]
+by_hand = ["open it and look: the photo may show the answer (a sign, a screen, a place for an OSINT question)"]
+weight = 0.7
+
+[[lead]]
+id = "image.gif"
+when = ["magic:gif"]
+found = "a GIF image"
+meaning = "an animated GIF can flash the flag in a single frame, spread a QR code over several frames, or encode bits in the frame delays."
+ctfc = ["ctfc repair {file}"]
+tools = ["imagemagick_frames", "identify", "ffmpeg_frames", "zbarimg"]
+weight = 0.75
+
+[[lead]]
+id = "video"
+when = ["magic:mp4", "magic:mkv", "magic:riff"]
+unless = ["reader:wav"]
+found = "a video / media container"
+meaning = "a video hides things in a second audio or subtitle track, in an attached file (MKV attachments), in a single frame, or in its metadata."
+ctfc = ["ctfc detect {file}"]
+tools = ["ffprobe", "ffmpeg_frames", "exiftool"]
+by_hand = ["`ffmpeg -dump_attachment:t \"\" -i {file}` writes every MKV attachment (fonts included) next to it"]
+weight = 0.7
+
+# ---------------------------------------------------------------- network
+
+[[lead]]
+id = "pcap.wpa"
+when = ["reader:pcap"]
+notes = "WPA handshake|WPA-encrypted"
+found = "a Wi-Fi capture with WPA-encrypted traffic"
+meaning = "the traffic can only be read with the Wi-Fi passphrase. The passphrase comes from cracking the 4-way handshake with a wordlist (CTF passphrases are in rockyou), then airdecap-ng decrypts the capture and `ctfc solve` reads the result."
+ctfc = ["ctfc pcap {file}"]
+tools = ["aircrack", "hcxpcapngtool"]
+by_hand = ["once cracked: `airdecap-ng -p <passphrase> -e <SSID> {file}` writes {file}-dec, then `ctfc solve` it"]
+weight = 0.9
+
+[[lead]]
+id = "pcap.tls"
+when = ["pcap:tls"]
+found = "a capture with TLS (HTTPS) traffic"
+meaning = "what travels inside TLS is unreadable without the session keys. Look for an SSLKEYLOGFILE or a server private key elsewhere in the challenge (a memory dump, another file, a later stream in the clear)."
+ctfc = ["ctfc pcap {file}", "ctfc workspace <the challenge folder>"]
+tools = ["tshark_hierarchy", "wireshark"]
+by_hand = ["with a key log: `tshark -r {file} -o tls.keylog_file:keys.log --export-objects http,out`; ctfc recognises a key log file and prints that command"]
+weight = 0.75
+
+[[lead]]
+id = "pcap.usb"
+when = ["reader:pcap"]
+notes = "USB capture|usb-keystrokes"
+found = "a USB capture"
+meaning = "ctfc decodes keyboards (check the typed text: a password, a command, the flag with a typo or a backspace in it). A mouse capture draws the flag: plot the X/Y moves while a button is held. Mass storage carries a whole file in the bulk transfers."
+ctfc = ["ctfc pcap {file}"]
+tools = ["tshark_hierarchy", "wireshark"]
+by_hand = ["mouse: `tshark -r {file} -T fields -e usbhid.data` (or usb.capdata), then plot the cumulative x/y of the packets where byte 0 (buttons) is not 0"]
+weight = 0.8
+
+[[lead]]
+id = "tls.keylog"
+when = ["reader:keylog"]
+found = "a TLS key log (SSLKEYLOGFILE)"
+meaning = "these are the session secrets of HTTPS connections: with them, the capture of the same session can be decrypted and its HTTP read like plain traffic. Find the capture (.pcap / .pcapng) that goes with it."
+ctfc = ["ctfc workspace <the challenge folder>"]
+tools = ["wireshark"]
+by_hand = ["`tshark -r capture.pcapng -o tls.keylog_file:{file} --export-objects http,decrypted` then `ctfc solve` each file in decrypted/", "Wireshark: Preferences -> Protocols -> TLS -> (Pre)-Master-Secret log filename = {file}"]
+weight = 0.85
+
+[[lead]]
+id = "pcap"
+when = ["reader:pcap"]
+found = "a network capture ({detail})"
+meaning = "ctfc reads HTTP, DNS, FTP, SMTP, TCP streams and USB keystrokes. The flag may sit in a protocol it does not decode, be split over many packets (one byte per ping, per DNS query, per TTL or port), or be a question about the traffic (who, which file, which time)."
+ctfc = ["ctfc pcap {file}", "ctfc timeline {file}"]
+tools = ["tshark_hierarchy", "tshark_objects", "tshark", "wireshark"]
+by_hand = ["covert channels: `tshark -r {file} -T fields -e ip.ttl` (or icmp.seq, tcp.srcport, dns.qry.name, data.data) and paste the column into `ctfc auto`"]
+weight = 0.55
+
+# ---------------------------------------------------------------- containers
+
+[[lead]]
+id = "encrypted.container"
+when = ["reader:zip", "reader:archive", "reader:pdf", "reader:office", "magic:kdbx", "magic:kdb"]
+# How the readers say "locked": ZipCrypto / WinZip AES entries, a 7z or RAR
+# with AES, a PDF with /Encrypt, or the *2john / -p<password> command they suggest.
+notes = "(?i)zipcrypto|winzip|aes-256|/encrypt|2john|-p<password>|password salt"
+found = "a password-protected file"
+meaning = "the content needs a password. Look for it in the other files first (`ctfc workspace` tries every secret it finds against every locked file), then a wordlist. A ZipCrypto archive with a known file inside can be broken without the password (bkcrack)."
+ctfc = ["ctfc workspace <the challenge folder>", "ctfc zip {file} --wordlist <wordlist>"]
+tools = ["zip2john", "bkcrack", "john", "hashcat", "pdf2john", "office2john", "keepass2john"]
+weight = 0.85
+
+[[lead]]
+id = "apk"
+when = ["kind:apk"]
+found = "an Android application (APK)"
+meaning = "the flag is usually a string resource (res/values/strings.xml, binary XML that unzip does not decode), an asset, or built by the code."
+ctfc = ["ctfc zip {file}", "ctfc exe {file}"]
+tools = ["apktool", "jadx"]
+by_hand = ["after apktool: `grep -ri flag {file}.apktool/res {file}.apktool/smali`"]
+weight = 0.8
+
+[[lead]]
+id = "pdf"
+when = ["reader:pdf"]
+found = "a PDF ({detail})"
+meaning = "a PDF hides text under an image, in white, outside the page, in an attachment, in an older revision (incremental update), or in a compressed stream."
+ctfc = ["ctfc pdf {file}"]
+tools = ["pdftotext", "pdfimages", "qpdf_qdf", "exiftool"]
+by_hand = ["select all the text in a viewer (Ctrl+A) to see white text"]
+weight = 0.6
+
+[[lead]]
+id = "office"
+when = ["reader:office", "magic:doc"]
+found = "an Office document"
+meaning = "macros are where an Office file hides its payload; then hidden sheets, document properties, embedded objects."
+ctfc = ["ctfc office {file}", "ctfc lens <the macro>"]
+tools = ["olevba", "oleid"]
+weight = 0.6
+
+[[lead]]
+id = "disk"
+when = ["reader:disk", "reader:iso", "magic:vmdk", "magic:qcow2", "magic:androidboot"]
+found = "a disk image ({detail})"
+meaning = "the flag may be in a deleted file, in unallocated space, in an alternate data stream (NTFS), in the slack after a file, or in a file system ctfc's reader did not mount."
+ctfc = ["ctfc disk {file}", "ctfc timeline {file}"]
+tools = ["photorec", "strings_ascii", "strings_wide"]
+by_hand = ["The Sleuth Kit by hand: `fls -rd {file}` (deleted), `icat {file} <inode>`, `blkls {file}` (unallocated)", "a .vmdk / .qcow2: `qemu-img convert -O raw {file} disk.raw` first", "an Android boot image (ANDROID!): `unpack_bootimg --boot_img {file}` (or abootimg -x) gives the kernel and the ramdisk, a gzip/lz4 cpio: `ctfc solve` the ramdisk"]
+weight = 0.65
+
+[[lead]]
+id = "memory"
+when = ["magic:dmp", "magic:lime", "kind:bigraw"]
+found = "a memory dump (or a big raw file)"
+meaning = "a memory image is read with Volatility: list the processes, their command lines and open files, then dump the odd process. Passwords and keys sit in clear in memory."
+ctfc = ["ctfc keys {file} --against <ciphertext>"]
+tools = ["vol_info", "vol_pslist", "vol_cmdline", "strings_wide"]
+by_hand = ["`strings -el {file} | grep -i -m 20 <the CTF prefix>`: the cheapest first look"]
+weight = 0.75
+
+[[lead]]
+id = "core"
+when = ["kind:core"]
+found = "an ELF core file (the memory of one crashed or dumped process)"
+meaning = "not a program to run but a snapshot of one process's memory: its heap holds whatever it was working on - a decrypted buffer, a key, the input it was given. Volatility does not read it; strings and gdb do."
+ctfc = ["ctfc keys {file} --against <ciphertext>", "ctfc exe {file}"]
+tools = ["strings_ascii", "strings_wide", "binwalk", "file"]
+by_hand = ["`gdb -c {file}` then `info registers`, `x/s <address>`; with the binary: `gdb <binary> -c {file}` and `bt`"]
+weight = 0.75
+
+[[lead]]
+id = "executable"
+when = ["reader:pe", "reader:exe"]
+unless = ["kind:core"]
+found = "a program ({detail})"
+meaning = "if the program checks or builds the flag, that is reverse engineering: decompile the comparison. If it is malware, its config (a key, a C2 address) is usually a string or a resource; `ctfc pe` lists both."
+ctfc = ["ctfc pe {file}", "ctfc exe {file}"]
+tools = ["diec", "strings_wide", "strings_ascii", "ghidra"]
+by_hand = [".NET: open it in ILSpy or dnSpy, the source comes back almost as written; Python packed (PyInstaller): pyinstxtractor then pycdc, and `ctfc lens` on the result"]
+weight = 0.6
+
+[[lead]]
+id = "sqlite"
+when = ["reader:sqlite"]
+found = "an SQLite database ({detail})"
+meaning = "a browser history, a chat app, a phone: the flag is a row, or a deleted row in a free page (ctfc reads those)."
+ctfc = ["ctfc sqlite {file}"]
+tools = ["sqlite3"]
+weight = 0.6
+
+[[lead]]
+id = "windows.sam"
+when = ["reader:hive"]
+notes = "NT hashes are in this hive"
+found = "a SAM registry hive (local accounts and their NT hashes)"
+meaning = "the password hashes of the local accounts are in it, encrypted with the boot key of the SYSTEM hive: you need both files. The NT hash then goes to hashcat -m 1000 (or is the answer itself)."
+ctfc = ["ctfc hive {file}", "ctfc hash <the NT hash> --wordlist <wordlist>"]
+tools = ["secretsdump", "samdump2"]
+by_hand = ["no SYSTEM hive in the challenge? the boot key may be in a memory dump: `vol -f mem windows.hashdump`"]
+weight = 0.85
+
+[[lead]]
+id = "windows.logs"
+when = ["reader:evtx", "reader:hive", "reader:winartifact", "magic:mft"]
+found = "a Windows artefact ({detail})"
+meaning = "an investigation question, most of the time: which user, which program ran, when, from where. The answer is in a field, not a flag string."
+ctfc = ["ctfc timeline {file}", "ctfc hive {file}", "ctfc evtx {file}"]
+tools = ["strings_wide"]
+by_hand = ["EVTX in depth: chainsaw or EvtxECmd (Eric Zimmerman); registry: RegRipper or Registry Explorer", "a $MFT: MFTECmd -f {file} --csv out (Eric Zimmerman) or analyzeMFT.py -f {file} -o mft.csv; file names, sizes and the four timestamps of every file, deleted ones included"]
+weight = 0.55
+
+# ---------------------------------------------------------------- raw data
+
+[[lead]]
+id = "encrypted.blob"
+when = ["entropy:high"]
+found = "bytes that look random, with no known header"
+meaning = "encrypted (or compressed without a header). The key is almost never in the same file: look in the other files, the script that made it, or a memory dump. `ctfc workspace` tries every key-shaped string of a folder against every blob."
+ctfc = ["ctfc workspace <the challenge folder>", "ctfc sym {file}", "ctfc keys <dump> --against {file}", "ctfc xor {file}"]
+tools = ["binwalk_entropy", "xortool_auto", "cyberchef_local", "cyberchef_public"]
+weight = 0.65
+
+[[lead]]
+id = "unknown"
+when = ["kind:unknown"]
+found = "a file ctfc does not recognise"
+meaning = "no signature matched and nothing decoded: the header may be damaged or XORed (the same byte where a header has zeros), the bytes may be shuffled (reversed, nibble-swapped), or it is a format ctfc does not know."
+ctfc = ["ctfc repair {file}", "ctfc detect {file}", "ctfc xor {file}"]
+tools = ["file", "xxd_head", "diec", "binwalk", "cyberchef_local", "cyberchef_public"]
+weight = 0.5
+
+[[lead]]
+id = "reader.failed"
+when = ["reader-error:*"]
+# A JPEG with no EXIF block is normal, not broken.
+unless = ["reader-error:exif"]
+found = "a file whose reader stopped on an error"
+meaning = "it starts like a known format but does not parse: a corrupted header, a truncated file, or a deliberate edit to break the tools."
+ctfc = ["ctfc repair {file}"]
+tools = ["file", "xxd_head", "pngcheck"]
+weight = 0.45
+
+[[lead]]
+id = "whitespace"
+when = ["kind:whitespace"]
+found = "a text whose lines end with spaces and tabs"
+meaning = "invisible whitespace at the ends of lines is SNOW steganography (stegsnow), or a binary code (space = 0, tab = 1). DUCTF i-love-scomo: steghide gave this text, stegsnow gave the flag."
+ctfc = ["ctfc detect {file}"]
+tools = ["stegsnow"]
+by_hand = ["see them: `cat -A {file}` shows a tab as ^I and a line end as $", "space/tab as bits: `sed -n 's/.*[^ \t]//p' {file} | tr ' \t' '01'`, then paste the bits into `ctfc auto`"]
+weight = 0.8
+
+[[lead]]
+id = "text"
+when = ["kind:text"]
+found = "readable text with no flag in it"
+meaning = "either the answer is a question about the content (a name, an IP, a date - check the challenge statement), or it is a cipher ctfc did not break (a keyed Vigenere, a substitution), or it is a hint that points at another file."
+ctfc = ["ctfc classical {file}", "ctfc lens {file}"]
+tools = ["dcode", "cyberchef_local", "cyberchef_public"]
+weight = 0.35
+
+# ---------------------------------------------------------------- detect rules
+
+[[lead]]
+id = "hash"
+when = ["detect:hash.*"]
+found = "a password hash"
+meaning = "a hash is cracked, not decoded. `ctfc hash` names the format and prints the hashcat mode; CTF passwords are in rockyou."
+ctfc = ["ctfc hash {file} --wordlist <wordlist>"]
+tools = ["hashcat", "john"]
+weight = 0.85
+
+[[lead]]
+id = "classical"
+when = ["detect:classical.*", "detect:base64.custom_alphabet"]
+found = "text that looks like a classical cipher"
+meaning = "letter statistics point at a substitution or transposition cipher. ctfc breaks Caesar, affine, Vigenere and rail fence; the keyed ones (Playfair, Bifid, Four-square) are dcode.fr's job."
+ctfc = ["ctfc classical {file}"]
+tools = ["dcode"]
+weight = 0.7
+
+[[lead]]
+id = "xor"
+when = ["detect:xor.*"]
+found = "data with a repeating pattern (XOR with a key?)"
+meaning = "a period in the bytes is the mark of a repeating-key XOR. ctfc tried the key lengths it found; xortool ranks them differently, and a known file header (crib) often gives the key outright."
+ctfc = ["ctfc xor {file}", "ctfc xor {file} --crib CYBN{"]
+tools = ["xortool", "xortool_auto", "cyberchef_local", "cyberchef_public"]
+weight = 0.7
+
+[[lead]]
+id = "embedded"
+when = ["detect:embedded", "detect:polyglot.trailing"]
+found = "another file's signature inside this one"
+meaning = "a file hidden inside another (appended after the end, or stored inside). ctfc carved what it could; a second carver finds what a single signature table misses."
+ctfc = ["ctfc repair {file} --out carved"]
+tools = ["binwalk", "foremost"]
+weight = 0.6
+
+[[lead]]
+id = "rsa"
+when = ["detect:pem"]
+found = "a PEM key"
+meaning = "an RSA key in a CTF is usually weak on purpose (small e, close primes, a shared factor) or the private half of something encrypted elsewhere."
+ctfc = ["ctfc rsa --key {file} --attack"]
+tools = ["rsactftool", "factordb"]
+weight = 0.7
+
+[[lead]]
+id = "zero.width"
+when = ["detect:stego.zero_width"]
+found = "invisible Unicode characters in a text"
+meaning = "zero-width characters carry bits between the visible letters (StegCloak, zwsp-steg). ctfc decodes the plain binary encodings."
+ctfc = ["ctfc auto {file}"]
+tools = ["cyberchef_local", "cyberchef_public"]
+by_hand = ["StegCloak encrypts with a password: `npx stegcloak reveal` once you have it"]
+weight = 0.75

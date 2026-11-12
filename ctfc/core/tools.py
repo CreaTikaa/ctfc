@@ -21,6 +21,7 @@ Three rules, from `CLAUDE.md`:
 from __future__ import annotations
 
 import fnmatch
+import shlex
 import shutil
 import subprocess
 from dataclasses import dataclass, field
@@ -54,6 +55,9 @@ class Tool:
     # When this tool is available, these ids are not suggested next to it
     # (the embedded CyberChef makes the public one pointless, and safer).
     prefer_over: tuple[str, ...] = ()
+    # A program with a window (Audacity, Wireshark): the command is shown, but
+    # the web page offers no Run button for it.
+    gui: bool = False
 
     def matches(self, rule: str) -> bool:
         """Does this tool apply to a rule id? Patterns may use `*` (`hash.*`)."""
@@ -82,6 +86,32 @@ class Signal:
     why: str = ""
 
 
+def program_argv(program: str, tool_paths: dict | None = None) -> list[str] | None:
+    """How to start a program here: its argument list, or None when it is missing.
+
+    `tool_paths` comes from `~/.ctfc/config.toml` and covers the programs that
+    are not on the PATH under their own name - a shell alias is invisible to
+    ctfc (`alias vol='python3 ~/volatility3/vol.py'`), so the config says it
+    instead: `[tool_paths]` then `vol = ["python3", "/home/me/volatility3/vol.py"]`.
+    """
+    configured = (tool_paths or {}).get(program)
+    if configured:
+        argv = [str(part) for part in configured]
+        first = Path(argv[0]).expanduser()
+        if first.is_file() or shutil.which(argv[0]):
+            return [str(first) if first.is_file() else argv[0], *argv[1:]]
+        return None
+    found = shutil.which(program)
+    return [found] if found else None
+
+
+def tool_available(tool: Tool, tool_paths: dict | None = None) -> bool:
+    """`Tool.available`, plus the programs the config points at."""
+    if tool.kind == "local" and tool.command_template:
+        return program_argv(tool.command_template[0], tool_paths) is not None
+    return tool.available
+
+
 def embedded_cyberchef_installed() -> bool:
     """Has scripts/fetch_vendor.sh been run on this machine?"""
     return VENDOR_CYBERCHEF.is_file()
@@ -104,9 +134,10 @@ class Suggestion:
             "id": self.tool.id,
             "name": self.tool.name,
             "kind": self.tool.kind,
+            "gui": self.tool.gui,
             "reason": self.reason,
             "command": list(self.command),
-            "command_line": " ".join(self.command),
+            "command_line": shlex.join(self.command),
             "url": self.url,
             "available": self.available,
             "offline_safe": self.tool.offline_safe,
@@ -134,6 +165,7 @@ def load_tools() -> tuple[Tool, ...]:
                 install=row.get("install", ""),
                 notes=row.get("notes", ""),
                 prefer_over=tuple(row.get("prefer_over", [])),
+                gui=bool(row.get("gui", False)),
             )
         )
     return tuple(tools)
@@ -388,7 +420,7 @@ class RunResult:
     def to_dict(self) -> dict:
         return {
             "command": list(self.command),
-            "command_line": " ".join(self.command),
+            "command_line": shlex.join(self.command),
             "returncode": self.returncode,
             "stdout": self.stdout,
             "stderr": self.stderr,
@@ -396,7 +428,9 @@ class RunResult:
         }
 
 
-def run_tool(tool: Tool, values: dict, timeout: int = RUN_TIMEOUT) -> RunResult:
+def run_tool(
+    tool: Tool, values: dict, timeout: int = RUN_TIMEOUT, tool_paths: dict | None = None
+) -> RunResult:
     """Run a local tool with an argument list. Never a shell, never an online tool."""
     if tool.kind != "local":
         return RunResult([], -1, "", "", f"{tool.name} is not a local program: nothing to run")
@@ -425,13 +459,15 @@ def run_tool(tool: Tool, values: dict, timeout: int = RUN_TIMEOUT) -> RunResult:
             "still missing: "
             + ", ".join(f"{name} ({PLACEHOLDER_HINTS.get(name, '?')})" for name in missing),
         )
-    program = shutil.which(command[0])
+    if tool.gui:
+        return RunResult(command, -1, "", "", f"{tool.name} opens a window: run it yourself")
+    program = program_argv(command[0], tool_paths)
     if program is None:
         return RunResult(command, -1, "", "", f"{command[0]} is not installed. {tool.install}")
     try:
         # shell=False (the default) is the point: the argument list is passed as is.
         completed = subprocess.run(  # noqa: S603 - argument list from our own registry
-            [program, *command[1:]],
+            [*program, *command[1:]],
             capture_output=True,
             # A tool that asks a question (openssl without -pass prompts for a
             # password) must fail at once, not wait for a keyboard nobody uses.
@@ -449,9 +485,9 @@ def run_tool(tool: Tool, values: dict, timeout: int = RUN_TIMEOUT) -> RunResult:
     return RunResult(command, completed.returncode, out[:OUTPUT_LIMIT], err[:OUTPUT_LIMIT])
 
 
-def installed_tools() -> list[tuple[Tool, bool]]:
+def installed_tools(tool_paths: dict | None = None) -> list[tuple[Tool, bool]]:
     """Every registered tool and whether it is available here (for `ctfc tools --list`)."""
-    return [(tool, tool.available) for tool in load_tools()]
+    return [(tool, tool_available(tool, tool_paths)) for tool in load_tools()]
 
 
 def write_input(data: bytes, folder: Path, name: str = "input.bin") -> Path:

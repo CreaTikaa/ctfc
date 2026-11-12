@@ -38,7 +38,7 @@ import hashlib
 import re
 from dataclasses import dataclass, field
 
-from ctfc.core import gpp, readers
+from ctfc.core import gpp, nextsteps, readers
 from ctfc.core.auto import auto_decode
 from ctfc.core.budget import Budget
 from ctfc.core.flags import (
@@ -174,6 +174,9 @@ class SolveReport:
     notes: list[str] = field(default_factory=list)
     pieces: int = 0
     budget: str = ""
+    # When there is no flag: what was found, what it means, what to run next
+    # (`core/nextsteps.py` + `data/leads.toml`). Empty when a flag came out.
+    next_steps: list[nextsteps.NextStep] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return {
@@ -187,6 +190,7 @@ class SolveReport:
             "notes": list(self.notes),
             "pieces": self.pieces,
             "budget": self.budget,
+            "next_steps": [step.to_dict() for step in self.next_steps],
         }
 
 
@@ -421,11 +425,21 @@ def solve(
     budget: Budget | None = None,
     max_depth: int = MAX_DEPTH,
     top_leads: int = 3,
+    offline: bool = False,
+    tool_paths: dict | None = None,
+    wordlist: str = "",
+    cyberchef_url: str = "",
 ) -> SolveReport:
-    """Walk a file to the bottom and report the flag, or the best three leads."""
+    """Walk a file to the bottom and report the flag, or the best three leads.
+
+    With no flag, the report also carries `next_steps`: what was found, what it
+    usually means, and the ctfc commands and external tools to try. `offline`,
+    `tool_paths`, `wordlist` and `cyberchef_url` only shape those commands.
+    """
     budget = budget or Budget(max_attempts=200_000, max_seconds=20)
     report = SolveReport(path=path, size=len(data))
     leads: list[Lead] = []
+    observations: list[nextsteps.Observation] = []
 
     for visit in walk(
         data,
@@ -564,6 +578,9 @@ def solve(
                     preview=_preview(candidate.data),
                 )
             )
+        # 4. What this piece is, for the "next steps" when no flag comes out.
+        observations.append(_observe(visit, flagset))
+
         if not visit.reader and not visit.candidates and piece.size <= AUTO_SIZE_LIMIT:
             # Nothing decoded: is it at least readable on its own?
             plain, reasons = score(piece.data, flagset)
@@ -585,13 +602,52 @@ def solve(
     if not report.flags:
         leads.sort(key=lambda lead: lead.score, reverse=True)
         report.leads = _dedupe_leads(leads)[:top_leads]
-        if not report.leads:
+        report.next_steps = nextsteps.plan(
+            observations,
+            input_path=path,
+            offline=offline,
+            tool_paths=tool_paths,
+            wordlist=wordlist,
+            cyberchef_url=cyberchef_url,
+        )
+        if not report.leads and not report.next_steps:
             report.notes.append(
                 "nothing came out: try `ctfc detect` for the fingerprint, "
                 "`ctfc keys` if you have a dump to hunt keys in, and the Files tab "
                 "of `ctfc serve` to run a reader by hand"
             )
     return report
+
+
+def _observe(visit: Visit, flagset: FlagSet | None) -> nextsteps.Observation:
+    """The facts `core/nextsteps.py` needs about one visited piece."""
+    piece, opened = visit.piece, visit.opened
+    detail = ""
+    if visit.reader:
+        label = readers.READERS_BY_NAME[visit.reader].label
+        detail = f"{label}: {opened.detail}" if opened and opened.detail else label
+    # Something already came out of it (a decoding, a carved file): then it is
+    # not "a file ctfc does not recognise", whatever its own bytes look like.
+    decoded = any(c.score >= LEAD_SCORE for c in visit.candidates) or visit.carved is not None
+    return nextsteps.observe(
+        piece.data,
+        piece=piece.name,
+        disk=piece.disk,
+        trail=piece.trail,
+        reader=visit.reader,
+        detail=detail,
+        error=opened.error if opened else "",
+        # The reader's notes AND its suggested commands: "zip2john" or
+        # "7z x -p<password>" is how a reader says "this is locked".
+        # The children's origins too: "capture: usb-keystrokes" is how the
+        # pcap reader says a capture is USB.
+        notes=[*opened.notes, *opened.commands, *(child.origin for child in opened.children)]
+        if opened
+        else [],
+        decoded=decoded,
+        depth=piece.depth,
+        flagset=flagset,
+    )
 
 
 def _assembled(fragments: list[FragmentFound], flagset: FlagSet | None) -> list[FlagFound]:

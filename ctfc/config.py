@@ -6,6 +6,11 @@ Example config.toml:
     flag_regexes = ['BZHCTF\\{.*?\\}', 'STHACK\\{.*?\\}']   # added to the defaults
     flag_prefixes = ["BZHCTF{"]                             # also searched in base64 form
     cyberchef_url = "http://127.0.0.1:8137/vendor/cyberchef/index.html"
+    wordlist = "~/Documents/rockyou.txt"     # printed into hashcat / stegseek commands
+
+    [tool_paths]                             # programs behind a shell alias
+    vol = ["python3", "/home/me/volatility3/vol.py"]
+    stegsolve = ["java", "-jar", "/home/me/stegsolve.jar"]
 
 Every key is optional. Unknown keys are reported as warnings, not errors.
 """
@@ -50,6 +55,13 @@ class Config:
     auto_budget: int = 2000  # how many decode attempts `ctfc auto` may make
     top_n: int = 10  # how many candidates are shown
     sessions_dir: str = ""  # where sessions live (default ~/.ctfc/sessions)
+    # The wordlist printed into the hashcat / stegseek / aircrack commands.
+    # "" = the first of WORDLIST_GUESSES that exists on this machine.
+    wordlist: str = ""
+    # Programs that are not on the PATH under their own name (a shell alias is
+    # invisible to ctfc): program -> the argument list that starts it, e.g.
+    # vol = ["python3", "/home/me/volatility3/vol.py"]
+    tool_paths: dict = field(default_factory=dict)
     warnings: list[str] = field(default_factory=list)  # filled by load_config
 
 
@@ -68,7 +80,27 @@ _KEY_TYPES: dict[str, type] = {
     "auto_budget": int,
     "top_n": int,
     "sessions_dir": str,
+    "wordlist": str,
+    "tool_paths": dict,
 }
+
+# Where a wordlist usually lives, tried in order when `wordlist` is not set.
+WORDLIST_GUESSES = (
+    "/usr/share/wordlists/rockyou.txt",
+    "/usr/share/seclists/Passwords/Leaked-Databases/rockyou.txt",
+    "~/rockyou.txt",
+    "~/Documents/rockyou.txt",
+    "~/wordlists/rockyou.txt",
+)
+
+
+def find_wordlist(config: Config) -> str:
+    """The wordlist to print in commands: the configured one, or the first found, or ""."""
+    for candidate in ([config.wordlist] if config.wordlist else []) + list(WORDLIST_GUESSES):
+        path = Path(candidate).expanduser()
+        if path.is_file():
+            return str(path)
+    return ""
 
 
 def load_config(path: Path | None = None) -> Config:
@@ -97,6 +129,16 @@ def load_config(path: Path | None = None) -> Config:
             config.flag_regexes = _unique(config.flag_regexes + [str(v) for v in value])
         elif key == "flag_prefixes":
             config.flag_prefixes = _unique(config.flag_prefixes + [str(v) for v in value])
+        elif key == "tool_paths":
+            for program, argv in value.items():
+                if isinstance(argv, str):
+                    argv = [argv]
+                if not isinstance(argv, list) or not argv:
+                    raise ConfigError(
+                        f"{path}: tool_paths.{program} must be a list of arguments, "
+                        f'e.g. ["python3", "/path/to/vol.py"]'
+                    )
+                config.tool_paths[str(program)] = [str(part) for part in argv]
         else:
             setattr(config, key, value)
 

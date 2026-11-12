@@ -131,7 +131,8 @@ def test_an_encrypted_archive_hands_over_rather_than_guessing(fixture_bytes):
 def test_says_so_when_nothing_came_out():
     report = solve(bytes(range(256)) * 4, "noise.bin")
     assert report.flags == []
-    assert report.notes
+    # No lead, but the next steps say what the bytes look like and what to run.
+    assert report.notes or report.next_steps
 
 
 # ---------------------------------------------------------------------------

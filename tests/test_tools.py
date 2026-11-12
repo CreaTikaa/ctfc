@@ -64,11 +64,15 @@ def embedded_copy(monkeypatch):
 
 
 def test_every_tool_is_well_formed():
+    from ctfc.core.nextsteps import load_rules
+
     ids = [tool.id for tool in load_tools()]
     assert len(ids) == len(set(ids)), "duplicate tool id"
+    # A tool fires from a detect rule (suggest_when) or from a next-steps rule.
+    in_leads = {tool_id for rule in load_rules() for tool_id in rule.tools}
     for tool in load_tools():
         assert tool.kind in ("online", "local", "embedded"), tool.id
-        assert tool.suggest_when, f"{tool.id} never fires"
+        assert tool.suggest_when or tool.id in in_leads, f"{tool.id} never fires"
         if tool.kind == "local":
             assert tool.command_template, f"{tool.id}: a local tool needs a command"
             assert tool.install, f"{tool.id}: say how to install it"

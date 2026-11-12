@@ -189,6 +189,8 @@ def commands(scratch: Path) -> list[Demo]:
         Demo(["classical", "text:PLOA{fvzcyr_fuvsg}"], "simple", why="ROT13"),
         Demo(["time", "133476575820000000"], "FILETIME", why="read a timestamp"),
         Demo(["tools", f("audit_zipcrypto.zip")], "bkcrack", why="the tool bridge"),
+        Demo(["solve", f("wifi_wpa.pcap")], "aircrack-ng", code=1, why="no flag: the next steps"),
+        Demo(["tools", "--list"], "sox_spectrogram", why="which external tools are here"),
         Demo(["cheatsheet"], "cheat sheet", why="the decision tree"),
         # --- the ones that write somewhere -----------------------------------
         Demo(["pcap", f("capture.pcap"), "--extract", str(out / "objs")], "ctfc scan"),
