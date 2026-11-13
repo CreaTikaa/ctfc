@@ -354,6 +354,13 @@ def print_hash(console: Console, report) -> None:
 
     for note in report.notes:
         console.print(f"[cyan]*[/] {safe(note)}")
+    for flag in getattr(report, "flags", []):
+        console.print(f"[bold green]FLAG[/] {safe(flag)}")
+    recovered = getattr(report, "recovered", None)
+    if recovered is not None:
+        preview = recovered[:400].decode("utf-8", errors="replace")
+        console.print(f"[bold]{safe(report.recovered_name)}[/] ({len(recovered)} bytes):")
+        console.print(safe(preview, 400))
 
 
 def print_mail(console: Console, messages, flags: list[str], written: list) -> None:

@@ -350,6 +350,7 @@ def _step(
         values["wordlist"] = wordlist
     if cyberchef_url:
         values["cyberchef_url"] = cyberchef_url
+    values.update(_hash_values(seen.facts))
     found = rule.found.replace("{detail}", seen.detail or "no detail")
     if seen.piece and seen.depth:
         found = f"{seen.piece}: {found}"
@@ -366,6 +367,31 @@ def _step(
         weight=rule.weight,
         on_input=seen.depth == 0,
     )
+
+
+def _hash_values(facts: set[str]) -> dict:
+    """The hashcat mode and john format of a piece that is a hash, from its facts.
+
+    `detect:hash.ntlm` names the format; the zip2john reader is its own format.
+    Without this, the hashcat line of a step kept a bare `{hashcat_mode}`.
+    """
+    from ctfc.core.hashes import load_formats
+
+    ids = [fact.split("detect:hash.", 1)[1] for fact in facts if fact.startswith("detect:hash.")]
+    if "reader:pkzip2" in facts:
+        ids.insert(0, "pkzip2")
+    formats = {fmt.id: fmt for fmt in load_formats()}
+    for format_id in ids:
+        fmt = formats.get(format_id)
+        if fmt is None:
+            continue
+        values: dict = {}
+        if fmt.hashcat is not None:
+            values["hashcat_mode"] = fmt.hashcat
+        if fmt.john:
+            values["john_format"] = fmt.john
+        return values
+    return {}
 
 
 def _fill_text(text: str, disk: str, wordlist: str) -> str:

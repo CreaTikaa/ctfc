@@ -322,6 +322,15 @@ tools = ["hashcat", "john"]
 weight = 0.85
 
 [[lead]]
+id = "zip2john"
+when = ["reader:pkzip2"]
+found = "a zip2john line ({detail})"
+meaning = "zip2john copies the encrypted bytes into the line, so the right password decrypts the file straight out of it - the archive itself is not needed. The embedded password list did not have it: CTF passwords are in rockyou, often far down (about 100000 tries a second in ctfc, millions with hashcat)."
+ctfc = ["ctfc hash {file} --wordlist <wordlist> --wordlist-limit 20000000 --out flag.bin"]
+tools = ["hashcat", "john"]
+weight = 0.9
+
+[[lead]]
 id = "classical"
 when = ["detect:classical.*", "detect:base64.custom_alphabet"]
 found = "text that looks like a classical cipher"

@@ -869,6 +869,20 @@ def _keylog(data: bytes, flagset: FlagSet | None) -> dict:
     return {"sections": sections, "flags": [], "notes": opened.notes, "commands": opened.commands}
 
 
+def _pkzip2(data: bytes, flagset: FlagSet | None) -> dict:
+    opened = core_readers.open_with("pkzip2", data, flagset, "hash.txt")
+    sections = [facts("zip2john hash ($pkzip2$)", [("what", opened.detail)])]
+    rows = [[child.name, len(child.data), _preview(child.data)] for child in opened.children]
+    if rows:
+        sections.append(table("decrypted from the line", ["name", "size", "preview"], rows))
+    return {
+        "sections": sections,
+        "flags": list(opened.flags),
+        "notes": opened.notes,
+        "commands": opened.commands,
+    }
+
+
 def _compressed(data: bytes, flagset: FlagSet | None) -> dict:
     opened = core_readers.open_with("compressed", data, flagset, "stream")
     rows = [[child.name, len(child.data), _preview(child.data)] for child in opened.children]
@@ -1050,6 +1064,7 @@ ADAPTERS: dict[str, Callable[[bytes, FlagSet | None], dict]] = {
     "disk": _disk,
     "iso": _iso,
     "keylog": _keylog,
+    "pkzip2": _pkzip2,
     "compressed": _compressed,
     "repair": _repair,
     "zip": _zip,

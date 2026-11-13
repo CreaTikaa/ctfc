@@ -2743,3 +2743,36 @@ said yes to logs, HTML and VBA; a text whose letter pairs are ordinary ("th",
 "en", "re": 0.42+ of its pairs, against 0.28 for a rail fence and < 0.1 for a
 substitution) is now text in clear. And `F2B3AF0D{...}` is a hex number before a
 brace, not a flag.
+
+## 51. zip2john `$pkzip2$`: a hash that IS the file (`core/pkzip2.py`, lot N)
+
+`zip2john` turns a password-protected ZIP into a line for hashcat/john. For the
+**traditional** ("ZipCrypto") cipher it does something surprising: it copies the
+entry's **encrypted bytes** into the line, with the CRC-32 of the plaintext. So
+a password that decrypts those bytes to data whose CRC-32 matches is *the*
+password - and the decrypted bytes **are** the file. When the whole entry fits
+in the line, the archive is not even needed: the hash is the archive.
+
+ZipCrypto (`core/zipcrypto.py`) is a stream cipher with three 32-bit numbers for
+state. The password is fed in one byte at a time, then every byte is XORed with
+one keystream byte while the state is stirred by the *plaintext* byte. The entry
+starts with a 12-byte random header whose last byte is a known check value, so
+decrypting just those 12 bytes rejects 255 wrong passwords in 256 - that is why
+a dictionary run is cheap (about 100 000 words a second here). The state update
+uses the raw PKWARE crc32, `(crc >> 8) ^ table[(crc ^ b) & 0xff]`; Python's
+`zlib.crc32` is NOT that (it inverts on the way in and out), a trap the test
+fixture itself fell into once.
+
+`ctfc hash <the line or a file holding it> --wordlist rockyou --out flag.txt`
+names the format, prints the hashcat mode (17210 stored, 17200 deflate,
+17220/17225 for several files), tries the words, and - on a hit - writes the
+decrypted file and prints the flag found in it. Without the password it can
+still `rebuild_zip()` the one-entry archive from the line (`--out rebuilt.zip`),
+which any ZIP tool then opens once you *do* have the password. `ctfc solve` on a
+`.txt` holding the line reads it the same way. Checked against hashcat (same
+line, same password) and 7z (opens the rebuilt ZIP, rejects a wrong password).
+
+WinZip AES (method 99) is a different animal: PBKDF2 then AES-CTR, with no
+known-plaintext shortcut and no help from Python's `zipfile`. ctfc does not try
+to open it; `ctfc zip --wordlist` says so plainly and points at
+`zip2john | hashcat -m 13600` instead of pretending the word list failed.

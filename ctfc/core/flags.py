@@ -199,6 +199,20 @@ def plain_hits(text: str, flagset: FlagSet) -> list[tuple[str, float, str]]:
     return hits
 
 
+def rate(flag: str, flagset: FlagSet | None = None) -> float | None:
+    """How strong is a flag that a reader handed over as bare text?
+
+    Readers return the flags they found as strings, without the strength the
+    search gave them, so `solve` judges them again here. The text alone is
+    rated by the same rules as a plain search ("0x{2:X8}", a .NET format
+    string in a PowerShell log, comes out weak). None when no pattern matches
+    the text at all - the reader found it some other way, so it is trusted.
+    """
+    flagset = flagset or default_flagset()
+    strengths = [strength for _flag, strength, _pattern in plain_hits(flag, flagset)]
+    return max(strengths) if strengths else None
+
+
 def base64_forms(prefix: bytes) -> list[str]:
     """Return the base64 text that `prefix` produces at each of the 3 possible alignments.
 

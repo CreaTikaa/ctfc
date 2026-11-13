@@ -185,7 +185,7 @@ Deterministic and documented in `docs/how-it-works.md`. Combine:
 - printable-ASCII/UTF-8 ratio and low entropy,
 - common-word hit rate (EN + FR word list) and letter-frequency chi-squared,
 - magic bytes of known file types (strong), valid PKCS7 padding (strong),
-- match against flag regexes (very strong). Flag regexes are configurable in `~/.ctfc/config.toml`, with defaults like `[A-Za-z0-9_]{2,15}\{[^}\n]{4,}\}` plus user-defined ones (e.g. `BZHCTF\{.*?\}`, `STHACK\{.*?\}`).
+- match against flag regexes (very strong). Flag regexes are configurable in `~/.ctfc/config.toml`, with defaults like `[A-Za-z0-9_]{2,15}\{[^}\n]{4,120}\}` plus user-defined ones (e.g. `BZHCTF\{.*?\}`, `STHACK\{.*?\}`).
 
 Every score carries human-readable reasons. Never return a bare number.
 

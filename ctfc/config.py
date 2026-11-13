@@ -25,8 +25,11 @@ from pathlib import Path
 DEFAULT_CONFIG_PATH = Path.home() / ".ctfc" / "config.toml"
 
 # Generic "XXX{...}" flag shape, plus the team's usual format.
+# The body is capped at 120 characters (a longer one is never kept as a flag,
+# see flags.looks_like_flag): unbounded, the search turned quadratic on binary
+# output with many "{" and no "}" or newline - 8 s per 400 KB XOR guess.
 DEFAULT_FLAG_REGEXES = [
-    r"[A-Za-z0-9_]{2,15}\{[^}\n]{4,}\}",
+    r"[A-Za-z0-9_]{2,15}\{[^}\n]{4,120}\}",
     r"CYBN\{[^}\n]*\}",
 ]
 

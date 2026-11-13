@@ -204,6 +204,17 @@ notes = "extract it with pdf2john first"
 example = "$pdf$4*4*128*-1028*1*16*abc*32*def*32*ghi"
 
 [[hash]]
+id = "pkzip2"
+name = "ZipCrypto ZIP entry (zip2john $pkzip2$)"
+hashcat = 17210
+john = "pkzip"
+# zip2john prints "archive.zip/name:$pkzip2$...*$/pkzip2$:name:archive.zip::archive.zip"
+regex = '''(?s)(?:[^\n$]*:)?\$pkzip2?\$.*\*\$/pkzip2?\$.*'''
+confidence = 0.99
+notes = "the line holds the encrypted bytes: ctfc tries the password list and decrypts the file from the hash itself (17210 stored, 17200 deflate, 17220/17225 several files)"
+example = "flag.zip/flag.txt:$pkzip2$1*1*2*0*34*28*64ac0ae2*0*26*0*34*64ac*a388*2c38...*$/pkzip2$:flag.txt:flag.zip::flag.zip"
+
+[[hash]]
 id = "zip"
 name = "WinZip / PKZIP encrypted archive"
 hashcat = 13600

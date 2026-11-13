@@ -27,6 +27,7 @@ written unless the CLI is asked to.
 
 from __future__ import annotations
 
+import array
 import zlib
 from dataclasses import dataclass, field
 
@@ -282,7 +283,26 @@ def swap_words(data: bytes, width: int) -> bytes:
     `e0 ff d8 ff` -> `ff d8 ff e0`. A tail shorter than one word is reversed on
     its own, which is what a naive "write as little-endian ints" also does.
     """
-    return b"".join(data[index : index + width][::-1] for index in range(0, len(data), width))
+    # array.byteswap() does the whole aligned part in C: a Python loop over the
+    # words of a 227 MB log took minutes (IrisCTF 2025 Tracem 1).
+    typecode = ARRAY_TYPECODES.get(width)
+    aligned = len(data) - len(data) % width
+    if typecode is None:
+        return b"".join(data[index : index + width][::-1] for index in range(0, len(data), width))
+    words = array.array(typecode, data[:aligned])
+    words.byteswap()
+    return words.tobytes() + data[aligned:][::-1]
+
+
+# The array type codes whose item is exactly 2, 4 and 8 bytes on this machine.
+ARRAY_TYPECODES = {
+    array.array(code).itemsize: code
+    for code in ("H", "I", "L", "Q")
+    if array.array(code).itemsize in (2, 4, 8)
+}
+# How many bytes are swapped first to see whether a signature appears at all.
+# A multiple of every word size, so the head swaps exactly as the whole file would.
+HEAD_SIZE = 64
 
 
 # Word sizes a file is swapped in (16-, 32- and 64-bit integers), then "the
@@ -302,10 +322,12 @@ def byte_order(data: bytes) -> tuple[Signature, bytes, str] | None:
     if len(data) < 16 or match_signature(data) is not None:
         return None
     for width, how in BYTE_ORDERS:
-        fixed = data[::-1] if width == 0 else swap_words(data, width)
-        sig = match_signature(fixed)
+        # Look at the head first: swapping a whole big file for nothing is slow.
+        head = data[-HEAD_SIZE:][::-1] if width == 0 else swap_words(data[:HEAD_SIZE], width)
+        sig = match_signature(head)
         if sig is None or sig.weak or sig.offset != 0:
             continue
+        fixed = data[::-1] if width == 0 else swap_words(data, width)
         ends_right = bool(sig.end) and fixed.rstrip(b"\x00").endswith(sig.end)
         if len(sig.magic) >= MIN_MAGIC or ends_right:
             return sig, fixed, how

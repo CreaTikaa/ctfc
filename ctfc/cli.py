@@ -135,6 +135,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--no-passwords", action="store_true", help=t("opt_hash_no_passwords"))
     p.add_argument("--wordlist", help=t("opt_wordlist"))
     p.add_argument("--wordlist-limit", type=int, default=100_000, help=t("opt_wordlist_limit"))
+    p.add_argument("--out", help=t("opt_hash_out"))
 
     p = add("classical")
     p.add_argument("input", help=t("arg_input"))
@@ -1607,11 +1608,21 @@ def _rsa_multi(
 
 def cmd_hash(args: argparse.Namespace, config: Config, console: Console) -> int:
     """Identify a hash and print the hashcat / john command for it."""
+    value = args.hash
+    # zip2john, hashcat and secretsdump write their hashes into files: accept the
+    # file as well as the string (a short one, a hash file is never big).
+    candidate = Path(value)
+    if len(value) < 4096 and candidate.is_file() and candidate.stat().st_size <= 1_000_000:
+        value = candidate.read_text(encoding="utf-8", errors="replace")
     report = identify_hash(
-        args.hash,
+        value,
         try_passwords=not args.no_passwords,
         passwords=wordlist_from(args, console),
     )
+    if args.out:
+        written = _write_hash_out(report, Path(args.out))
+        if written and not args.json:
+            console.print(f"[cyan]*[/] {written}")
     found = []
     for match in report.matches[:4]:
         line = match.format.name
@@ -1626,6 +1637,24 @@ def cmd_hash(args: argparse.Namespace, config: Config, console: Console) -> int:
         return 0 if report.matches else 1
     render.print_hash(console, report)
     return 0 if report.matches else 1
+
+
+def _write_hash_out(report, target: Path) -> str:
+    """`ctfc hash --out`: the decrypted file, else the ZIP rebuilt from a zip2john line."""
+    if report.recovered is not None:
+        target.write_bytes(report.recovered)
+        return f"wrote the decrypted {report.recovered_name} to {target}"
+    from ctfc.core import pkzip2
+
+    parsed = pkzip2.parse(report.value)
+    rebuilt = pkzip2.rebuild_zip(parsed) if parsed else None
+    if rebuilt is None:
+        return "nothing to write: --out only applies to a zip2john $pkzip2$ line"
+    target.write_bytes(rebuilt)
+    return (
+        f"wrote the encrypted ZIP rebuilt from the line to {target} "
+        "(any ZIP tool opens it with the password)"
+    )
 
 
 def cmd_pcap(args: argparse.Namespace, config: Config, console: Console) -> int:

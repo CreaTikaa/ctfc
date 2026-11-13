@@ -322,10 +322,23 @@ name = "NTFS master file table ($MFT)"
 ext = "mft"
 hex = "46494c4530"
 
+# A VMDK sparse extent is "KDMV" then a little-endian version of 1, 2 or 3.
+# The bare 4-byte "KDMV" turns up by chance in a big log (a 227 MB JSON carved a
+# 42 MB "disk" and the TSK reader chewed on it), so the version is pinned too.
 [[sig]]
 name = "VMDK disk image"
 ext = "vmdk"
-hex = "4b444d56"
+hex = "4b444d5601000000"
+
+[[sig]]
+name = "VMDK disk image"
+ext = "vmdk"
+hex = "4b444d5602000000"
+
+[[sig]]
+name = "VMDK disk image"
+ext = "vmdk"
+hex = "4b444d5603000000"
 
 [[sig]]
 name = "QCOW2 disk image"

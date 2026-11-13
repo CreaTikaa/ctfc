@@ -16,7 +16,7 @@ the ciphers that belong to dcode.fr. Read `CLAUDE.md` first, then this file.
 - He likes improvement ideas: propose them at the end of a milestone (list in section 6). He said
   the remaining ideas will be done **after M3, once it is functional** - so they are open now.
 - Decisions already taken: package name `ctfc` in `~/apps/ctfc`; default flag formats = generic
-  regex `[A-Za-z0-9_]{2,15}\{[^}\n]{4,}\}` + `CYBN\{[^}\n]*\}`, and `CYBN{` is also searched in
+  regex `[A-Za-z0-9_]{2,15}\{[^}\n]{4,120}\}` + `CYBN\{[^}\n]*\}`, and `CYBN{` is also searched in
   base64 (`flag_prefixes`). No anonymized challenge samples yet (he will send some later).
 
 ## 2. Status
@@ -1031,6 +1031,51 @@ piece cap, ZIP-order 120-piece cap, CRC32 recovery on open members, zip
 false positives on clear text via a bigram rate, hex-prefix false flag,
 unquoted commands, `tools --list` needing an input). Suggested commands were
 run for real: aircrack-ng gives WPA-ingOut's key, stegseek opens i-love-scomo.
+
+## 5terdecies. Lot N: zip2john $pkzip2$, and the eighth audit (2026-11-13)
+
+**The feature**: a zip2john `$pkzip2$` line for a ZipCrypto entry carries the
+**encrypted bytes themselves**, so the right password decrypts the file straight
+out of the hash - no archive needed (BuckeyeCTF 2025 "zip2john2zip" gives only
+the hash, and ctfc now flags it: `bctf{not_all_hashes_are_hashed_equally}`).
+
+- `core/zipcrypto.py`: the PKWARE traditional stream, raw CRC-32 (NOT
+  `zlib.crc32`, which inverts), checked byte-for-byte against stdlib `zipfile`.
+- `core/pkzip2.py`: parse the line, try passwords (12-byte header filter then
+  CRC-32, ~100k/s), decrypt, and `rebuild_zip()` the one-entry archive (7z and
+  `zipfile` open it with the password, reject a wrong one).
+- `ctfc hash <file> --wordlist rockyou --out flag.txt`: takes a file, cracks,
+  writes the file, prints the flag. hashcat mode deduced (17200/10/20/25).
+- Reader `pkzip2` + web adapter `_pkzip2` + lead `zip2john`. Table row `pkzip2`
+  in `hashcat_modes.toml`. `HashReport` gained `.recovered/.flags`.
+- **Ground truth**: `hashcat -m 17210` cracks the same line; 7z opens the rebuilt
+  ZIP. `tests/test_audit8.py` (7z/hashcat checks skipif-guarded). The buggy
+  `make_fixtures.zipcrypto_encrypt` (it used `zlib.crc32`, so nothing could open
+  its output with a password - only the bkcrack-plaintext path ever used it) is
+  fixed to the real stream; the fixture now opens with `zipfile`.
+
+**Five bugs fixed** (eighth audit, `docs/audit-public-challenges.md`):
+1. A reader's flag was trusted at strength 1.0: `0x{2:X8}` (a .NET format string
+   in a PowerShell evtx, HeroCTF) ended the walk. `solve` re-rates it with
+   `flags.rate()`; a weak generic `XXX{...}` from a reader is dropped.
+2. `repair.byte_order` looped in Python over a whole file -> a 227 MB JSON
+   (IrisCTF Tracem_1) **timed out > 300 s**. `swap_words` uses `array.byteswap`,
+   and byte_order swaps the whole file only when the swapped head shows a magic.
+3. The generic flag regex `[^}\n]{4,}` was quadratic on binary with many `{`
+   and no `}`/newline (8 s per 400 KB XOR guess). Bounded to `{4,120}`.
+4. `ctfc zip --wordlist` claimed "none is the password" on WinZip AES, which
+   `zipfile` cannot open at all (CrewCTF Fiilllleeeeeeee: the password WAS in the
+   list). It now says the list was not tried and points at zip2john/hashcat.
+5. False `.vmdk` carve: the 4-byte `KDMV` magic hit by chance at 185 MB in the
+   JSON -> a 42 MB fake disk fed to TSK. The sig now pins the sparse-header
+   version (1/2/3): 8 bytes.
+
+**Abandoned (no ground truth)**: a `.scap` (sysdig) magic for AuvergnHack
+StratoMonk. The pcapng byte-order magic `0x1A2B3C4D` written little-endian **is**
+`4d3c2b1a`, so a BOM-based rule fires on every LE pcapng; and the installed
+sysdig cannot read the file. Those challenges are Q/R investigation anyway.
+
+Tests: 1859 pass (+13). `make fuzz`/`make fuzz-web` clean.
 
 ## 7. Quick verification commands
 

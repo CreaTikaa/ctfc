@@ -127,14 +127,25 @@ class HashReport:
     matches: list[Match] = field(default_factory=list)
     facts: list[tuple[str, str]] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
+    # What the password opened, for the hashes that carry the encrypted data
+    # itself (zip2john's $pkzip2$): the file, and the flags found in it.
+    recovered: bytes | None = None
+    recovered_name: str = ""
+    flags: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict:
-        return {
+        answer = {
             "value": self.value,
             "matches": [match.to_dict() for match in self.matches],
             "facts": self.facts,
             "notes": list(self.notes),
+            "flags": list(self.flags),
         }
+        if self.recovered is not None:
+            answer["recovered_name"] = self.recovered_name
+            answer["recovered_hex"] = self.recovered.hex()
+            answer["recovered_text"] = self.recovered.decode("utf-8", errors="replace")
+        return answer
 
 
 @lru_cache(maxsize=1)
@@ -203,9 +214,75 @@ def identify(
 
     _explain_dump_line(report)
     _note_length_extension(report)
+    _explain_pkzip(report, passwords if try_passwords else ())
     if try_passwords:
         _try_the_password_list(report, passwords)
     return report
+
+
+def _explain_pkzip(report: HashReport, passwords: tuple[bytes, ...] | None) -> None:
+    """A zip2john line: read its fields, try the passwords, decrypt the file from it.
+
+    The only "hash" that is cracked here beyond the instant ones: each try costs
+    12 decrypted bytes (see `zipcrypto.py`), about 100000 passwords a second,
+    and a hit gives the file itself - not just a password to type somewhere.
+    """
+    match = next((match for match in report.matches if match.format.id == "pkzip2"), None)
+    if match is None:
+        return
+    from ctfc.core import pkzip2
+    from ctfc.core.flags import find_flags
+
+    parsed = pkzip2.parse(report.value)
+    if parsed is None:
+        report.notes.append("it starts like a zip2john line but its fields do not parse")
+        return
+    entry = parsed.entries[0]
+    report.facts.append(("entry", parsed.name))
+    report.facts.append(("entries in the line", str(len(parsed.entries))))
+    report.facts.append(("compression", {0: "stored", 8: "deflate"}.get(entry.compression, "?")))
+    if entry.full:
+        report.facts.append(("CRC-32 / size", f"{entry.crc:08x} / {entry.size} bytes"))
+    mode = pkzip2.hashcat_mode(parsed)
+    report.notes.append(
+        f"hashcat mode for this line: -m {mode}; hashcat wants only the part from "
+        "$pkzip2$ to $/pkzip2$ (`cut -d: -f2 hash.txt > h`)"
+    )
+    report.notes.extend(parsed.notes)
+    if any(e.full for e in parsed.entries):
+        report.notes.append(
+            "the whole encrypted entry is in the line: the ZIP can be rebuilt from it "
+            "(`ctfc hash <file> --out rebuilt.zip`), no archive needed"
+        )
+    if passwords is not None and not passwords:
+        return  # --no-passwords
+    from ctfc.core.datafiles import load_passwords
+
+    source = "your wordlist" if passwords else "the embedded password list"
+    found = pkzip2.crack(parsed, passwords or load_passwords())
+    if found is None:
+        report.notes.append(
+            f"not in {source}: try `--wordlist rockyou.txt --wordlist-limit 20000000` "
+            f"(about 100000 a second here) or hashcat -m {mode}"
+        )
+        return
+    password = found.password.decode("utf-8", errors="replace")
+    match.cracked = password
+    match.confidence = 1.0
+    match.reasons.insert(0, f'found in {source}: the password is "{password}"')
+    if found.plaintext is None:
+        report.notes.append(
+            f'"{password}" passes the header check (1 wrong password in 256 does too: '
+            "confirm it on the real archive)"
+        )
+        return
+    report.recovered = found.plaintext
+    report.recovered_name = parsed.name
+    report.flags = [hit.text for hit in find_flags(found.plaintext) if hit.strength > 0.45]
+    report.notes.append(
+        f'cracked with {source} after {found.tried} tries: "{password}" decrypts '
+        f"{parsed.name} and its CRC-32 checks out"
+    )
 
 
 # A plain Merkle-Damgard digest can be *extended*, which beats cracking it when the

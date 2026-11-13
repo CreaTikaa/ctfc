@@ -50,6 +50,7 @@ from ctfc.core.flags import (
     assemble,
     decode_run,
     hunt,
+    rate,
 )
 from ctfc.core.magic import match_signature
 from ctfc.core.scoring import printable_ratio, score
@@ -517,13 +518,20 @@ def solve(
                 step += f", {len(opened.children)} piece(s) came out"
             report.steps.append(step)
             for text in opened.flags:
+                # The reader says "flag", but only the text came back: rate it
+                # like any other hit, so a weak generic match ("0x{2:X8}") does
+                # not end the walk as if it were the answer.
+                strength = rate(text, flagset)
+                if strength is not None and strength <= WEAK_GENERIC_STRENGTH:
+                    report.steps.append(f"{piece.name}: weak flag-like text, not kept: {text[:60]}")
+                    continue
                 if not any(found.text == text for found in report.flags):
                     report.flags.append(
                         FlagFound(
                             text=text,
                             where=piece.name,
                             how=f"{visit.reader} reader",
-                            strength=1.0,
+                            strength=1.0 if strength is None else max(strength, 0.9),
                             trail=[*piece.trail, opened.command.format(file=piece.disk)],
                         )
                     )

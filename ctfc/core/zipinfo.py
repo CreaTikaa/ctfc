@@ -411,6 +411,17 @@ def crack_with_wordlist(
     encrypted = [entry for entry in report.entries if entry.encrypted]
     if not encrypted or not words:
         return
+    # `zipfile` only opens ZipCrypto. On a WinZip AES entry every word "fails",
+    # and saying "none of the words is the password" was a lie (CrewCTF 2024
+    # Fiilllleeeeeeee: the right password was in the list). Say what is true.
+    encrypted = [entry for entry in encrypted if entry.zipcrypto]
+    if not encrypted:
+        report.notes.append(
+            "the word list was NOT tried: every encrypted entry is WinZip AES, which ctfc "
+            "cannot open. Use `7z x -p<password> <archive>` for a password you know, or "
+            "`zip2john <archive> > h && hashcat -m 13600 h <wordlist>` to search one"
+        )
+        return
     target = min(encrypted, key=lambda entry: entry.compressed_size or 1 << 62)
     for word in words:
         if budget is not None and not budget.spend():

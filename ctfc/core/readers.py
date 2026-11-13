@@ -469,6 +469,39 @@ def _open_keylog(data: bytes, flagset: FlagSet | None, path: str) -> Opened:
     )
 
 
+def pkzip2_sniff(data: bytes) -> bool:
+    """A small text file holding a zip2john `$pkzip2$` line."""
+    return len(data) <= 1_000_000 and b"$pkzip" in data[:4096] and b"$/pkzip" in data
+
+
+def _open_pkzip2(data: bytes, flagset: FlagSet | None, path: str) -> Opened:
+    """zip2john's line carries the encrypted entry: crack it, hand the file over."""
+    from ctfc.core.hashes import identify
+
+    text = data.decode("utf-8", errors="replace")
+    line = next((line for line in text.splitlines() if "$pkzip" in line), text)
+    report = identify(line)
+    children = []
+    if report.recovered is not None:
+        children.append(
+            Child(report.recovered_name, "decrypted from the zip2john line", report.recovered)
+        )
+    match = next((match for match in report.matches if match.format.id == "pkzip2"), None)
+    cracked = f', password "{match.cracked}"' if match and match.cracked else ""
+    commands = []
+    if not cracked:
+        commands = [
+            "ctfc hash {file} --wordlist <wordlist> --wordlist-limit 20000000 --out flag.bin"
+        ]
+    return Opened(
+        detail=f"zip2john hash of {report.recovered_name or 'a ZipCrypto entry'}{cracked}",
+        children=_keep(children),
+        flags=list(report.flags),
+        notes=list(report.notes),
+        commands=commands,
+    )
+
+
 def _open_zip(data: bytes, flagset: FlagSet | None, path: str) -> Opened:
     report = zipinfo.analyse(data, path)
     children = _zip_members(data, "ZIP member")
@@ -1080,6 +1113,13 @@ READERS: tuple[Reader, ...] = (
         "ctfc disk",
         disk.looks_like_disk_image,
         _open_disk,
+    ),
+    Reader(
+        "pkzip2",
+        "zip2john hash ($pkzip2$)",
+        "ctfc hash",
+        pkzip2_sniff,
+        _open_pkzip2,
     ),
     Reader(
         "keylog",

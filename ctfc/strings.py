@@ -107,9 +107,14 @@ EN: dict[str, str] = {
     "cmd_hash": "identify a hash and print the hashcat/john command",
     "cmd_hash_ex": (
         "examples: ctfc hash '$2y$10$...'  |  ctfc hash 5f4dcc3b5aa765d61d8327deb882cf99  |  "
-        "ctfc hash '$mysqlna$...' --json"
+        "ctfc hash '$mysqlna$...' --json  |  "
+        "ctfc hash zip2john.txt --wordlist rockyou.txt --wordlist-limit 20000000 --out flag.txt"
     ),
-    "arg_hash": "the hash string (quote it: it often contains $)",
+    "arg_hash": "the hash string (quote it: it often contains $), or a file holding it",
+    "opt_hash_out": (
+        "zip2john line: write the decrypted file here once the password is found, "
+        "or the ZIP rebuilt from the line when it is not"
+    ),
     "opt_hash_no_passwords": "do not try the embedded password list on unsalted formats",
     "cmd_lens": "static crypto analysis of a script + generated recovery script",
     "cmd_lens_ex": (

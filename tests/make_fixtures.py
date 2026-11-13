@@ -46,14 +46,29 @@ def zipcrypto_encrypt(data: bytes, password: bytes, check_byte: int) -> bytes:
     (whose last byte is a known check value) is prepended, and every byte is XORed
     with one keystream byte while the state is stirred by the *plaintext* byte.
     This is exactly the stream bkcrack attacks given a little known plaintext.
+
+    The state update uses the PKWARE crc32 - `(crc >> 8) ^ table[(crc ^ b) & 0xff]`,
+    with no inversion. `zlib.crc32` is NOT that function (it inverts on the way in
+    and out), so this writes the table by hand; the result opens with the real
+    `zipfile`/`7z`, which is the point of the fixture.
     """
+    table = []
+    for byte in range(256):
+        value = byte
+        for _ in range(8):
+            value = (value >> 1) ^ 0xEDB88320 if value & 1 else value >> 1
+        table.append(value)
+
+    def crc32(crc: int, byte: int) -> int:
+        return (crc >> 8) ^ table[(crc ^ byte) & 0xFF]
+
     keys = [0x12345678, 0x23456789, 0x34567890]
 
     def update(byte: int) -> None:
-        keys[0] = zlib.crc32(bytes([byte]), keys[0]) & 0xFFFFFFFF
+        keys[0] = crc32(keys[0], byte)
         keys[1] = (keys[1] + (keys[0] & 0xFF)) & 0xFFFFFFFF
         keys[1] = (keys[1] * 134775813 + 1) & 0xFFFFFFFF
-        keys[2] = zlib.crc32(bytes([keys[1] >> 24]), keys[2]) & 0xFFFFFFFF
+        keys[2] = crc32(keys[2], keys[1] >> 24)
 
     def stream_byte() -> int:
         temp = (keys[2] | 2) & 0xFFFF
