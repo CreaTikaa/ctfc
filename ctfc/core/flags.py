@@ -414,6 +414,12 @@ REVERSED_FLAG_RE = re.compile(r"\}[^{}\n]{3,}\{[A-Za-z0-9_]{2,15}")
 # Caps, so that a 60 MB capture costs seconds and not minutes.
 MAX_DECODED_RUNS = 4000
 MAX_RUN_CHARS = 4 * 1024 * 1024
+# Above this size, `hunt` does the direct search only (plain, UTF-16, base64
+# prefix, reversed) and skips the "one layer under" exploration - decoding every
+# base64/hex run and assembling split fragments. On a 227 MB log those extras
+# cost ~16 s and never find anything the direct search misses, which is how a
+# `solve` blew past its time budget (IrisCTF 2025 Tracem 1).
+MAX_DEEP_HUNT = 16 * 1024 * 1024
 # A run longer than this is decoded at offset 0 only (it is aligned in practice).
 ALL_OFFSETS_UNDER = 4096
 # Runs at least this long are also read backwards.
@@ -595,14 +601,19 @@ def hunt(data: bytes, flagset: FlagSet | None = None) -> Hunt:
         keep(hit)
 
     text = data.decode("latin-1")
-    views = _views(data, text)
+    # Big input: the direct search above (plain, UTF-16, base64 prefix) has run;
+    # the costly "one layer under" exploration is skipped so `solve` keeps its
+    # time budget. See MAX_DEEP_HUNT.
+    deep = len(data) <= MAX_DEEP_HUNT
+    views = _views(data, text) if deep else []
     for how, decoded, encoded in views:
         for flag, strength, pattern in plain_hits(decoded, flagset):
             if strength > WEAK_GENERIC_STRENGTH:
                 keep(FlagHit(flag, how, strength, pattern, encoded or flag))
 
     # Backwards: only the stretches that look like a reversed flag are turned
-    # round, so a big file is not copied whole.
+    # round, so a big file is not copied whole. This is one regex pass, cheap
+    # enough to keep even on a big input.
     for match in REVERSED_FLAG_RE.finditer(text):
         backwards = match.group(0)[::-1]
         for flag, strength, pattern in plain_hits(backwards, flagset):
@@ -611,6 +622,9 @@ def hunt(data: bytes, flagset: FlagSet | None = None) -> Hunt:
 
     found = _drop_shifted(list(hits.values()))
     result.flags = sorted(found, key=lambda hit: hit.strength, reverse=True)
+
+    if not deep:
+        return result  # no fragment assembly on a big input: see MAX_DEEP_HUNT
 
     # Fragments: openings in the text (forwards and backwards) and in every
     # decoded reading; endings only as whole decoded strings.

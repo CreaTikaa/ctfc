@@ -503,3 +503,32 @@ que le flux mélangé.
 **Tests** : 1865 passent (+6, `test_audit9.py`). `make fuzz`/`fuzz-web` propres.
 Les deux fonctionnalités sont dans l'UI web (evil bit via le lecteur pcap de
 l'onglet Files/Solve ; endian-swap via `auto`, vérifié par un job solve).
+
+## Lot P — garde de budget + non-régression (2026-11-13)
+
+Pas un audit mais une passe « jour J » : garantir que `ctfc solve` **ne dépasse
+jamais son budget** et qu'aucune amélioration ne casse un acquis en silence.
+
+- **Garde de budget** : le budget bornait la *recherche* (tentatives de décodage),
+  pas le travail par pièce. Sur le JSON de 227 Mo d'IrisCTF Tracem 1, `hunt`
+  décodait *tous* les runs base64 et assemblait les fragments coupés sur tout le
+  fichier → 20 s pour un budget de 8 s. Au-delà de `MAX_DEEP_HUNT` (16 Mo), `hunt`
+  ne fait plus que la recherche directe (clair, UTF-16, préfixe base64, inversé) ;
+  les extras « une couche en dessous » (décoder chaque run, assembler les
+  fragments) sont sautés. 20 s → 9,9 s. Un flag clair ou un base64 du préfixe
+  configuré reste trouvé n'importe où dans le fichier ; seul un flag en couche
+  non-préfixe ou coupé dans un fichier > 16 Mo est perdu — un hang chrono qui
+  tourne est bien pire. Audit mesuré : plus aucun fichier du corpus (96) ne
+  dépasse budget + 12 s.
+- **`make regression`** (`tests/regression.py`) : rejoue tout le corpus local,
+  verrouille les flags déjà trouvés (baseline `corpus/regression-baseline.json`,
+  **gitignorée** — elle contient de vrais flags publics) et signale toute
+  régression (flag perdu) ou dépassement de budget. Code de sortie non nul pour
+  barrer un changement. `UPDATE=1 make regression` ré-enregistre la baseline après
+  un changement voulu ; `SECONDS=20 make regression` pour un budget plus long.
+  Baseline initiale : 96 fichiers, 22 flags.
+
+**Tests** : 1868 passent (+3, `test_budget.py`). Web UI vérifiée complète : les
+commandes sont des onglets ou passent par Solve/Files/Auto ; les lecteurs ont
+chacun un adaptateur dans l'onglet Files (pkzip2 inclus) ; `web_docs_terminal`
+liste ce qui reste terminal-only (scan/watch/git/replay + programmes à fenêtre).

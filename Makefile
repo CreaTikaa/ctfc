@@ -3,7 +3,7 @@
 
 PY := .venv/bin/python
 
-.PHONY: help venv test demo fuzz fuzz-web lint fmt serve fixtures vendor bundle
+.PHONY: help venv test demo fuzz fuzz-web regression lint fmt serve fixtures vendor bundle
 
 help:
 	@echo "make venv      create .venv and install ctfc + dev tools"
@@ -11,6 +11,7 @@ help:
 	@echo "make demo      run every command of docs/HANDOFF.md section 7 and check it"
 	@echo "make fuzz      throw broken files at every format reader (long sweep)"
 	@echo "make fuzz-web  throw random JSON at every web route (long sweep)"
+	@echo "make regression  replay the local corpus: no flag lost, no file over budget"
 	@echo "make lint      check the code with ruff"
 	@echo "make fmt       auto-format the code with ruff"
 	@echo "make fixtures  regenerate tests/fixtures/"
@@ -43,6 +44,13 @@ fuzz:
 # *through* Flask, and a 500 there is a bug of its own.
 fuzz-web:
 	$(PY) tests/fuzz_web.py --rounds $(ROUNDS) --seed $(SEED)
+
+# Replay the local challenge corpus: fail if a flag we used to find is lost, or a
+# file runs far past its time budget. SECONDS=20 make regression for a longer run,
+# UPDATE=1 make regression to record a new baseline after an intended change.
+SECONDS ?= 15
+regression:
+	$(PY) tests/regression.py --seconds $(SECONDS) $(if $(UPDATE),--update,)
 
 lint:
 	$(PY) -m ruff check .

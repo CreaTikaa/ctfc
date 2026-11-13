@@ -2797,3 +2797,26 @@ in the low half (U+6C00 = 'l' << 8), re-encodes it UTF-16 big-endian and reads
 it back little-endian, turning the CJK back into ASCII. The gate is deliberately
 narrow - plain ASCII, real CJK and Latin-1 text do not match - so it never fires
 on ordinary text. (LA CTF 2026 "endians".)
+
+## 53. Keeping the time budget, and not regressing (lot P)
+
+**The budget guard.** `ctfc solve --seconds N` bounds the *search* - how many
+decodings it tries - but each piece is also read, scored and flag-hunted, and
+that work scales with the piece's size, outside the budget. A 227 MB log made
+`hunt` decode every base64 run and assemble split fragments over the whole file,
+so solve ran 20 s for an 8 s budget. Above `MAX_DEEP_HUNT` (16 MB), `hunt` now
+does only the direct search (plain text, UTF-16, a base64 of the configured
+prefix, and the reversed-flag scan) and skips the "one layer under" exploration.
+A flag sitting plainly in the file - or a base64 of CYBN{ anywhere in it - is
+still found; what is given up on a file that big is a flag hidden under a
+non-prefix encoding layer or split into fragments, which is a fair trade against
+a hang while the CTF clock runs.
+
+**The regression guard (`make regression`).** The challenge corpus is the real
+test of "does ctfc still flag what it used to, and does anything hang?".
+`tests/regression.py` replays every file under `corpus/challenges/`, records the
+flags it finds as a baseline (`corpus/regression-baseline.json`, kept out of git
+because it holds real public-CTF flags), and on later runs fails if a flag is
+lost or a file runs far past its budget. It is not part of `make test` - it needs
+the local corpus - but it is the check to run before trusting a change on the day
+of the CTF.
