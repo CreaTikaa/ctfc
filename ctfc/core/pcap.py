@@ -72,6 +72,10 @@ class Packet:
     destination: str
     payload: bytes
     sequence: int = 0  # TCP only
+    # The IP header's reserved flag bit - the "evil bit" of RFC 3514 (an April
+    # Fools' RFC). No real stack sets it, so a CTF uses it to mark which packets
+    # of a one-byte-per-packet exfiltration are decoys and which are the flag.
+    evil: bool = False
 
     @property
     def flow(self) -> tuple[str, str]:
@@ -395,6 +399,7 @@ def parse_packet(frame: bytes, link_type: int, number: int) -> Packet | None:
         protocol_number = packet[9]
         source_ip = _ipv4_address(packet[12:16])
         destination_ip = _ipv4_address(packet[16:20])
+        evil = bool(packet[6] & 0x80)  # the reserved IP flag bit (RFC 3514)
         body = packet[header_length:]
     elif version == 6:
         if len(packet) < 40:
@@ -405,6 +410,7 @@ def parse_packet(frame: bytes, link_type: int, number: int) -> Packet | None:
         payload_length = struct.unpack(">H", packet[4:6])[0]
         if 0 < payload_length <= len(packet) - 40:  # 0 = jumbogram: keep it all
             packet = packet[: 40 + payload_length]  # same reason as IPv4 above
+        evil = False  # IPv6 has no equivalent reserved flag bit
         body = packet[40:]
     else:
         return None
@@ -421,6 +427,7 @@ def parse_packet(frame: bytes, link_type: int, number: int) -> Packet | None:
             destination=f"{destination_ip}:{destination_port}",
             payload=body[data_offset:],
             sequence=sequence,
+            evil=evil,
         )
     if protocol_number == 17 and len(body) >= 8:  # UDP
         source_port, destination_port = struct.unpack(">HH", body[:4])
@@ -430,6 +437,7 @@ def parse_packet(frame: bytes, link_type: int, number: int) -> Packet | None:
             source=f"{source_ip}:{source_port}",
             destination=f"{destination_ip}:{destination_port}",
             payload=body[8:],
+            evil=evil,
         )
     return Packet(
         number=number,
@@ -437,6 +445,7 @@ def parse_packet(frame: bytes, link_type: int, number: int) -> Packet | None:
         source=source_ip,
         destination=destination_ip,
         payload=body,
+        evil=evil,
     )
 
 
@@ -1152,27 +1161,30 @@ def analyse(data: bytes, path: str = "") -> PcapReport:
     report.objects += radius_objects
     seen |= radius_payloads
 
-    # UDP payloads that are not DNS, grouped per flow.
-    udp: dict[tuple[str, str], bytearray] = {}
+    # UDP payloads that are not DNS, grouped per flow. The packets of a flow are
+    # kept in order, so a one-byte-per-packet exfiltration reads straight off.
+    udp: dict[tuple[str, str], list[Packet]] = {}
     for packet in packets:
         if packet.protocol != "udp" or packet.destination.endswith(":53") or not packet.payload:
             continue
         if packet.payload in radius_payloads:
             continue  # already handled as a RADIUS Access-Request
-        udp.setdefault(packet.flow, bytearray()).extend(packet.payload)
-    for (source, destination), blob in udp.items():
-        if len(blob) < 16 or bytes(blob) in seen:
+        udp.setdefault(packet.flow, []).append(packet)
+    for (source, destination), flow_packets in udp.items():
+        blob = b"".join(packet.payload for packet in flow_packets)
+        if len(blob) < 16 or blob in seen:
             continue
         report.objects.append(
             Extracted(
                 kind="udp-payload",
                 name=f"udp_{source.replace(':', '_')}-{destination.replace(':', '_')}.bin",
-                data=bytes(blob[:MAX_OBJECT]),
+                data=blob[:MAX_OBJECT],
                 description=f"UDP payloads {source} -> {destination} ({len(blob)} bytes)",
                 source=source,
                 destination=destination,
             )
         )
+        report.objects += _evil_bit_channel(source, destination, flow_packets, seen)
 
     _make_names_unique(report.objects)
     if not report.objects:
@@ -1181,6 +1193,49 @@ def analyse(data: bytes, path: str = "") -> PcapReport:
             "(TLS cannot be opened without the keys)"
         )
     return report
+
+
+def _evil_bit_channel(
+    source: str, destination: str, flow_packets: list[Packet], seen: set[bytes]
+) -> list[Extracted]:
+    """Split a one-byte-per-packet UDP flow by the IP evil bit (RFC 3514).
+
+    A covert channel sends the flag one byte per packet and pads it with decoy
+    bytes; the decoys (or the real bytes) carry the reserved IP flag set, so the
+    receiver keeps only the packets on one side of that bit. When a flow mixes
+    evil and non-evil packets, hand over both halves separately - concatenated
+    they are the noise the plain udp-payload object already holds. Seen on
+    LA CTF 2023 "EBE".
+    """
+    evil = [packet for packet in flow_packets if packet.evil]
+    clean = [packet for packet in flow_packets if not packet.evil]
+    if not evil or not clean:
+        return []  # not a mixed channel: nothing to separate
+    objects = []
+    for marked, label in ((clean, "no-evil-bit"), (evil, "evil-bit")):
+        blob = b"".join(packet.payload for packet in marked)
+        if len(blob) < 4 or blob in seen:
+            continue
+        seen.add(blob)
+        objects.append(
+            Extracted(
+                kind="udp-payload",
+                name=f"udp_{source.replace(':', '_')}-{destination.replace(':', '_')}_{label}.bin",
+                data=blob[:MAX_OBJECT],
+                description=(
+                    f"UDP payloads {source} -> {destination}, only the packets with the IP "
+                    f"evil bit {'set' if marked is evil else 'clear'} "
+                    f"({len(blob)} bytes, {len(marked)} packets)"
+                ),
+                source=source,
+                destination=destination,
+                details=[
+                    "the IP reserved flag (RFC 3514 'evil bit') splits this one-byte-per-packet "
+                    "flow into two: one side is the flag, the other decoys"
+                ],
+            )
+        )
+    return objects
 
 
 def _make_names_unique(objects: list[Extracted]) -> None:

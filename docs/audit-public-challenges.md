@@ -454,3 +454,52 @@ on n'a que le hash). Construit :
 
 **Tests** : 1859 passent (+13), `make fuzz` propre (32 000 tours / 40 readers),
 `make fuzz-web` propre (52 routes).
+
+## Neuvième audit — ImaginaryCTF 2023 + LA CTF 2023-2026 (lot O, 2026-11-13)
+
+Deux CTF jamais audités. ImaginaryCTF 2023 (dépôt ImaginaryCTF/*) et LA CTF
+2023-2026 (dépôt `uclaacm/lactf-archive`, cloné ce jour). LA CTF n'a pas de
+catégorie « forensics » : les challenges de type forensics sont dans `misc`.
+
+### Flags sortis seuls (nouveaux)
+
+| Challenge | Flag | Ce qu'il a fallu construire |
+|---|---|---|
+| **LA CTF 2023 EBE** | `lactf{3V1L_817_3xf1l7R4710N_4_7H3_W1N_51D43c8000034d0c}` | exfil 1 octet/paquet UDP, les leurres marqués par le **evil bit** (RFC 3514) : le lecteur pcap sépare le flux par ce bit |
+| **LA CTF 2026 endians** | `lactf{1_sur3_h0pe_th1s_d0es_n0t_g3t_l0st_1n_translati0n!}` | flag ASCII lu au mauvais boutisme UTF-16 (devenu du CJK) : nouveau décodeur `utf16_byteswap` |
+
+### Ce qui a été construit
+
+- **Evil bit (RFC 3514)** dans `core/pcap.py` : `Packet` porte maintenant `evil`
+  (le bit réservé de l'en-tête IPv4). Quand un flux UDP mélange paquets « evil »
+  et « non-evil » (exfil 1 octet/paquet avec leurres), le lecteur rend deux
+  objets séparés en plus du flux brut : `..._no-evil-bit.bin` et
+  `..._evil-bit.bin`. Un des deux est le flag. **Vérité terrain** : tshark
+  (`ip.flags.rb`) donne exactement les mêmes 55 octets `lactf{...}`.
+- **utf16_byteswap** dans `core/encodings.py` : un texte UTF-8 dont chaque
+  caractère est un ASCII dans l'octet de poids fort et 0x00 en bas (`U+6C00`='l')
+  est ré-encodé UTF-16BE puis relu UTF-16LE → ASCII. `applicable` est strict
+  (octet bas nul + octet haut ASCII imprimable) : l'ASCII normal, le CJK réel et
+  le Latin-1 ne déclenchent pas. Snippet Python et recette CyberChef fournis.
+
+### Jugé hors scope (iCTF 2023 et LA CTF)
+
+- iCTF 2023 : blurry (QR → zbarimg, visuel), crypto (coredump → récup. clé RSA),
+  forensics (pcap corrompu → flag.png **dessiné**, visuel), pwn (exfil non-texte),
+  rev (reconstruction RAID), steganographic (image originale requise), web
+  (logins Firefox chiffrés NSS → **firefox_decrypt**). ctfc va jusqu'au fichier
+  et nomme l'outil.
+- LA CTF : cats (OSINT), mixed-signals (AM audio — « on entend le flag »),
+  error-correction (ECC visuel), my-poor-git (dumb git → git-dumper).
+
+### Résidu connu (pas bloquant)
+
+EBE : sur le flux UDP **mélangé** (non séparé), un `railfence` aligne par hasard
+un faux `V0O{...}` à 0,82. Le vrai flag (0,9, texte clair du flux non-evil) passe
+devant dans `solve`, donc EBE sort juste ; mais une transposition classique sur
+un blob imprimable peut fabriquer une accolade. À surveiller si un challenge n'a
+que le flux mélangé.
+
+**Tests** : 1865 passent (+6, `test_audit9.py`). `make fuzz`/`fuzz-web` propres.
+Les deux fonctionnalités sont dans l'UI web (evil bit via le lecteur pcap de
+l'onglet Files/Solve ; endian-swap via `auto`, vérifié par un job solve).

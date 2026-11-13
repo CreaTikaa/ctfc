@@ -535,6 +535,60 @@ def utf16le_decode(data: bytes) -> bytes:
         raise DecodeError(str(exc)) from exc
 
 
+def utf16_byteswap_ok(data: bytes) -> bool:
+    """ASCII read with the wrong UTF-16 endianness turns into mostly-CJK text.
+
+    "la" is the bytes 6c 61; read as one UTF-16 code unit the wrong way round it
+    is U+6C61, a CJK ideograph. A flag mangled like this is a short UTF-8 text
+    whose characters are almost all in the U+0100..U+FFFF range (and none in the
+    astral planes, which a 16-bit swap cannot produce). LA CTF 2026 "endians".
+    """
+    if not data or len(data) > 4096:
+        return False
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError:
+        return False
+    if len(text) < 3:
+        return False
+
+    # The giveaway of ASCII mangled this way: each code unit is a printable
+    # ASCII byte in one half and 0x00 in the other (U+6C00 = 'l'<<8). Genuine
+    # CJK text (U+3053...) has two non-zero bytes, so it is left alone.
+    def mangled(ch: str) -> bool:
+        code = ord(ch)
+        # low byte 0x00, high byte a printable ASCII char: "la" read the wrong
+        # way is U+6C00 U+6100. Plain ASCII (code < 0x80) and real CJK (two
+        # non-zero bytes) both fail this, so only the mangled shape is caught.
+        return code & 0xFF == 0 and 0x20 <= (code >> 8) < 0x7F
+
+    return sum(mangled(ch) for ch in text) >= 0.8 * len(text)
+
+
+def utf16_byteswap_decode(data: bytes) -> bytes:
+    """Swap every character's two UTF-16 bytes: the endianness the flag was read at.
+
+    Re-encode the text UTF-16 big-endian, then read it back little-endian (or the
+    reverse). One of the two directions turns the CJK back into ASCII; the more
+    printable result is kept.
+    """
+    text = data.decode("utf-8")
+    best: tuple[float, bytes] | None = None
+    for encode_as, decode_as in (("utf-16-be", "utf-16-le"), ("utf-16-le", "utf-16-be")):
+        try:
+            swapped = text.encode(encode_as).decode(decode_as)
+        except UnicodeError:
+            continue
+        out = swapped.encode("utf-8")
+        printable = sum(1 for ch in swapped if ch.isprintable() or ch in "\r\n\t")
+        ratio = printable / len(swapped) if swapped else 0.0
+        if best is None or ratio > best[0]:
+            best = (ratio, out)
+    if best is None or best[0] < 0.8:
+        raise DecodeError("neither UTF-16 endianness gives printable text")
+    return best[1]
+
+
 # A PowerShell encoded command. `-EncodedCommand` may be shortened to any
 # unambiguous prefix ("-e", "-enc", "-encodedcommand"), so the flag is matched
 # loosely and the base64 that follows is what really decides.
@@ -1692,6 +1746,17 @@ DECODERS: list[Decoder] = [
         applicable=utf16le_ok,
         python='data = data.decode("utf-16-le").encode("utf-8")',
         cyberchef="Decode_text('UTF-16LE (1200)')",
+    ),
+    Decoder(
+        name="utf16_byteswap",
+        label="UTF-16 read at the wrong endianness (ASCII shown as CJK)",
+        decode=utf16_byteswap_decode,
+        applicable=utf16_byteswap_ok,
+        python=(
+            't = data.decode("utf-8")\n'
+            'data = t.encode("utf-16-be").decode("utf-16-le").encode("utf-8")'
+        ),
+        cyberchef="Decode_text('UTF-16BE (1201)')/Encode_text('UTF-16LE (1200)')",
     ),
     Decoder(
         name="zero_width_a",

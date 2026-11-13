@@ -2776,3 +2776,24 @@ WinZip AES (method 99) is a different animal: PBKDF2 then AES-CTR, with no
 known-plaintext shortcut and no help from Python's `zipfile`. ctfc does not try
 to open it; `ctfc zip --wordlist` says so plainly and points at
 `zip2john | hashcat -m 13600` instead of pretending the word list failed.
+
+## 52. Two covert channels: the evil bit and the wrong endianness (lot O)
+
+**The evil bit (`core/pcap.py`).** A classic exfiltration sends the flag one byte
+per packet and hides it among decoy packets. To tell flag from decoy the
+challenge uses the IP header's reserved flag bit - the "evil bit" of RFC 3514,
+an April Fools' RFC that no real network stack sets. ctfc now records that bit
+on every packet (`Packet.evil`). When a UDP flow mixes packets with the bit set
+and clear, the pcap reader hands over three things: the whole flow concatenated
+(as before) and the two halves split by the bit - `..._no-evil-bit.bin` and
+`..._evil-bit.bin`. One half is the flag read straight off, the other is the
+decoys. (LA CTF 2023 "EBE". tshark's `ip.flags.rb` field is the ground truth.)
+
+**The wrong UTF-16 endianness (`core/encodings.py`).** Write "la" (bytes 6c 61)
+and read it back as one UTF-16 code unit the wrong way round and you get U+6C61,
+a CJK ideograph - "my flag turned into Japanese". The `utf16_byteswap` decoder
+spots a text whose characters are all an ASCII byte in the high half with 0x00
+in the low half (U+6C00 = 'l' << 8), re-encodes it UTF-16 big-endian and reads
+it back little-endian, turning the CJK back into ASCII. The gate is deliberately
+narrow - plain ASCII, real CJK and Latin-1 text do not match - so it never fires
+on ordinary text. (LA CTF 2026 "endians".)
