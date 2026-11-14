@@ -186,20 +186,31 @@ def _chance_body(flag: str) -> bool:
     hexdigits = set("0123456789abcdefABCDEF")
     if len(body) >= 8 and all(ch in hexdigits for ch in body):
         return False  # a hash is a real flag body
-    # Consonant soup is checked FIRST, before the underscore/word signals: a
-    # decode artifact can carry underscores and still be gibberish
-    # ("CZYZBZNZ{ZeZvZ_Zb1Z}", a flag with a byte interleaved), so the vowel
-    # ratio must get a say before "has an underscore" trusts it.
+    # A CSS rule or a line of code matches the generic shape too under a lowercase
+    # prefix ("hover{outline:0}", "summary{display:block}", "foo{return 1;}"): the
+    # body is a `property:value` / statement with a colon, semicolon or several
+    # hyphens and no underscore. Real flags almost never look like that (the ones
+    # that use ':' - an IP, a time - carry a "flag"/"ctf" prefix, handled above).
+    if "_" not in body and (":" in body or ";" in body or body.count("-") >= 2):
+        return True
+    # Consonant soup is checked before the underscore/word signals: a decode
+    # artifact can carry underscores and still be gibberish ("CZYZBZNZ{ZeZvZ_Z}",
+    # a flag with a byte interleaved), so the vowel ratio gets a say first.
     alnum = [ch for ch in body if ch.isalnum()]
     vowelish = sum(ch in VOWELISH for ch in alnum)
     if len(alnum) >= 3 and vowelish == 0:
         return True  # consonant soup ("CmvGTKDTDvh2g", "PYXSTSSSRSQP")
     if len(alnum) >= 6 and vowelish <= len(alnum) // 5:
         return True
-    # A body that reads as (leet) words, or is a long underscored sentence, is a
-    # real flag even with punctuation in it ("y0u_g0t_m3!", "p@yl04d_4in't").
-    if ("_" in body and len(body) >= 8) or wordy_body(flag):
-        return False
+    # A real flag body carries leet (a digit among the letters) or joins words
+    # with underscores. A natural-language CSS value ("display:block" without the
+    # colon, "block") reads as words but is NOT leet and has no underscore, so it
+    # does not qualify here - only a flag-shaped body does.
+    has_digit = any(ch.isdigit() for ch in body)
+    if "_" in body and len(body) >= 8:
+        return False  # "w1ll_y0u_St4nd": underscored multi-word sentence
+    if wordy_body(flag) and (has_digit or "_" in body):
+        return False  # "l0lcust0mt4bs": leet words
     if any(ch in SOUP_CHARS for ch in body):
         return True  # punctuation with no word structure: "btBs&7p!G"
     # (a short body with no word structure - "LD{4D_usa1}", "VV{uR_z}" - is what
