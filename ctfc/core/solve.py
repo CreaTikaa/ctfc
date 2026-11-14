@@ -93,6 +93,24 @@ def guessed_key(origin: str) -> bool:
     return origin.startswith("decoded:") and any(step in origin for step in GUESSED_STEPS)
 
 
+# Decode-chain steps whose key/shift was SEARCHED or that were applied BLIND
+# (brute XOR, every rail count, rot-N, a classical solve): a chain that contains
+# one of these produces an output whose readability score was itself optimised by
+# the search, so a "readable" lead off it is unreliable - a transposition of code
+# reads as vaguely-English, and such chains throw up chance "{...}" shapes. A REAL
+# flag from one of these is still caught at full strength when the walk visits the
+# decoded child piece and hunts it (subject to the guessed-key guard), so capping
+# the DISPLAY lead loses no genuine solve.
+_SEARCHED_OPS = ("xor", "caesar", "railfence", "vigenere", "beaufort", "affine", "atbash",
+                 "scytale", "substitution", "columnar", "rot13", "rot47")
+
+
+def _searched_chain(label: str) -> bool:
+    """Does this decode chain contain a searched-key / blind-transform step?"""
+    return any(op in label for op in _SEARCHED_OPS)
+
+
+
 def trusted_after_guess(flag: str, flagset: FlagSet) -> bool:
     """Is a flag found only after a guessed/blind transform good enough to keep?
 
@@ -698,11 +716,18 @@ def solve(
             if candidate.score < LEAD_SCORE:
                 continue
             report.steps.append(f"{piece.name}: {candidate.label} (score {candidate.score:.2f})")
+            score_shown = candidate.score
+            if _searched_chain(candidate.label):
+                # A searched/blind chain (xor brute, caesar, rail-fence...) has an
+                # unreliable readability score: cap this display lead so it does
+                # not top the list or count as a near-solve. A real flag from such
+                # a chain still comes through the decoded child piece's hunt.
+                score_shown = min(score_shown, PLAIN_TEXT_CAP)
             leads.append(
                 Lead(
                     title=f"{piece.name}: {candidate.label}",
                     why="; ".join(candidate.reasons[:2]) or "the chains found something",
-                    score=candidate.score,
+                    score=score_shown,
                     command=f"ctfc auto {piece.disk} --show-code",
                     preview=_preview(candidate.data),
                 )

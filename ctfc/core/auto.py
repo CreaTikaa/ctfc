@@ -166,7 +166,24 @@ def _classical_outputs(
     found = classical.solve_classical(data, flagset, budget=own, top_n=1)
     if not found or found[0].score < CLASSICAL_MIN_SCORE or found[0].score <= data_score:
         return []
-    return [(found[0].data, Step(**found[0].params["chain"][0]))]
+    # A classical decryption is kept only when it really earned it. Transposition
+    # and substitution rearrange letters, so on source code or already-structured
+    # text they can score a little higher by chance and flood `solve` with false
+    # "railfence(rails=8)" leads. Keep the output only if it actually reveals a
+    # flag, OR the input genuinely did not read (low bigram) and the output now
+    # reads clearly - a real cipher turning gibberish into language.
+    from ctfc.core import flags as flagmod
+
+    output = found[0].data
+    has_flag = any(
+        hit.strength > flagmod.WEAK_GENERIC_STRENGTH for hit in flagmod.find_flags(output, flagset)
+    )
+    in_bigram = classical.bigram_rate(data)
+    out_bigram = classical.bigram_rate(output)
+    revealed = in_bigram < classical.READABLE_BIGRAMS and out_bigram >= classical.READABLE_BIGRAMS
+    if not has_flag and not revealed:
+        return []
+    return [(output, Step(**found[0].params["chain"][0]))]
 
 
 def auto_decode(
