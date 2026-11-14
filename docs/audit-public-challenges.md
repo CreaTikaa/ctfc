@@ -532,3 +532,69 @@ jamais son budget** et qu'aucune amélioration ne casse un acquis en silence.
 commandes sont des onglets ou passent par Solve/Files/Auto ; les lecteurs ont
 chacun un adaptateur dans l'onglet Files (pkzip2 inclus) ; `web_docs_terminal`
 liste ce qui reste terminal-only (scan/watch/git/replay + programmes à fenêtre).
+
+## Dixième audit — le grand corpus in_scope (lots Q+R, 2026-11-14)
+
+Blind run sur les **787 challenges forensics `in_scope`** du grand corpus
+(`corpus/challenges/`, 1593 challenges / 193 CTF ; voir `corpus/HANDOFF-corpus.md`).
+Nouveauté méthodo : une **mesure honnête**. Le harnais choisit le vrai handout
+(pas un fichier-solution/writeup), le grader `corpus/grade3.py` range chaque
+résultat en **flag / flag- / flag~ / miss / out / leak** :
+
+- **flag** : bon flag sorti automatiquement (vérifié contre `expected-flags.json`).
+- **flag-** : la réponse est dans la sortie de ctfc, un humain la soumet.
+- **flag~** : piste forte / grosse avancée, pas sûre.
+- **leak** : flag lu en clair dans la source/writeup du dépôt (ne compte pas).
+- **out** : hors portée d'un outil déterministe sans LLM.
+
+### Avant (code figé) → après (lots Q+R)
+
+| palier | avant | après |
+|---|---|---|
+| flag (vérifié) | 25 | **36** (+44 %) |
+| flag- | 11 | 6 |
+| flag~ | 260 | 290 |
+| miss | 350 | **315** |
+| out | 128 | 123 |
+| leak | 13 | 17 |
+| flag+flag-+flag~ (du non-out) | 45,8 % | **51,3 %** |
+
+Diff challenge par challenge : **49 améliorés, 16 « régressés »** — dont la
+plupart des régressions sont des **corrections** (le baseline comptait 37 faux
+flags : placeholders `flag{xxxx}`/`corctf{test_flag}`, fuites, charabia de clé
+devinée ; tous supprimés). 33 ratés muets deviennent des pistes exploitables.
+
+### Lot Q — cinq lecteurs + jugement de flag plus honnête
+
+- **Ducky `inject.bin`** : décodé en les frappes tapées (keymap USB HID existante).
+  Flague CCSC 2024 HIDden.
+- **Exfil ICMP** : données des echo request/reply, filler de ping normal écarté,
+  vue un-octet-par-paquet. Flague des challenges d'exfil ping.
+- **HTTP 206 (Content-Range)** : un fichier téléchargé en morceaux (plusieurs
+  connexions) est recollé à ses offsets. Validé 7z sur le zip reconstruit (0ctf
+  splitted, broken-heart).
+- **Images E01** (Expert Witness Format) : ouvertes via The Sleuth Kit + libewf ;
+  fixture `ewfacquire`. Flague les CCSC E01.
+- **Crack ZipCrypto** : les 10 000 mots de passe courants dans le lecteur (<1 s via
+  le contrôle d'en-tête 12 octets), puis rockyou pour le temps restant dans `solve`.
+- Les **placeholders** (`CCSC{fake_dummy_flag_1}`, `corctf{t3st_fl4g}`, `REDACTED`,
+  `xxxxxxxx`) et les flags apparus **seulement après une clé devinée** (xor-brute,
+  rot13, railfence) deviennent des leads, plus la réponse.
+
+### Lot R — faire confiance aux préfixes minuscules (le gros levier)
+
+`CTF_PREFIX_RE` ne jugeait fort qu'un tag MAJUSCULE ou contenant « flag »/« ctf ».
+**204 vrais flags sur 653 (31 %)** en pâtissaient : `sun{`, `dice{`, `grey{`,
+`shellmates{`, `gigem{`, `idek{`, `n00bz{`, `cr3{`, `kalmar{`… `plausible_prefix()`
+accepte désormais tout tag court lettre-première alphanumérique, sauf une valeur
+hexa et un mot-clé code/CSS. Garde-fous : `_chance_body` rejette un corps de forme
+CSS/code (`:` / `;` / plusieurs `-` sans underscore) — **0 faux positif sur 4178
+tokens `word{...}` de CSS/JS réels du corpus** — et un flag trouvé après une
+transformation devinée/aveugle n'est gardé que s'il est non-ambigu (préfixe
+configuré, hash, ou vraie phrase leet underscore). Résultat : **83 %** des flags
+connus du corpus notés forts (vs ~69 %).
+
+**Tests** : 1884 passent (+16, `test_audit10.py`), ruff clean. Outils de mesure
+(gitignorés, dans `corpus/`) : `ground_truth.py`, `grade3.py`, `harness_solve.py`
+(choix du handout sans fuite, `SALVO_SCOPE=in|maybe`), `classify_miss.py`,
+`miss_report.py` (la liste des non-flagués en 3 catégories).
