@@ -193,6 +193,16 @@ EN: dict[str, str] = {
     "opt_tools_list": "list every tool ctfc knows about and whether it is installed here",
     "opt_tools_run": "run this tool (by id) on the input and show its output",
     "opt_tools_wordlist": "wordlist path, for the tools that need one",
+    "cmd_doctor": "pre-flight readiness check for the day of the CTF",
+    "cmd_doctor_ex": "example: ctfc doctor  (run it before the CTF: flag format, wordlist, tools)",
+    "cmd_config": "show the config, or set the CTF's flag format / wordlist in it",
+    "cmd_config_ex": (
+        "examples: ctfc config  |  ctfc config --flag 'XYZ{'  |  "
+        "ctfc config --wordlist ~/rockyou.txt"
+    ),
+    "opt_config_flag": "add this flag format (e.g. 'XYZ{') to the config and search for it",
+    "opt_config_wordlist": "set the wordlist path in the config",
+    "opt_config_show": "also print the effective config after making a change",
     "opt_tools_password": "passphrase, for the tools that need one (openssl)",
     "tool_offline_refused": "{name} would send your data to a third party, and offline mode is on.",
     "cmd_pcap": "pull HTTP bodies, DNS exfiltration and TCP streams out of a capture",

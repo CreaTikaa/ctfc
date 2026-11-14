@@ -13,7 +13,19 @@ vol = ["python3", "/home/me/volatility3/vol.py"]
 stegsolve = ["java", "-jar", "/home/me/stegsolve.jar"]
 ```
 
-`ctfc tools --list` (or the Docs tab) says which external tools are installed.
+Then set the CTF's own flag format so a found flag stops the walk instead of
+rating as a weak guess, and check everything is reachable:
+
+```sh
+ctfc config --flag 'XYZ{'    # the competition's prefix (also searched in base64)
+ctfc config --wordlist ~/Documents/rockyou.txt
+ctfc doctor                  # green/red: flag format, wordlist, CyberChef, every tool
+```
+
+`ctfc doctor` is the pre-flight check: run it before the CTF. It flags a tool
+that is only reachable behind a shell alias (declare it under `[tool_paths]`
+above), a missing wordlist, and whether you still need to set the flag format.
+`ctfc tools --list` (or the Docs tab) lists every external tool ctfc knows.
 
 ```sh
 cd ctfc

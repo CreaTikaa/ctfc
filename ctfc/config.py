@@ -160,3 +160,85 @@ def _unique(items: list[str]) -> list[str]:
         if item not in seen:
             seen.append(item)
     return seen
+
+
+# ---------------------------------------------------------------------------
+# Writing the config back (stdlib reads TOML but does not write it)
+# ---------------------------------------------------------------------------
+#
+# `ctfc config` edits the file for the user (add the CTF's flag format, point at
+# a wordlist) rather than making him hand-write TOML under time pressure. Only the
+# few scalar / list / string->list-table shapes this project uses are serialised;
+# anything else raises rather than writing something it cannot read back.
+
+
+def _toml_str(value: str) -> str:
+    """One TOML string. A literal '...' when it can hold the value (no single
+    quote, no newline) - which keeps regex backslashes untouched - else a basic
+    "..." with the two characters that must be escaped."""
+    if "'" not in value and "\n" not in value:
+        return f"'{value}'"
+    return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def _toml_value(value: object) -> str:
+    """A scalar or a list of strings, as TOML. Tables are handled separately."""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (int, float)):
+        return str(value)
+    if isinstance(value, str):
+        return _toml_str(value)
+    if isinstance(value, list):
+        return "[" + ", ".join(_toml_str(str(item)) for item in value) + "]"
+    raise ConfigError(f"cannot serialise {value!r} to TOML")
+
+
+def dumps_config(data: dict) -> str:
+    """Serialise a config dict to TOML text, tables (e.g. tool_paths) last."""
+    lines = ["# ctfc configuration - see ctfc/config.py for every key.", ""]
+    for key, value in data.items():
+        if not isinstance(value, dict):
+            lines.append(f"{key} = {_toml_value(value)}")
+    for key, value in data.items():
+        if isinstance(value, dict):
+            lines += ["", f"[{key}]"]
+            for name, argv in value.items():
+                lines.append(f"{name} = {_toml_value(argv)}")
+    return "\n".join(lines) + "\n"
+
+
+def read_raw_config(path: Path | None = None) -> dict:
+    """The config file as a plain dict (the user's own keys), or {} if absent."""
+    path = path or DEFAULT_CONFIG_PATH
+    if not path.is_file():
+        return {}
+    try:
+        return tomllib.loads(path.read_text(encoding="utf-8"))
+    except tomllib.TOMLDecodeError as exc:
+        raise ConfigError(f"{path}: invalid TOML ({exc})") from exc
+
+
+def write_raw_config(data: dict, path: Path | None = None) -> Path:
+    """Write a config dict back to the file, creating ~/.ctfc/ if needed."""
+    path = path or DEFAULT_CONFIG_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(dumps_config(data), encoding="utf-8")
+    return path
+
+
+def flag_to_prefix_and_regex(flag: str) -> tuple[str, str]:
+    """From "SHARKY{" (or "SHARKY", or "SHARKY{...}") -> ("SHARKY{", regex).
+
+    The regex matches that prefix with any one-line body, and the prefix is what
+    is also searched in base64 form. The name is escaped so odd characters in it
+    (a dash, a dot) cannot break the pattern."""
+    name = flag.strip()
+    if "{" in name:
+        name = name[: name.index("{")]
+    name = name.strip()
+    if not name:
+        raise ConfigError("a flag format needs a name, e.g. SHARKY{ or SHARKY")
+    prefix = name + "{"
+    regex = re.escape(name) + r"\{[^}\n]{1,120}\}"
+    return prefix, regex

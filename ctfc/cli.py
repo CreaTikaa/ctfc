@@ -16,7 +16,18 @@ from pathlib import Path
 from rich.console import Console
 
 from ctfc import __version__, render
-from ctfc.config import Config, ConfigError, find_wordlist, load_config
+from ctfc.config import (
+    DEFAULT_CONFIG_PATH,
+    DEFAULT_FLAG_PREFIXES,
+    DEFAULT_FLAG_REGEXES,
+    Config,
+    ConfigError,
+    find_wordlist,
+    flag_to_prefix_and_regex,
+    load_config,
+    read_raw_config,
+    write_raw_config,
+)
 from ctfc.core import classical, keyhunt, pipeline
 from ctfc.core import session as sessions
 from ctfc.core import tools as toolbox
@@ -280,6 +291,14 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--no-tools", dest="run_tools", action="store_false",
                    help=t("opt_solve_no_tools"))
     p.set_defaults(run_tools=True)
+
+    p = add("doctor")
+    # No input: a pre-flight readiness check for the day of the CTF.
+
+    p = add("config")
+    p.add_argument("--flag", help=t("opt_config_flag"))
+    p.add_argument("--wordlist", help=t("opt_config_wordlist"))
+    p.add_argument("--show", action="store_true", help=t("opt_config_show"))
 
     p = add("mail")
     p.add_argument("input", help=t("arg_mail"))
@@ -1993,6 +2012,185 @@ def cmd_tools(args: argparse.Namespace, config: Config, console: Console) -> int
     return 0 if suggestions else 1
 
 
+# Programs ctfc runs itself on a media file during `solve --run-tools` (see
+# core/stegorun.py). If one is missing, that stego step is silently skipped.
+_STEGO_RUN_PROGRAMS = (
+    ("exiftool", "metadata (comments, GPS, maker notes)"),
+    ("zsteg", "LSB stego in PNG/BMP"),
+    ("zbarimg", "QR codes and barcodes"),
+    ("steghide", "steghide payload, empty passphrase"),
+    ("stegseek", "cracks a steghide passphrase from the wordlist"),
+    ("sox", "resamples audio for multimon-ng / spectrogram"),
+    ("multimon-ng", "Morse / DTMF / AFSK in audio"),
+)
+# A day-of forensics kit: ctfc prints the command for these, you run them. The
+# second item is what they are for; the install hint comes from tools.toml.
+_FORENSICS_KIT = (
+    ("binwalk", "carve embedded files"),
+    ("foremost", "carve by file signature"),
+    ("tshark", "pcap dissection / object export"),
+    ("bkcrack", "ZipCrypto known-plaintext"),
+    ("john", "password cracking (+ the *2john extractors)"),
+    ("hashcat", "GPU password cracking"),
+    ("aircrack-ng", "WPA handshake cracking"),
+    ("olevba", "Office macro extraction"),
+    ("pngcheck", "broken-PNG diagnosis"),
+    ("pdftotext", "PDF text extraction"),
+    ("vol", "Volatility 3 (memory dumps)"),
+    ("outguess", "outguess stego"),
+)
+
+
+def _tool_install_hints() -> dict[str, str]:
+    """program name -> its install hint, read from the tools.toml registry."""
+    hints: dict[str, str] = {}
+    for tool in toolbox.load_tools():
+        if tool.command_template:
+            hints.setdefault(tool.command_template[0], tool.install)
+    return hints
+
+
+def cmd_doctor(args: argparse.Namespace, config: Config, console: Console) -> int:
+    """Pre-flight check for the day of the CTF: config, wordlist, tools, aliases."""
+    from rich.table import Table
+
+    hints = _tool_install_hints()
+
+    def found(program: str) -> list[str] | None:
+        return toolbox.program_argv(program, config.tool_paths)
+
+    # 1. The essentials: the things that quietly cost you flags if unset.
+    essentials = Table(title="Readiness", title_style="bold", show_header=True, box=None)
+    essentials.add_column("check")
+    essentials.add_column("status")
+    essentials.add_column("")
+
+    extra_prefixes = [p for p in config.flag_prefixes if p not in DEFAULT_FLAG_PREFIXES]
+    if extra_prefixes:
+        essentials.add_row("flag format", "[green]OK[/]", ", ".join(extra_prefixes))
+    else:
+        essentials.add_row(
+            "flag format",
+            "[yellow]default only[/]",
+            "only CYBN{ is set - add the CTF's format: ctfc config --flag 'XYZ{'",
+        )
+    wordlist = find_wordlist(config)
+    essentials.add_row(
+        "wordlist",
+        "[green]OK[/]" if wordlist else "[red]missing[/]",
+        wordlist or "set one: ctfc config --wordlist ~/rockyou.txt (used by zip/steghide/hashcat)",
+    )
+    cyberchef = toolbox.embedded_cyberchef_installed()
+    essentials.add_row(
+        "CyberChef (embedded)",
+        "[green]OK[/]" if cyberchef else "[yellow]not fetched[/]",
+        "" if cyberchef else "offline 'Open in CyberChef' needs: scripts/fetch_vendor.sh",
+    )
+    essentials.add_row("network mode", "offline" if config.offline else "online allowed", "")
+    config_path = args.config or DEFAULT_CONFIG_PATH
+    essentials.add_row(
+        "config file",
+        "[green]OK[/]" if Path(config_path).is_file() else "[yellow]none yet[/]",
+        str(config_path),
+    )
+    console.print(essentials)
+    console.print()
+
+    # 2. The tools ctfc runs itself on a media file.
+    autorun = Table(
+        title="Stego tools ctfc runs for you (solve --run-tools)",
+        title_style="bold",
+        show_header=True,
+        box=None,
+    )
+    autorun.add_column("tool")
+    autorun.add_column("status")
+    autorun.add_column("what / how to get it")
+    missing_autorun = 0
+    for program, what in _STEGO_RUN_PROGRAMS:
+        ok = found(program) is not None
+        missing_autorun += 0 if ok else 1
+        note = what if ok else (hints.get(program, "") or what)
+        autorun.add_row(program, "[green]✓[/]" if ok else "[red]✗[/]", note)
+    console.print(autorun)
+    console.print()
+
+    # 3. The wider forensics kit: ctfc prints the command, you run it.
+    kit = Table(
+        title="Forensics kit (ctfc prints the command)",
+        title_style="bold",
+        show_header=True,
+        box=None,
+    )
+    kit.add_column("tool")
+    kit.add_column("status")
+    kit.add_column("what / how to get it")
+    for program, what in _FORENSICS_KIT:
+        ok = found(program) is not None
+        note = what if ok else (hints.get(program, "") or what)
+        kit.add_row(program, "[green]✓[/]" if ok else "[dim]–[/]", note)
+    console.print(kit)
+
+    # A nudge about shell aliases, the classic "why didn't it run?" on the day.
+    missing = [p for p, _ in (*_STEGO_RUN_PROGRAMS, *_FORENSICS_KIT) if found(p) is None]
+    if missing:
+        console.print()
+        console.print(
+            "[dim]Some tools above are missing. If one is in fact installed behind a shell "
+            r"alias (stegsolve, vol), ctfc cannot see it - declare it in config.toml under "
+            r"\[tool_paths], e.g. vol = \['python3', '/path/to/vol.py'].[/]"
+        )
+    return 0
+
+
+def cmd_config(args: argparse.Namespace, config: Config, console: Console) -> int:
+    """Show the effective config, or set the CTF's flag format / wordlist in it."""
+    path = args.config or DEFAULT_CONFIG_PATH
+    changed = False
+    if args.flag or args.wordlist:
+        raw = read_raw_config(args.config)
+        if args.flag:
+            prefix, regex = flag_to_prefix_and_regex(args.flag)
+            prefixes = list(raw.get("flag_prefixes", []))
+            regexes = list(raw.get("flag_regexes", []))
+            if prefix not in prefixes:
+                prefixes.append(prefix)
+            if regex not in regexes:
+                regexes.append(regex)
+            raw["flag_prefixes"] = prefixes
+            raw["flag_regexes"] = regexes
+            console.print(f"[green]flag format added:[/] {prefix} (also searched in base64)")
+        if args.wordlist:
+            raw["wordlist"] = args.wordlist
+            console.print(f"[green]wordlist set:[/] {args.wordlist}")
+        written = write_raw_config(raw, args.config)
+        console.print(f"[dim]written to {written}[/]")
+        changed = True
+        # Re-read so the summary below reflects what was just written.
+        config = load_config(args.config)
+
+    if changed and not args.show:
+        return 0
+
+    from rich.table import Table
+
+    table = Table(title="Effective configuration", title_style="bold", show_header=False, box=None)
+    table.add_column("key")
+    table.add_column("value")
+    exists = "" if Path(path).is_file() else "  (not created yet)"
+    table.add_row("config file", str(path) + exists)
+    table.add_row("flag prefixes", ", ".join(config.flag_prefixes))
+    extra = [r for r in config.flag_regexes if r not in DEFAULT_FLAG_REGEXES]
+    table.add_row("extra flag regexes", ", ".join(extra) or "(none)")
+    table.add_row("wordlist", find_wordlist(config) or "(none found)")
+    table.add_row("offline", "yes" if config.offline else "no")
+    table.add_row("tool_paths", ", ".join(sorted(config.tool_paths)) or "(none)")
+    console.print(table)
+    console.print("\n[dim]Set the CTF's flag: ctfc config --flag 'XYZ{'  ·  "
+                  "run ctfc doctor before the CTF.[/]")
+    return 0
+
+
 def cmd_serve(args: argparse.Namespace, config: Config) -> int:
     """Start the Flask web UI (bound to 127.0.0.1 unless --host says otherwise)."""
     from ctfc.web.app import create_app  # imported here so the CLI starts fast
@@ -2077,6 +2275,8 @@ def main(argv: list[str] | None = None) -> int:
         "radius": cmd_radius,
         "recipe": cmd_recipe,
         "tools": cmd_tools,
+        "doctor": cmd_doctor,
+        "config": cmd_config,
     }
     if args.command in commands:
         try:
