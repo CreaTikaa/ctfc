@@ -294,3 +294,66 @@ def snippet(link_type: int) -> str:
         "        reports.append(data)\n"
         "print(decode_reports(reports)[0])\n"
     )
+
+
+# --- USB Rubber Ducky payloads (inject.bin) ------------------------------------
+# A Rubber Ducky is a USB stick that pretends to be a keyboard and types a
+# script. The script is compiled ("encoded") into inject.bin: a list of 2-byte
+# pairs, (HID keycode, modifier bits) - the same keycodes and modifier bits as a
+# keyboard report above. A pair whose keycode is 0 is a pause: its second byte
+# is a delay in milliseconds, not a modifier. Mallard / ducktoolkit decode it.
+DUCKY_MIN_PAIRS = 8
+GUI_ALT_BITS = 0x4C  # left/right GUI (Windows key) and Alt: a shortcut, not text
+
+
+def looks_like_ducky(data: bytes) -> bool:
+    """Is this an encoded Rubber Ducky payload (inject.bin)?
+
+    Every pair is (keycode, modifier): keycodes stay in the keyboard range
+    (<= 0x65) and modifiers are a few bit flags, except in pauses (keycode 0).
+    Most keycodes are letters, digits or punctuation that type text.
+    """
+    if len(data) % 2 or len(data) // 2 < DUCKY_MIN_PAIRS or len(data) > 2_000_000:
+        return False
+    # Plain text ("1 1 1 1") also pairs up as (0x31, 0x20): a real payload has
+    # a zero modifier byte after most keys, so it is far from all-printable.
+    if sum(32 <= byte < 127 or byte in (9, 10, 13) for byte in data) > 0.9 * len(data):
+        return False
+    keys = data[0::2]
+    mods = data[1::2]
+    typing = 0
+    for key, mod in zip(keys, mods, strict=False):
+        if key == 0:
+            continue  # a pause, any delay
+        if key > 0x65 or mod & 0x10 or mod not in (0, 1, 2, 4, 8, 3, 5, 9, 0x20, 0x22, 0x40, 0x80):
+            return False
+        if 0x04 <= key <= 0x38:
+            typing += 1
+    pairs = len(data) // 2
+    # Mostly typing keys, and not mostly zeros (which any padded blob would be).
+    return typing >= 0.6 * pairs and data.count(0) < 0.75 * len(data)
+
+
+def decode_ducky(data: bytes) -> tuple[str, list[str]]:
+    """Turn an inject.bin back into the text the Ducky types.
+
+    Each (keycode, modifier) pair becomes a keyboard report followed by an
+    "all released" report, so `decode_reports` does the keymap, Shift, Caps Lock
+    and Backspace exactly as for a captured keyboard. GUI/Alt shortcuts (Win+R
+    to open "Run") type nothing and become a line break: a new command follows.
+    """
+    reports: list[bytes] = []
+    shortcuts = 0
+    for key, mod in zip(data[0::2], data[1::2], strict=False):
+        if key == 0:
+            continue
+        if mod & GUI_ALT_BITS:
+            shortcuts += 1
+            # A shortcut is shown as a newline: what follows is a new command.
+            reports += [bytes([0, 0, 0x28, 0, 0, 0, 0, 0]), bytes(8)]
+            continue
+        reports += [bytes([mod, 0, key, 0, 0, 0, 0, 0]), bytes(8)]
+    text, notes = decode_reports(reports)
+    if shortcuts:
+        notes.append(f"{shortcuts} GUI/Alt shortcut(s) (e.g. Win+R) shown as a line break")
+    return text, notes

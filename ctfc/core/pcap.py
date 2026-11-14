@@ -67,7 +67,7 @@ class Packet:
     """One captured packet, already stripped down to its transport payload."""
 
     number: int
-    protocol: str  # "tcp" | "udp" | "other"
+    protocol: str  # "tcp" | "udp" | "icmp" | "other"
     source: str  # "10.0.0.1:1234"
     destination: str
     payload: bytes
@@ -76,6 +76,7 @@ class Packet:
     # Fools' RFC). No real stack sets it, so a CTF uses it to mark which packets
     # of a one-byte-per-packet exfiltration are decoys and which are the flag.
     evil: bool = False
+    icmp_type: int = -1  # ICMP only: 8 = echo request, 0 = echo reply
 
     @property
     def flow(self) -> tuple[str, str]:
@@ -104,6 +105,8 @@ class Extracted:
     source: str = ""
     destination: str = ""
     details: list[str] = field(default_factory=list)
+    # HTTP 206 only: (first byte, last byte, total size) from Content-Range.
+    content_range: tuple[int, int, int] | None = None
 
     def to_dict(self) -> dict:
         return {
@@ -439,6 +442,18 @@ def parse_packet(frame: bytes, link_type: int, number: int) -> Packet | None:
             payload=body[8:],
             evil=evil,
         )
+    if protocol_number in (1, 58) and len(body) >= 8:  # ICMP, ICMPv6
+        # 8-byte header (type, code, checksum, identifier, sequence), then data.
+        # An echo request's data is free: the stock place to smuggle bytes out.
+        return Packet(
+            number=number,
+            protocol="icmp",
+            source=source_ip,
+            destination=destination_ip,
+            payload=body[8:],
+            evil=evil,
+            icmp_type=body[0],
+        )
     return Packet(
         number=number,
         protocol="other",
@@ -563,6 +578,52 @@ def _decompress_body(body: bytes, encoding: bytes) -> tuple[bytes, str]:
     return body, ""
 
 
+CONTENT_RANGE_RE = re.compile(rb"bytes\s+(\d+)-(\d+)/(\d+)", re.IGNORECASE)
+
+
+def reassemble_ranges(objects: list[Extracted]) -> list[Extracted]:
+    """Put back together a file that was downloaded in pieces (HTTP 206).
+
+    A client can ask for a byte range ("Range: bytes=1000-1999") and the server
+    answers "206 Partial Content" with "Content-Range: bytes 1000-1999/5000".
+    A challenge downloads its file in pieces, out of order, often over several
+    connections: no single response holds the file. Responses that announce the
+    same total size are one file; each piece is written at its offset. Missing
+    bytes are left as zeros and said so.
+    """
+    by_total: dict[int, list[Extracted]] = {}
+    for item in objects:
+        if item.content_range is not None and 0 < item.content_range[2] <= MAX_OBJECT:
+            by_total.setdefault(item.content_range[2], []).append(item)
+    found = []
+    for total, pieces in by_total.items():
+        if len(pieces) < 2:
+            continue
+        buffer = bytearray(total)
+        covered = bytearray(total)
+        for item in pieces:
+            first, last, _ = item.content_range  # type: ignore[misc]
+            chunk = item.data[: max(0, last - first + 1)]
+            buffer[first : first + len(chunk)] = chunk[: max(0, total - first)]
+            covered[first : first + len(chunk)] = b"\x01" * len(chunk[: max(0, total - first)])
+        missing = covered.count(0)
+        details = [f"{len(pieces)} piece(s) put back at their Content-Range offsets"]
+        if missing:
+            details.append(f"{missing} byte(s) were never sent: left as zeros")
+        found.append(
+            Extracted(
+                kind="http-ranges",
+                name=f"http_ranges_{total}.bin",
+                data=bytes(buffer),
+                description=f"file of {total} bytes rebuilt from {len(pieces)} HTTP 206 range(s)",
+                source=pieces[0].source,
+                destination=pieces[0].destination,
+                details=details,
+            )
+        )
+    return found
+
+
 def extract_http(stream: Stream) -> list[Extracted]:
     """Pull requests and response bodies out of one reassembled TCP stream."""
     data = stream.data
@@ -599,6 +660,7 @@ def extract_http(stream: Stream) -> list[Extracted]:
             details.append(note)
         if not body:
             continue
+        span = CONTENT_RANGE_RE.search(_header_value(headers, b"content-range"))
         objects.append(
             Extracted(
                 kind="http-body",
@@ -608,6 +670,9 @@ def extract_http(stream: Stream) -> list[Extracted]:
                 source=stream.source,
                 destination=stream.destination,
                 details=details,
+                content_range=(
+                    (int(span.group(1)), int(span.group(2)), int(span.group(3))) if span else None
+                ),
             )
         )
 
@@ -1155,6 +1220,9 @@ def analyse(data: bytes, path: str = "") -> PcapReport:
                 )
             )
 
+    # A file fetched in byte ranges (HTTP 206) over one or several connections.
+    report.objects[:0] = reassemble_ranges(report.objects)
+
     report.objects += extract_dns(packets)
 
     radius_objects, radius_payloads = extract_radius(packets)
@@ -1186,6 +1254,8 @@ def analyse(data: bytes, path: str = "") -> PcapReport:
         )
         report.objects += _evil_bit_channel(source, destination, flow_packets, seen)
 
+    report.objects += extract_icmp(packets, seen)
+
     _make_names_unique(report.objects)
     if not report.objects:
         report.notes.append(
@@ -1193,6 +1263,84 @@ def analyse(data: bytes, path: str = "") -> PcapReport:
             "(TLS cannot be opened without the keys)"
         )
     return report
+
+
+# What `ping` itself puts in an echo request: Windows sends the alphabet, Linux
+# and macOS a timestamp then the bytes 0x10, 0x11, 0x12... These carry nothing.
+WINDOWS_PING_DATA = b"abcdefghijklmnopqrstuvwabcdefghi"
+LINUX_PING_TAIL = bytes(range(0x10, 0x38))
+
+
+def _is_stock_ping(payload: bytes) -> bool:
+    """Is this the filler a normal ping sends (so nothing was hidden in it)?"""
+    if not payload:
+        return True
+    if WINDOWS_PING_DATA.startswith(payload[:32]) and len(payload) <= 64:
+        return True
+    # Linux: 8 or 16 bytes of timestamp, then the 0x10.. counter (often cut short).
+    for start in (8, 16):
+        tail = payload[start:]
+        if len(tail) >= 8 and LINUX_PING_TAIL.startswith(tail[: len(LINUX_PING_TAIL)]):
+            return True
+    return False
+
+
+def extract_icmp(packets: list[Packet], seen: set[bytes]) -> list[Extracted]:
+    """The data smuggled in ICMP (ping) packets, one blob per direction.
+
+    An echo request carries free data, and an exfiltration challenge puts its
+    file there - a chunk per packet, or one character per packet. The payloads
+    of a flow are joined in packet order. Stock ping filler (the Windows
+    alphabet, the Linux counter) is left out, and a flow made only of it is
+    dropped. When every payload is one byte repeated ("AAAA...", "BBBB..."),
+    that byte is the message: the one-byte-per-packet view is added too.
+    """
+    flows: dict[tuple[str, str, int], list[Packet]] = {}
+    for packet in packets:
+        if packet.protocol != "icmp" or packet.icmp_type not in (0, 8, 128, 129):
+            continue
+        flows.setdefault((packet.source, packet.destination, packet.icmp_type), []).append(packet)
+    found: list[Extracted] = []
+    for (source, destination, icmp_type), flow in flows.items():
+        payloads = [packet.payload for packet in flow if not _is_stock_ping(packet.payload)]
+        if not payloads:
+            continue
+        kind = "echo-request" if icmp_type in (8, 128) else "echo-reply"
+        name = f"icmp_{kind}_{source}-{destination}".replace(":", "_")
+        blob = b"".join(payloads)
+        if len(blob) >= 4 and blob not in seen:
+            seen.add(blob)
+            found.append(
+                Extracted(
+                    kind="icmp-payload",
+                    name=f"{name}.bin",
+                    data=blob[:MAX_OBJECT],
+                    description=(
+                        f"ICMP {kind} data {source} -> {destination} "
+                        f"({len(payloads)} packet(s), {len(blob)} bytes)"
+                    ),
+                    source=source,
+                    destination=destination,
+                )
+            )
+        if len(payloads) >= 4 and all(len(set(data)) == 1 for data in payloads):
+            letters = bytes(data[0] for data in payloads)
+            if letters not in seen:
+                seen.add(letters)
+                found.append(
+                    Extracted(
+                        kind="icmp-payload",
+                        name=f"{name}_one-byte-per-packet.bin",
+                        data=letters,
+                        description=(
+                            f"ICMP {kind} {source} -> {destination}: each packet's data is "
+                            "one repeated byte, read one byte per packet"
+                        ),
+                        source=source,
+                        destination=destination,
+                    )
+                )
+    return found
 
 
 def _evil_bit_channel(

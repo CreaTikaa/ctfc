@@ -167,9 +167,96 @@ def _chance_body(flag: str) -> bool:
         return True
     if len(alnum) >= 6 and vowelish <= len(alnum) // 5:
         return True
-    if "_" in body:
+    if "_" in body and len(body) >= 8:
         return False  # an underscored, vowel-bearing body is a real multi-word flag
+    # (a short underscored body under a generic prefix - "LD{4D_usa1}",
+    # "VV{uR_z}" - is what decoding chains make by chance: judged by length)
     return len(body) < SHORT_BODY
+
+
+# --- Placeholder flags -------------------------------------------------------
+# A challenge's own source ships a stand-in flag (CCSC{fake_dummy_flag_1},
+# corctf{t3st_fl4g}, actf{REDACTED}) where the server puts the real one. It has
+# the right prefix and a perfect shape, so it used to stop the search as "the
+# answer". It is never the answer: it is kept as a lead, and the walk goes on.
+PLACEHOLDER_STRENGTH = 0.3
+LEET_TO_LETTER = str.maketrans("0134578@$", "oieastbas")
+PLACEHOLDER_WORDS = frozenset(
+    "test testing testflag flagtest fake fakeflag dummy dummyflag example exampleflag "
+    "sample sampleflag placeholder redacted censored flag flaghere yourflaghere "
+    "yourflag sometext realflag realflaghere notarealflag notaflag nottheflag "
+    "nottherealflag thisisnottheflag thisisnotaflag thisisafakeflag thisisatestflag "
+    "thisisaflag fakeflaghere flagplaceholder testingflag notreal xxx todo".split()
+)
+PLACEHOLDER_START = ("fake", "dummy", "redacted", "placeholder", "testflag", "exampleflag")
+PLACEHOLDER_INSIDE = ("fakeflag", "dummyflag", "nottheflag", "notarealflag", "notaflag",
+                      "testflag", "exampleflag", "flagplaceholder", "nottherealflag")
+
+
+def is_placeholder(flag: str) -> bool:
+    """Is this a stand-in flag (test_flag, REDACTED, fake_dummy_flag_1, xxxxxx)?
+
+    The body is lowercased, leet digits are read back as letters (t3st_fl4g ->
+    test_flag) and everything but letters is dropped, then compared with the
+    stock stand-ins. A body made of one repeated character (xxxxxxxx) counts too.
+    """
+    if "{" not in flag:
+        return False
+    body = flag[flag.index("{") + 1 : -1]
+    letters = "".join(ch for ch in body.lower().translate(LEET_TO_LETTER) if ch.isalpha())
+    if not body.strip() or (len(set(body)) == 1 and len(body) >= 3):
+        return True
+    if letters in PLACEHOLDER_WORDS:
+        return True
+    return letters.startswith(PLACEHOLDER_START) or any(w in letters for w in PLACEHOLDER_INSIDE)
+
+
+# --- Does a flag body read as (leet) words? ---------------------------------
+# The 300 commonest letter pairs of English words (counted over the system
+# word list /usr/share/dict/american-english). A real flag body, once its leet
+# digits are read as letters (w1ll_y0u -> will_you), has nearly all its pairs in
+# this set (0.82 to 1.0 on 18 real flags); the text a guessed XOR key or a
+# brute-forced classical cipher produces around a forced "flag{" does not
+# ("flag{vho_veehs_bwljvhns}": 0.5).
+COMMON_PAIRS = frozenset(
+    """ab ac ad ae af ag ah ai ak al am an ap ar as at au av aw ay az ba bb be bi bl bo br bs bu
+    ca cc
+ce ch ci ck cl co cr cs ct cu cy da dd de dg di dl do dr ds du dy ea eb ec ed ee ef eg eh ei el
+em en eo ep eq er es et eu ev ew ex ey fa fe ff fi fl fo fr ft fu ga ge gg gh gi gl gn go gr gs
+gu gy ha he hi ho hr hs ht hu hy ia ib ic id ie if ig ik il im in io ip ir is it iu iv iz ja je
+jo ju ka ke ki kl kn ks la ld le li lk ll lm lo ls lt lu lv ly ma mb me mi mm mo mp ms mu na nc
+nd ne nf ng ni nk nl nn no ns nt nu nv ny oa ob oc od oe of og oi ok ol om on oo op or os ot ou
+ov ow ox oy pa pe ph pi pl po pp pr ps pt pu qu ra rb rc rd re rf rg ri rk rl rm rn ro rp rr rs
+rt ru rv ry sa sc se sh si sk sl sm sn so sp sq ss st su sw sy ta tc te th ti tl to tr ts tt tu
+tw ty ua ub uc ud ue uf ug ui ul um un up ur us ut va ve vi vo wa we wh wi wn wo wr ws xe xi xp
+xt ya ye yi yl ym yn yp ys za ze zi""".split()
+)
+WORDY_PAIRS_MIN = 6  # fewer letter pairs than this: too short to judge, so not wordy
+WORDY_RATE = 0.78
+
+
+def wordy_body(flag: str) -> bool:
+    """Does the body read as words once leet is undone (or is it a long hash)?
+
+    Used where the prefix itself proves nothing: after a guessed XOR key or a
+    classical cipher found with "flag{" as a crib, the prefix is there because
+    the search put it there. Only the body can then say whether it is a flag.
+    """
+    body = flag[flag.index("{") + 1 : -1]
+    if len(body) >= 16 and all(ch in "0123456789abcdefABCDEF" for ch in body):
+        return True  # a hash: md5/sha1 flags are common and have no words
+    # Case soup: a transposition of mixed-case text ("eLlDtWORIKNIrEeRiN") keeps
+    # English letter pairs but flips case mid-word again and again. Leet flags
+    # flip at most once or twice inside a word ("y0uR", "flaG").
+    for word in re.findall(r"[A-Za-z]{4,}", body):
+        flips = sum(a.islower() != b.islower() for a, b in zip(word, word[1:], strict=False))
+        if flips >= 4:
+            return False
+    runs = re.findall(r"[a-z]{2,}", body.lower().translate(LEET_TO_LETTER))
+    pairs = [run[i : i + 2] for run in runs for i in range(len(run) - 1)]
+    if len(pairs) < WORDY_PAIRS_MIN:
+        return False
+    return sum(pair in COMMON_PAIRS for pair in pairs) / len(pairs) >= WORDY_RATE
 
 
 def plain_hits(text: str, flagset: FlagSet) -> list[tuple[str, float, str]]:
@@ -195,6 +282,8 @@ def plain_hits(text: str, flagset: FlagSet) -> list[tuple[str, float, str]]:
                 strength = GARBLED_STRENGTH
             elif len(flag) - flag.index("{") - 2 < 3:
                 strength = min(strength, 0.85)  # very short content: could be chance
+            if is_placeholder(flag):
+                strength = min(strength, PLACEHOLDER_STRENGTH)
             hits.append((flag, strength, regex.pattern))
     return hits
 

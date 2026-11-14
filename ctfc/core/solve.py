@@ -37,6 +37,7 @@ from __future__ import annotations
 import hashlib
 import re
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from ctfc.core import gpp, nextsteps, readers
 from ctfc.core.auto import auto_decode
@@ -50,7 +51,9 @@ from ctfc.core.flags import (
     assemble,
     decode_run,
     hunt,
+    is_placeholder,
     rate,
+    wordy_body,
 )
 from ctfc.core.magic import match_signature
 from ctfc.core.scoring import printable_ratio, score
@@ -77,6 +80,17 @@ MAX_BLOBS = 10
 TEXT_PIECE = 0.85  # printable ratio above which a piece is "a text"
 # A flag-shaped string that may be chance: shown first among the leads.
 WEAK_FLAG_LEAD = 0.6
+PLACEHOLDER_LEAD = 0.5
+# Steps of a decoding chain whose key was SEARCHED for (and so chosen because
+# it made the output look good): a flag shape after one of these is evidence
+# only if its body reads as words. base64, hex, url, rot13, zlib... are exact.
+GUESSED_STEPS = ("xor(", "affine(", "railfence(", "vigenere(", "caesar(", "beaufort(",
+                 "scytale(", "substitution(", "columnar(")
+
+
+def guessed_key(origin: str) -> bool:
+    """Was this piece produced by a decoding chain with a searched-for key?"""
+    return origin.startswith("decoded:") and any(step in origin for step in GUESSED_STEPS)
 # The base64 of the flag prefix, with no whole flag behind it.
 PREFIX_LEAD = 0.7
 # A password decrypted from a GPP cpassword.
@@ -228,6 +242,50 @@ class Visit:
     candidates: list = field(default_factory=list)  # `auto` results, best first
 
 
+# Seconds kept back for the rest of the walk when a word list is run on a ZIP.
+WORDLIST_RESERVE = 3.0
+
+
+def _zip_from_wordlist(piece, wordlist: str, budget: Budget, notes: list[str]) -> list:
+    """Run the configured word list (rockyou) on a ZipCrypto archive, for the time left.
+
+    The reader already tried ctfc's 10 000 common passwords; this goes on with
+    the user's own list, streamed line by line (rockyou is 14 million lines), at
+    about 80 000 words a second on the 12-byte header check. A hit opens every
+    member, which the walk then follows like any other.
+    """
+    from ctfc.core import zipinfo
+
+    try:
+        report = zipinfo.analyse(piece.data)
+    except zipinfo.ZipError:
+        return []
+    if not any(entry.zipcrypto for entry in report.entries):
+        return []
+    seconds = budget.max_seconds - budget.elapsed() - WORDLIST_RESERVE
+    if seconds < 1:
+        return []
+    try:
+        handle = open(Path(wordlist).expanduser(), "rb")  # noqa: SIM115 - closed below
+    except OSError:
+        return []
+    with handle:
+        words = (line.rstrip(b"\r\n") for line in handle)
+        own = Budget(max_attempts=50_000_000, max_seconds=seconds, cancel_event=budget.cancel_event)
+        password = zipinfo.quick_crack(piece.data, report, words, own)
+    tried = f"{own.attempts} word(s) of {Path(wordlist).name}"
+    if password is None:
+        notes.append(f"{piece.name}: ZIP password not in the first {tried}")
+        return []
+    shown = password.decode("utf-8", "replace")
+    notes.append(f"{piece.name}: the ZIP password is {shown!r} (found after {tried})")
+    command = f"unzip -j -P '{shown}' -d {{dir}} {{file}}"
+    return [
+        (readers.Child(name, f"ZIP member, password {shown!r}", content), command, command)
+        for name, content in zipinfo.open_all(piece.data, password, readers.CHILD_MAX_SIZE)
+    ]
+
+
 def walk(
     data: bytes,
     path: str = "file",
@@ -237,6 +295,7 @@ def walk(
     max_pieces: int = MAX_PIECES,
     decode: bool = True,
     notes: list[str] | None = None,
+    wordlist: str = "",
 ):
     """Yield every piece of a file, breadth first, under one shared budget.
 
@@ -251,6 +310,9 @@ def walk(
 
     `notes` is appended to (rather than returned) when the walk stops short, so
     that a caller which breaks out early still has the reason.
+
+    `wordlist` (a path, e.g. rockyou.txt) is tried on a ZipCrypto archive whose
+    password is not among ctfc's 10 000 embedded ones, for the time left.
     """
     budget = budget or Budget(max_attempts=200_000, max_seconds=20)
     notes = notes if notes is not None else []
@@ -284,6 +346,9 @@ def walk(
                 (child, child.extract or visit.opened.extract, visit.opened.command)
                 for child in visit.opened.children
             ]
+            cracked = any("password" in child.origin for child in visit.opened.children)
+            if visit.reader == "zip" and wordlist and not cracked:
+                children += _zip_from_wordlist(piece, wordlist, budget, notes)
 
         # The carver, for what hides after the end of a file. It runs on the
         # formats that are routinely used as a wrapper too, not only on the
@@ -435,7 +500,8 @@ def solve(
 
     With no flag, the report also carries `next_steps`: what was found, what it
     usually means, and the ctfc commands and external tools to try. `offline`,
-    `tool_paths`, `wordlist` and `cyberchef_url` only shape those commands.
+    `tool_paths` and `cyberchef_url` only shape those commands; `wordlist` is
+    printed in them too, and tried for real on a ZipCrypto archive (time left).
     """
     budget = budget or Budget(max_attempts=200_000, max_seconds=20)
     report = SolveReport(path=path, size=len(data))
@@ -449,6 +515,7 @@ def solve(
         budget=budget,
         max_depth=max_depth,
         notes=report.notes,
+        wordlist=wordlist,
     ):
         piece, opened = visit.piece, visit.opened
         report.pieces += 1
@@ -475,6 +542,35 @@ def solve(
                         score=PREFIX_LEAD,
                         command=f"ctfc auto {piece.disk}",
                         preview=hit.encoded[:120],
+                    )
+                )
+                continue
+            if is_placeholder(hit.text):
+                # CCSC{fake_dummy_flag_1}: the stand-in a challenge's source
+                # ships. Never the answer - the real one is elsewhere, go on.
+                leads.append(
+                    Lead(
+                        title=f"{piece.name}: placeholder flag {hit.text[:60]}",
+                        why="a stand-in flag (test/fake/REDACTED): the real one is on the "
+                        "server or elsewhere in the files",
+                        score=PLACEHOLDER_LEAD,
+                        command=f"ctfc detect {piece.disk}",
+                        preview=hit.text[:120],
+                    )
+                )
+                continue
+            if guessed_key(piece.origin) and not wordy_body(hit.text):
+                # "LD{4D_usa1}" after rot47 -> xor(key='TUTIUR') -> xor(0x40): the
+                # search chose the key that makes a flag shape appear, so the shape
+                # proves nothing; only a body that reads as words would.
+                leads.append(
+                    Lead(
+                        title=f"{piece.name}: flag-shaped {hit.text[:60]}",
+                        why="only appears after a guessed key, and its body does not read "
+                        "as words: likely chance",
+                        score=WEAK_FLAG_LEAD,
+                        command=f"ctfc detect {piece.disk}",
+                        preview=hit.text[:120],
                     )
                 )
                 continue

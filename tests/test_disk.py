@@ -92,3 +92,28 @@ def test_file_list_matches_tsk():
     tsk_files = {line.split("\t")[-1] for line in out.splitlines() if line.startswith("r/r")}
     ours = {f.path for f in disk.analyse((FIXTURES / "disk_fat12.img").read_bytes()).files}
     assert ours <= tsk_files
+
+
+def test_an_e01_evidence_file_is_claimed_as_a_disk():
+    # disk_fat12.E01 = disk_fat12.img written by libewf's own `ewfacquire -u -c
+    # deflate:fast` (an external tool: the format is not ours to get wrong).
+    data = (FIXTURES / "disk_fat12.E01").read_bytes()
+    assert disk.is_ewf(data)
+    assert readers.sniff(data) == "disk"
+
+
+def _tsk_reads_ewf() -> bool:
+    import subprocess
+
+    if not HAS_TSK:
+        return False
+    listing = subprocess.run(["fls", "-i", "list"], capture_output=True, text=True, check=False)
+    return "ewf" in (listing.stdout + listing.stderr)
+
+
+@pytest.mark.skipif(not _tsk_reads_ewf(), reason="The Sleuth Kit not built with libewf")
+def test_solve_reads_the_files_of_an_e01():
+    from ctfc.core.solve import solve
+
+    report = solve((FIXTURES / "disk_fat12.E01").read_bytes(), path="evidence.E01")
+    assert "CYBN{fat12_disk_reader}" in {flag.text for flag in report.flags}

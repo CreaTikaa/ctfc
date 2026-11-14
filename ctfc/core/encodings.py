@@ -535,6 +535,23 @@ def utf16le_decode(data: bytes) -> bytes:
         raise DecodeError(str(exc)) from exc
 
 
+def ducky_ok(data: bytes) -> bool:
+    """An encoded USB Rubber Ducky payload (inject.bin): (keycode, modifier) pairs."""
+    from ctfc.core.usb import looks_like_ducky
+
+    return looks_like_ducky(data)
+
+
+def ducky_decode(data: bytes) -> bytes:
+    """The keystrokes a Rubber Ducky inject.bin types, as text (see core/usb.py)."""
+    from ctfc.core.usb import decode_ducky
+
+    text, _notes = decode_ducky(data)
+    if not text.strip():
+        raise DecodeError("the payload types no printable text")
+    return text.encode("utf-8")
+
+
 def utf16_byteswap_ok(data: bytes) -> bool:
     """ASCII read with the wrong UTF-16 endianness turns into mostly-CJK text.
 
@@ -1746,6 +1763,14 @@ DECODERS: list[Decoder] = [
         applicable=utf16le_ok,
         python='data = data.decode("utf-16-le").encode("utf-8")',
         cyberchef="Decode_text('UTF-16LE (1200)')",
+    ),
+    Decoder(
+        name="ducky",
+        label="USB Rubber Ducky payload (inject.bin) -> the keystrokes it types",
+        decode=ducky_decode,
+        applicable=ducky_ok,
+        python="from ctfc.core.usb import decode_ducky\ndata = decode_ducky(data)[0].encode()",
+        helper="# or: python mallard -f inject.bin  (github.com/dagonis/Mallard)",
     ),
     Decoder(
         name="utf16_byteswap",

@@ -394,6 +394,74 @@ def _open_with(data: bytes, entry_name: str, password: bytes) -> bytes | None:
         return None
 
 
+def _encryption_header(data: bytes, entry: Entry) -> tuple[bytes, tuple[bytes, ...]] | None:
+    """The 12-byte ZipCrypto header of an entry, and the byte(s) it must end with.
+
+    The header sits right after the local file header (30 bytes + name + extra).
+    Its last byte, once decrypted, is the high byte of the CRC-32 - or, when the
+    CRC is written after the data (flag bit 3), the high byte of the DOS time.
+    """
+    start = entry.local_offset
+    if data[start : start + 4] != b"PK\x03\x04":
+        return None
+    name_length, extra_length = _u16(data, start + 26), _u16(data, start + 28)
+    header_at = start + 30 + name_length + extra_length
+    header = data[header_at : header_at + 12]
+    if len(header) < 12:
+        return None
+    checks = [bytes([(entry.crc >> 24) & 0xFF])]
+    if entry.flags & 0x0008:
+        checks.append(bytes([_u16(data, start + 10) >> 8]))  # the DOS time, high byte
+    return header, tuple(checks)
+
+
+def quick_crack(
+    data: bytes, report: ZipReport, words: tuple[bytes, ...], budget: Budget | None = None
+) -> bytes | None:
+    """Try a password list against a ZipCrypto archive, fast; the password or None.
+
+    ZipCrypto lets a password be ruled out from the 12-byte header alone: one
+    word in 256 survives that check, and only those are tried for real (zipfile
+    decrypts, inflates and checks the CRC-32). A 10 000-word list takes well
+    under a second this way. WinZip AES entries are not tried (not openable).
+    """
+    from ctfc.core.zipcrypto import header_matches
+
+    encrypted = [entry for entry in report.entries if entry.zipcrypto]
+    if not encrypted:
+        return None
+    target = min(encrypted, key=lambda entry: entry.compressed_size or 1 << 62)
+    found = _encryption_header(data, target)
+    if found is None:
+        return None
+    header, checks = found
+    for word in words:
+        if budget is not None and not budget.spend():
+            return None
+        if header_matches(header, word, checks) and _open_with(data, target.name, word) is not None:
+            report.password = word.decode("utf-8", "replace")
+            report.opened_entry = target.name
+            return word
+    return None
+
+
+def open_all(data: bytes, password: bytes, limit: int) -> list[tuple[str, bytes]]:
+    """Every file of an encrypted archive, read with a known password."""
+    out: list[tuple[str, bytes]] = []
+    try:
+        with zipfile.ZipFile(io.BytesIO(data)) as archive:
+            archive.setpassword(password)
+            for info in archive.infolist():
+                if info.is_dir() or info.file_size > limit:
+                    continue
+                content = _open_with(data, info.filename, password)
+                if content is not None:
+                    out.append((info.filename, content))
+    except (zipfile.BadZipFile, OSError, ValueError):
+        return out
+    return out
+
+
 def crack_with_wordlist(
     data: bytes,
     report: ZipReport,

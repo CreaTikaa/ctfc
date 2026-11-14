@@ -517,10 +517,32 @@ def _open_zip(data: bytes, flagset: FlagSet | None, path: str) -> Opened:
         if entry.uncompressed_size > CHILD_MAX_SIZE and not entry.encrypted
     ]
     if encrypted:
-        notes.append(
-            f"{len(encrypted)} encrypted entr(ies): a password is needed, "
-            "and the commands below say which tool breaks this flavour"
+        # The usual CTF password is a common one: try the embedded list (the
+        # 10 000 commonest rockyou passwords) - well under a second on ZipCrypto.
+        from ctfc.core.datafiles import load_passwords
+
+        password = zipinfo.quick_crack(
+            data, report, load_passwords(), Budget(max_attempts=20_000, max_seconds=3)
         )
+        if password is not None:
+            shown = password.decode("utf-8", "replace")
+            notes.append(f"the ZIP password is {shown!r} (in ctfc's common-password list)")
+            for name, content in zipinfo.open_all(data, password, CHILD_MAX_SIZE):
+                children.append(
+                    Child(
+                        name,
+                        f"ZIP member, password {shown!r}",
+                        content,
+                        extract=f"unzip -j -P '{shown}' -d {{dir}} {{file}}",
+                    )
+                )
+            report.commands.insert(0, f"unzip -P '{shown}' {{file}}")
+        else:
+            notes.append(
+                f"{len(encrypted)} encrypted entr(ies): a password is needed (not in ctfc's "
+                "10 000 common passwords), and the commands below say which tool breaks "
+                "this flavour"
+            )
     return Opened(
         detail=f"ZIP, {len(report.entries)} entr(ies)",
         children=_keep(children),

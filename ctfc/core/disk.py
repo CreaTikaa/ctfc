@@ -137,12 +137,25 @@ def _has_partition_table(data: bytes) -> bool:
     return data[0x200:0x208] == b"EFI PART"
 
 
+# An EnCase / FTK Imager evidence file (.E01, "Expert Witness Format"): the
+# disk is cut in compressed chunks with a case header. The Sleuth Kit reads it
+# directly when it is built with libewf (`fls -i list` shows "ewf").
+EWF_MAGIC = b"EVF\x09\x0d\x0a\xff\x00"
+
+
+def is_ewf(data: bytes) -> bool:
+    """Is this an E01 (Expert Witness Format) evidence file?"""
+    return data[:8] == EWF_MAGIC
+
+
 def looks_like_disk_image(data: bytes) -> bool:
     """True when the bytes look like a partitioned image or a bare filesystem.
 
     ISO 9660 is left to the dedicated reader (it is handled offline), so this
-    does not claim it.
+    does not claim it. An E01 evidence file is claimed too: TSK opens it.
     """
+    if is_ewf(data):
+        return True
     if len(data) < 1024:
         return False
     if data[EXT_MAGIC_OFFSET : EXT_MAGIC_OFFSET + 2] == b"\x53\xef":
@@ -251,7 +264,8 @@ def analyse(data: bytes, max_files: int = MAX_FILES, max_seconds: float = 90.0) 
         )
     report = DiskReport()
     started = time.monotonic()
-    with tempfile.NamedTemporaryFile(suffix=".img") as handle:
+    # TSK picks the image format from the content, but libewf wants an .E01 name.
+    with tempfile.NamedTemporaryFile(suffix=".E01" if is_ewf(data) else ".img") as handle:
         handle.write(data)
         handle.flush()
         image = handle.name
