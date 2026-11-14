@@ -742,6 +742,15 @@ def _open_stego(data: bytes, flagset: FlagSet | None, path: str) -> Opened:
         detail=f"{report.kind} {report.width}x{report.height}",
         children=_keep(children),
         notes=list(report.notes),
+        # When nothing comes out of the pixels, the flag is usually a visual
+        # stego that only a human eye or the dedicated tools resolve. ctfc names
+        # them rather than stopping silently (these run offline on the file).
+        commands=[
+            "zsteg -a {file}",
+            "stegsolve {file}",
+            "steghide extract -sf {file}",
+            "exiftool {file}",
+        ],
     )
 
 
@@ -762,6 +771,7 @@ def _open_exif(data: bytes, flagset: FlagSet | None, path: str) -> Opened:
         flags=flags,
         notes=list(report.notes),
         events=events,
+        commands=["exiftool {file}"],
     )
 
 
@@ -792,6 +802,13 @@ def _open_wav(data: bytes, flagset: FlagSet | None, path: str) -> Opened:
         f"{report.rate} Hz, {report.seconds:.1f} s",
         children=_keep(children),
         notes=list(report.notes),
+        # Audio stego ctfc does not read from the samples: a picture in the
+        # spectrogram (SSTV/drawn), a tone code (Morse/DTMF/AFSK). Name the tools.
+        commands=[
+            "sox {file} -n spectrogram -o spectrogram.png",
+            "multimon-ng -a MORSE_CW -a DTMF -a AFSK1200 {file}",
+            "audacity {file}",
+        ],
     )
 
 

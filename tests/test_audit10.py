@@ -228,3 +228,32 @@ def test_http_206_ranges_are_put_back_together():
     rebuilt = [o for o in report.objects if o.kind == "http-ranges"]
     assert rebuilt and rebuilt[0].data == secret
     assert [f.text for f in solve(_capture(frames), "splitted.pcap").flags] == [FLAG]
+
+
+# ---------------------------------------------------------------- media: name the stego tool
+
+def test_a_flagless_image_names_the_stego_tools():
+    """A PNG with no readable payload must still point at zsteg/stegsolve, not stop silent."""
+    from pathlib import Path
+
+    png = Path(__file__).parent / "fixtures" / "png_with_zip.png"
+    # (png_with_zip actually hides a zip; use a plain solid PNG with no payload)
+    import struct
+    import zlib as _zlib
+
+    def _chunk(kind: bytes, body: bytes) -> bytes:
+        return struct.pack(">I", len(body)) + kind + body + struct.pack(
+            ">I", _zlib.crc32(kind + body) & 0xFFFFFFFF
+        )
+
+    raw = b"".join(b"\x00" + b"\x00\x00\x00" * 8 for _ in range(8))  # 8x8 black, filter byte
+    data = (
+        b"\x89PNG\r\n\x1a\n"
+        + _chunk(b"IHDR", struct.pack(">IIBBBBB", 8, 8, 8, 2, 0, 0, 0))
+        + _chunk(b"IDAT", _zlib.compress(raw))
+        + _chunk(b"IEND", b"")
+    )
+    report = solve(data, "stego.png")
+    assert not report.flags
+    blob = repr(report.to_dict() if hasattr(report, "to_dict") else report.__dict__)
+    assert "zsteg" in blob or "stegsolve" in blob, blob[:400]
