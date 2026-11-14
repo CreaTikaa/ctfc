@@ -234,10 +234,6 @@ def test_http_206_ranges_are_put_back_together():
 
 def test_a_flagless_image_names_the_stego_tools():
     """A PNG with no readable payload must still point at zsteg/stegsolve, not stop silent."""
-    from pathlib import Path
-
-    png = Path(__file__).parent / "fixtures" / "png_with_zip.png"
-    # (png_with_zip actually hides a zip; use a plain solid PNG with no payload)
     import struct
     import zlib as _zlib
 
