@@ -711,6 +711,37 @@ def solve(
                 f"({visit.carved.detail})"
             )
 
+        # 2c. A flag sitting in a decoded output - caught here, now, rather than
+        #     waiting for the walk to visit that decoded child (which, on a big
+        #     input like a whole git repo, the budget may never reach). An exact
+        #     decode (base64/zlib/hex) is trusted; a searched/blind chain must
+        #     clear the same guard as any guessed-key hit.
+        for candidate in visit.candidates:
+            if _searched_chain(candidate.label):
+                continue  # a brute XOR / rail-fence output is handled below, as a
+                # capped lead and via the child-visit guard - not promoted here,
+                # where a scrambled placeholder could sneak through.
+            for hit in hunt(candidate.data, flagset).flags:
+                if hit.how == "base64-prefix" or is_placeholder(hit.text):
+                    continue
+                if hit.strength <= WEAK_GENERIC_STRENGTH:
+                    continue
+                if not any(f.text == hit.text for f in report.flags):
+                    report.flags.append(
+                        FlagFound(
+                            text=hit.text,
+                            where=f"{piece.name} > decoded: {candidate.label}",
+                            how=f"decoded: {candidate.label}",
+                            strength=hit.strength,
+                            trail=[*piece.trail, f"ctfc auto {piece.disk}"],
+                        )
+                    )
+                    report.steps.append(
+                        f"{piece.name}: {candidate.label} -> the flag is in there"
+                    )
+        if report.flags:
+            break
+
         # 3. The decoding chains.
         for candidate in visit.candidates[:2]:
             if candidate.score < LEAD_SCORE:
