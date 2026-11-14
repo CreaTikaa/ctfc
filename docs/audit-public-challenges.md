@@ -598,3 +598,28 @@ connus du corpus notés forts (vs ~69 %).
 (gitignorés, dans `corpus/`) : `ground_truth.py`, `grade3.py`, `harness_solve.py`
 (choix du handout sans fuite, `SALVO_SCOPE=in|maybe`), `classify_miss.py`,
 `miss_report.py` (la liste des non-flagués en 3 catégories).
+
+## Lot S — supprimer les faux leads classical, capter les flags décodés (2026-11-14)
+
+Suite de l'objectif « résoudre les buckets de la catégorie 1 » du dixième audit.
+
+- **Faux leads classical/transposition** (les ~313 « pistes à vérifier ») : un
+  caesar / rail-fence / vigenère / xor-brute sur du code source lisait comme du
+  vague-anglais par hasard et plafonnait la liste de leads à 0.8-0.9, comptant
+  comme quasi-résolution. Désormais `_classical_outputs` ne garde une décryption
+  que si elle révèle un flag ou transforme une entrée vraiment illisible (bigram
+  bas) en langue claire ; et `solve` plafonne à `PLAIN_TEXT_CAP` le lead
+  d'affichage de toute chaîne contenant une étape **cherchée/aveugle** (xor,
+  caesar, rail-fence, rot-N…). Un vrai flag classical reste capté à pleine force
+  via la pièce enfant décodée (test caesar-de-CYBN). Effet : « TRÈS PROCHE » 80→48.
+- **Flag dans une sortie décodée** (les 71 encoding-chain) : un flag en clair
+  dans un blob base64/zlib/gzip/hex (objet git, config décodée) n'était trouvé
+  qu'à la visite — tardive — de la pièce enfant, que le budget n'atteint pas
+  toujours sur un gros input (dépôt git entier). Les candidats de décodage sont
+  maintenant chassés immédiatement : un décodage **exact** est de confiance, un
+  placeholder ou une chaîne cherchée est écartée (pas de `lactf{fete_flag}`
+  railfencé). Flague LA CTF 2024 my-smart-git.
+
+**Mesure in-scope (lot R → lot S)** : **flag 36 → 43 (+7), 0 régression**,
+`flag+flag-+flag~` 51,3 % → 51,8 % du non-out. Diff challenge/challenge :
+10 améliorés, 0 régressé. 1884 tests, ruff clean.
