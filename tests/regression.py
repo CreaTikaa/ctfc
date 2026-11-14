@@ -58,11 +58,24 @@ def solve(path: Path, seconds: int) -> tuple[list[str], float, bool]:
     return sorted(hit["text"] for hit in report.get("flags", [])), wall, False
 
 
-def run(seconds: int) -> dict[str, dict]:
-    """Solve every corpus file and return {relpath: {flags, wall}}."""
+def run(seconds: int, only: set[str] | None = None) -> dict[str, dict]:
+    """Solve corpus files and return {relpath: {flags, wall}}.
+
+    `only` restricts the run to those relpaths. When a baseline already exists we
+    pass its keys here, so the guard stays fast and meaningful even though
+    `corpus/challenges/` now also holds a large downloaded corpus (1500+ files);
+    replaying all of those is not the point and would take hours. `--update`
+    passes `only=None` to rescan everything and record a fresh baseline.
+    """
     result: dict[str, dict] = {}
-    files = sorted(p for p in CORPUS.rglob("*") if p.is_file() and p.name != "README.md")
+    if only is not None:
+        files = sorted(CORPUS / rel for rel in only)
+    else:
+        files = sorted(p for p in CORPUS.rglob("*") if p.is_file() and p.name != "README.md")
     for path in files:
+        if not path.is_file():
+            print(f"  (missing)  {path.relative_to(CORPUS)}", flush=True)
+            continue
         if path.stat().st_size == 0:
             continue
         flags, wall, timed_out = solve(path, seconds)
@@ -109,16 +122,21 @@ def main() -> int:
         print(f"no corpus at {CORPUS}: nothing to replay (this is normal on a fresh clone)")
         return 0
 
-    print(f"replaying {CORPUS} with a {args.seconds}s budget...")
-    current = run(args.seconds)
+    updating = args.update or not args.baseline.exists()
+    only = None
+    if not updating:
+        baseline = json.loads(args.baseline.read_text())
+        only = set(baseline)  # replay just the baseline's files, not the whole corpus
+    print(f"replaying {CORPUS} with a {args.seconds}s budget"
+          f"{f' ({len(only)} baseline files)' if only else ''}...")
+    current = run(args.seconds, only)
 
-    if args.update or not args.baseline.exists():
+    if updating:
         args.baseline.write_text(json.dumps(current, indent=1, sort_keys=True))
         total = sum(len(v["flags"]) for v in current.values())
         print(f"\nbaseline written to {args.baseline}: {len(current)} files, {total} flag(s)")
         return 0
 
-    baseline = json.loads(args.baseline.read_text())
     code = compare(baseline, current, args.seconds)
     print("\nregression: FAIL (see above)" if code else "\nregression: OK (no flag lost, no hang)")
     return code

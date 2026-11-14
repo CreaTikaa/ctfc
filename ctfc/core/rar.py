@@ -71,6 +71,20 @@ R5_FILE_UNKNOWN_SIZE = 0x0008
 R5_EXTRA_ENCRYPTION = 1
 R5_METHODS = {0: "stored", 1: "fastest", 2: "fast", 3: "normal", 4: "good", 5: "best"}
 MAX_ENTRIES = 100_000
+# A stored member bigger than this is not sliced into memory (the walk reads the
+# archive from disk anyway); the header still lists it.
+MAX_STORED_EXTRACT = 64 << 20
+
+
+def _stored_bytes(
+    data: bytes, start: int, length: int, method: str, encrypted: bool
+) -> bytes | None:
+    """The verbatim bytes of a STORED, unencrypted entry, if they fit and are there."""
+    if method != "stored" or encrypted or length <= 0 or length > MAX_STORED_EXTRACT:
+        return None
+    if start < 0 or start + length > len(data):
+        return None
+    return data[start : start + length]
 
 
 class RarError(FormatError):
@@ -90,6 +104,10 @@ class RarEntry:
     crc: int = 0
     solid: bool = False
     notes: list[str] = field(default_factory=list)
+    # The member's bytes, but ONLY when they are stored uncompressed: those are
+    # in the file verbatim, so slicing them out needs no decompressor. Anything
+    # compressed stays None - that is unrar's job (see the module docstring).
+    data: bytes | None = None
 
 
 @dataclass
@@ -194,7 +212,13 @@ def read_rar4(data: bytes) -> RarArchive:
                 )
                 break
         elif kind == R4_FILE:
-            archive.entries.append(_read_rar4_file(data, position, flags, header_size))
+            entry = _read_rar4_file(data, position, flags, header_size)
+            # The packed data follows the header; for a stored entry it IS the
+            # file, so slice it out (no decompressor needed).
+            entry.data = _stored_bytes(
+                data, position + header_size, data_size, entry.method, entry.encrypted
+            )
+            archive.entries.append(entry)
             if len(archive.entries) > MAX_ENTRIES:
                 raise RarError("more entries than any real archive has")
         elif kind == R4_END:
@@ -278,6 +302,11 @@ def read_rar5(data: bytes) -> RarArchive:
             break  # every header after this one is AES-encrypted
         if kind in (R5_FILE, R5_SERVICE):
             entry = _read_rar5_file(data, at, data_size, header_end, extra_size)
+            # The packed data follows the header (at header_end); for a stored
+            # entry it is the file itself.
+            entry.data = _stored_bytes(
+                data, header_end, data_size, entry.method, entry.encrypted
+            )
             if kind == R5_FILE:
                 archive.entries.append(entry)
             elif entry.name == "CMT":

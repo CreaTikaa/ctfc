@@ -184,6 +184,16 @@ def test_rar4_entries(fixture_bytes):
     assert [entry.name for entry in report.entries] == ["flag.txt", "notes.txt"]
     assert report.entries[0].method == "stored"
     assert not report.any_encrypted
+    # stored entries are sliced out verbatim (no unrar needed) and searched
+    assert report.entries[0].data is not None
+    assert any("CYBN{" in (entry.data or b"").decode("latin-1") for entry in report.entries)
+    assert any("CYBN{" in flag for flag in report.flags)
+
+
+def test_rar5_stored_bytes_are_extracted(fixture_bytes):
+    report = archive.analyse(fixture_bytes("archive_rar5_stored.rar"), "a.rar")
+    assert report.entries[0].data == b"CYBN{rar5_flag}\n"
+    assert any("CYBN{rar5_flag}" in flag for flag in report.flags)
 
 
 def test_rar4_encrypted_entry_is_flagged(fixture_bytes):

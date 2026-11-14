@@ -274,17 +274,16 @@ def _from_rar(data: bytes) -> ArchiveReport:
                 encrypted=entry.encrypted,
                 directory=entry.directory,
                 crc=entry.crc,
+                data=entry.data,
                 notes=list(entry.notes),
                 content_expected=not entry.directory,
             )
         )
-    stored = [
-        entry for entry in archive.entries if entry.method == "stored" and not entry.encrypted
-    ]
+    stored = [entry for entry in archive.entries if entry.data is not None]
     if stored:
         report.notes.append(
-            f"{len(stored)} entry/entries are stored uncompressed, so their bytes are in "
-            "the file as they are: `ctfc detect` on the archive finds them, and `strings` works"
+            f"{len(stored)} entry/entries are stored uncompressed: ctfc sliced their bytes "
+            "straight out of the archive and followed them (no unrar needed)"
         )
     if not report.entries and not report.encrypted_names:
         report.notes.append("no file headers: the archive may be a fragment")
