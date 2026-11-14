@@ -39,7 +39,7 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from ctfc.core import gpp, nextsteps, readers
+from ctfc.core import gpp, nextsteps, readers, stegorun
 from ctfc.core.auto import auto_decode
 from ctfc.core.budget import Budget
 from ctfc.core.flags import (
@@ -70,6 +70,12 @@ LEAD_SCORE = 0.45
 # Readers whose files often carry something appended after their own end, so
 # the carver runs on them too (a PNG with a ZIP behind it is the stock trick).
 CARVE_ALSO = {"stego", "pdf"}
+# Readers whose file is a picture or a sound: when `run_tools` is on, the
+# installed stego tools are run on it (core/stegorun.py), not just named.
+MEDIA_READERS = {"stego", "wav", "exif"}
+# At most this many media pieces have the external stego tools run on them in one
+# solve, so a gallery of images cannot turn into dozens of zsteg invocations.
+MAX_MEDIA_TOOL_RUNS = 12
 # Plain readable text is the weakest finding: cap it, like `ctfc scan` does.
 PLAIN_TEXT_CAP = 0.5
 # Embedded blobs: a base64 / hex string at least this long inside a text piece
@@ -534,6 +540,7 @@ def solve(
     tool_paths: dict | None = None,
     wordlist: str = "",
     cyberchef_url: str = "",
+    run_tools: bool = False,
 ) -> SolveReport:
     """Walk a file to the bottom and report the flag, or the best three leads.
 
@@ -541,6 +548,13 @@ def solve(
     usually means, and the ctfc commands and external tools to try. `offline`,
     `tool_paths` and `cyberchef_url` only shape those commands; `wordlist` is
     printed in them too, and tried for real on a ZipCrypto archive (time left).
+
+    `run_tools` lets a media piece (an image, a sound) go one step further than
+    naming the stego tools: ctfc *runs* the installed ones (zsteg, steghide,
+    zbarimg, exiftool, multimon-ng) on the file and reads their output back, so a
+    flag in the low bits or a decoded QR comes out as a flag, not a command to
+    copy. Off by default: running external programs is a choice the CLI/web make
+    explicit, and the corpus harness stays pure-Python.
     """
     budget = budget or Budget(max_attempts=200_000, max_seconds=20)
     from ctfc.core.flags import default_flagset
@@ -549,6 +563,10 @@ def solve(
     report = SolveReport(path=path, size=len(data))
     leads: list[Lead] = []
     observations: list[nextsteps.Observation] = []
+    # How many media pieces have had the external stego tools run on them. An
+    # archive full of images could otherwise fire zsteg/steghide on each one, and
+    # those are the slow, out-of-budget part; a handful is enough to find the flag.
+    media_tool_runs = 0
 
     for visit in walk(
         data,
@@ -676,20 +694,70 @@ def solve(
                     )
             if report.flags:
                 break
+            # A media piece whose reader found nothing in the bytes: run the
+            # installed stego tools on it and read their output, instead of only
+            # naming them. zsteg/steghide/zbarimg/multimon-ng do the exotic
+            # channel orders, the passphrase-less payload and the QR/Morse decode
+            # that ctfc does not. A flag they pull out ends the walk like any
+            # other; otherwise their decoded text becomes a lead.
+            ran_media_tools = False
+            media_budget_left = media_tool_runs < MAX_MEDIA_TOOL_RUNS
+            if run_tools and media_budget_left and visit.reader in MEDIA_READERS:
+                media_tool_runs += 1
+                media = stegorun.run_media_tools(
+                    piece.data,
+                    piece.name,
+                    visit.reader,
+                    flagset=flagset,
+                    offline=offline,
+                    tool_paths=tool_paths,
+                    wordlist=wordlist,
+                )
+                ran_media_tools = bool(media.ran)
+                report.notes.extend(media.notes)
+                if media.ran:
+                    report.steps.append(f"{piece.name}: ran {', '.join(media.ran)}")
+                for hit in media.flags:
+                    if not any(found.text == hit.text for found in report.flags):
+                        report.flags.append(
+                            FlagFound(
+                                text=hit.text,
+                                where=piece.name,
+                                how=hit.how,
+                                strength=hit.strength,
+                                trail=[*piece.trail, hit.how],
+                            )
+                        )
+                for tool_lead in media.leads:
+                    leads.append(
+                        Lead(
+                            title=f"{piece.name}: {tool_lead.tool}",
+                            why=tool_lead.summary,
+                            score=tool_lead.score,
+                            command=tool_lead.command,
+                            preview=tool_lead.preview,
+                        )
+                    )
+                if report.flags:
+                    report.steps.append(f"{piece.name}: a stego tool found the flag")
+                    break
             # A reader that found nothing to hand over still has advice: an
             # encrypted entry, a password-protected archive, a hash to crack.
-            for command in opened.commands[:2]:
-                leads.append(
-                    Lead(
-                        title=piece.name,
-                        # The reader's own note says why it suggests this; the
-                        # generic sentence is only the fallback.
-                        why=(opened.notes[0][:200] if opened.notes else "")
-                        or f"{visit.reader}: what the reader suggests next",
-                        score=0.55,
-                        command=command.replace("{file}", piece.disk),
+            # When the stego tools already ran, their leads replace these named
+            # commands (same tools, now with their output), so skip the duplicates.
+            if not ran_media_tools:
+                for command in opened.commands[:2]:
+                    leads.append(
+                        Lead(
+                            title=piece.name,
+                            # The reader's own note says why it suggests this; the
+                            # generic sentence is only the fallback.
+                            why=(opened.notes[0][:200] if opened.notes else "")
+                            or f"{visit.reader}: what the reader suggests next",
+                            score=0.55,
+                            command=command.replace("{file}", piece.disk),
+                        )
                     )
-                )
         else:
             report.steps.append(f"{piece.name}: {_describe(piece.data)}, no reader claims it")
 

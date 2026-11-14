@@ -25,7 +25,13 @@ GENERIC_STRENGTH = 0.9
 WEAK_GENERIC_STRENGTH = 0.45
 GARBLED_STRENGTH = 0.6
 # Characters seen inside real flags. Anything else ( ) ~ | ` ^ \ { suggests garbage.
-FLAG_CHARS = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-!?@.'$#&+:=,% ")
+# The body is allowed these on top of letters/digits/underscore. `|` is here
+# because flags use it as leet for a letter (w|-|4t = what, |_| = u) and it is
+# rare in the source code whose transpositions throw up false flag shapes. The
+# heavier punctuation of code - quotes, parentheses, slashes, semicolons - is
+# deliberately NOT allowed: a rail-fence of `print("x{y}")` would otherwise read
+# as a flag. The real guard is still the 75%-alnum ratio in looks_like_flag.
+FLAG_CHARS = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-!?@.'$#&+:=,% |")
 CTF_PREFIX_RE = re.compile(r"^(?:[A-Z][A-Z0-9_]{1,14}|.*(?:flag|ctf|FLAG|CTF|Flag|Ctf).*)$")
 # Tokens that are a `{` away from a flag shape in ordinary code and markup, so a
 # `word{...}` built from them is not a flag: CSS selectors, HTML tags, keywords.

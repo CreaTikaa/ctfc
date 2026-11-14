@@ -425,6 +425,11 @@ def create_app(config: Config | None = None) -> Flask:
             inp = input_from_payload(payload, decode_bare=False)
             depth = _small_int(options, "depth", 5, 1, 10)
             budget = Budget(max_attempts=1_000_000, max_seconds=_seconds(options, 20))
+            # On a media file, run the installed stego tools (zsteg/steghide/...)
+            # and read their output. The server is 127.0.0.1-only and every such
+            # tool is offline, so this stays within the offline guarantee; the
+            # front-end can switch it off with run_tools=false.
+            run_tools = str(options.get("run_tools", "true")).lower() != "false"
 
             def work_solve(budget: Budget) -> dict:
                 report = solve_file(
@@ -437,6 +442,7 @@ def create_app(config: Config | None = None) -> Flask:
                     tool_paths=config.tool_paths,
                     wordlist=find_wordlist(config),
                     cyberchef_url=toolbox.cyberchef_base(config.cyberchef_url, for_web=True),
+                    run_tools=run_tools,
                 )
                 return {"input": input_summary(inp), **report.to_dict()}
 

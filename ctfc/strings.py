@@ -586,6 +586,8 @@ EN: dict[str, str] = {
     "opt_solve_depth": "how deep to follow what comes out of a file (default 5)",
     "opt_solve_leads": "how many leads to print when no flag was found (default 3)",
     "opt_solve_steps": "print every step of the walk, not just the answer",
+    "opt_solve_no_tools": "do not run the installed stego tools on a media file "
+    "(zsteg/steghide/zbarimg/multimon-ng); only name them",
     "cmd_workspace": (
         "a whole folder at once: pool every password, key and ciphertext it holds, "
         "then try each secret against each ciphertext (the key is never in the same file)"

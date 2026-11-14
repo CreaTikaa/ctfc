@@ -275,6 +275,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--depth", type=int, default=5, help=t("opt_solve_depth"))
     p.add_argument("--leads", type=int, default=3, help=t("opt_solve_leads"))
     p.add_argument("--steps", action="store_true", help=t("opt_solve_steps"))
+    # On a media file (image/sound) ctfc runs the installed stego tools and reads
+    # their output back. On by default; --no-tools keeps it pure-Python.
+    p.add_argument("--no-tools", dest="run_tools", action="store_false",
+                   help=t("opt_solve_no_tools"))
+    p.set_defaults(run_tools=True)
 
     p = add("mail")
     p.add_argument("input", help=t("arg_mail"))
@@ -1744,6 +1749,7 @@ def cmd_solve(args: argparse.Namespace, config: Config, console: Console) -> int
         tool_paths=config.tool_paths,
         wordlist=find_wordlist(config),
         cyberchef_url=toolbox.cyberchef_base(config.cyberchef_url, for_web=False),
+        run_tools=args.run_tools,
     )
     summary = [flag.text for flag in report.flags] or [lead.title for lead in report.leads[:3]]
     remember(args, config, inp.data, args.input, summary=summary)

@@ -460,6 +460,215 @@ def decimal_decode(data: bytes) -> bytes:
 
 
 # ---------------------------------------------------------------------------
+# DNA / nucleotide encoding: each base is two bits, four bases make a byte.
+# ---------------------------------------------------------------------------
+#
+# "ACGT" is written for 00 01 10 11 - but which base is which pair is a choice
+# the challenge made, and there are 24 ways to assign the four pairs to the four
+# letters. Rather than guess one, every assignment is tried and the one whose
+# output reads best (a flag, words, a file signature) is kept. It is a tiny,
+# bounded search over a fixed table, not a brute force of an unknown key.
+
+_DNA_BASES = "ACGT"
+
+
+def dna_ok(data: bytes) -> bool:
+    text = as_text(data)
+    if text is None:
+        return False
+    letters = _no_space(text).upper()
+    return (
+        len(letters) >= 16
+        and len(letters) % 4 == 0
+        and set(letters) <= set(_DNA_BASES)
+        and len(set(letters)) >= 3  # 2 bases is a two-symbol binary, handled below
+    )
+
+
+def _bits_to_bytes(bits: str) -> bytes:
+    return int(bits, 2).to_bytes(len(bits) // 8, "big")
+
+
+def dna_decode(data: bytes) -> bytes:
+    from itertools import permutations
+
+    from ctfc.core.scoring import score
+
+    letters = _no_space(as_text(data) or "").upper()
+    best_data, best_score = b"", -1.0
+    for perm in permutations(("00", "01", "10", "11")):
+        mapping = dict(zip(_DNA_BASES, perm, strict=True))
+        bits = "".join(mapping[base] for base in letters)
+        out = _bits_to_bytes(bits)
+        current, _ = score(out)
+        if current > best_score:
+            best_data, best_score = out, current
+    if not best_data:
+        raise DecodeError("DNA: no base->bits mapping produced output")
+    return best_data
+
+
+# ---------------------------------------------------------------------------
+# Two distinct symbols standing in for 0 and 1 (e.g. "mvmmvv..." -> binary).
+# ---------------------------------------------------------------------------
+#
+# A classic obfuscation: the bits are written with two letters, shapes or words
+# instead of 0 and 1 ("replace m with 0 and v with 1, then read it as binary").
+# Which symbol is the 0 is a coin toss, so both ways are tried and the readable
+# one wins. The plain "0"/"1" case is `binary` above; this is everything else.
+
+
+def two_symbol_ok(data: bytes) -> bool:
+    text = as_text(data)
+    if text is None:
+        return False
+    body = _no_space(text)
+    symbols = set(body)
+    return (
+        len(symbols) == 2
+        and symbols != {"0", "1"}
+        and len(body) >= 16
+        and len(body) % 8 == 0
+    )
+
+
+def two_symbol_decode(data: bytes) -> bytes:
+    from ctfc.core.scoring import score
+
+    body = _no_space(as_text(data) or "")
+    low, high = sorted(set(body))
+    best_data, best_score = b"", -1.0
+    for zero in (low, high):
+        bits = "".join("0" if char == zero else "1" for char in body)
+        out = _bits_to_bytes(bits)
+        current, _ = score(out)
+        if current > best_score:
+            best_data, best_score = out, current
+    if not best_data:
+        raise DecodeError("two-symbol: no mapping produced output")
+    return best_data
+
+
+# ---------------------------------------------------------------------------
+# Brainfuck: an 8-instruction tape machine whose output is the hidden message.
+# ---------------------------------------------------------------------------
+#
+# A whole family of CTF challenges hands you a brainfuck program and the flag is
+# what it prints. Running it is decoding, not executing analysed content (hard
+# rule 3): it is a sandboxed tape of bytes with eight operations, no file, no
+# network, no host call. Everything is bounded - the step count, the tape, the
+# output - so a non-terminating or bomb program stops cleanly instead of hanging.
+
+BRAINFUCK_OPS = frozenset("><+-.,[]")
+BRAINFUCK_TAPE = 30000
+BRAINFUCK_MAX_STEPS = 5_000_000
+BRAINFUCK_MAX_OUTPUT = 65536
+
+
+def brainfuck_ok(data: bytes) -> bool:
+    text = as_text(data)
+    if text is None:
+        return False
+    dense = "".join(text.split())
+    if len(dense) < 8:
+        return False
+    ops = [ch for ch in dense if ch in BRAINFUCK_OPS]
+    # Brainfuck is almost nothing but its eight operators; a prose text with a
+    # few of them is not a program. It must output (`.`), loop or change a cell,
+    # and its brackets must balance.
+    return (
+        len(ops) >= 8
+        and len(ops) >= 0.9 * len(dense)
+        and "." in ops
+        and ("[" in ops or "+" in ops or "-" in ops)
+        and ops.count("[") == ops.count("]")
+    )
+
+
+def brainfuck_decode(
+    data: bytes,
+    max_steps: int = BRAINFUCK_MAX_STEPS,
+    max_output: int = BRAINFUCK_MAX_OUTPUT,
+) -> bytes:
+    program = [ch for ch in (as_text(data) or "") if ch in BRAINFUCK_OPS]
+    jump: dict[int, int] = {}
+    stack: list[int] = []
+    for index, op in enumerate(program):
+        if op == "[":
+            stack.append(index)
+        elif op == "]":
+            if not stack:
+                raise DecodeError("brainfuck: a ] with no matching [")
+            start = stack.pop()
+            jump[start] = index
+            jump[index] = start
+    if stack:
+        raise DecodeError("brainfuck: a [ with no matching ]")
+
+    tape = bytearray(BRAINFUCK_TAPE)
+    pointer = 0
+    counter = 0
+    steps = 0
+    output = bytearray()
+    length = len(program)
+    while counter < length:
+        steps += 1
+        if steps > max_steps:
+            raise DecodeError(f"brainfuck: stopped after {max_steps} steps (does it end?)")
+        op = program[counter]
+        if op == ">":
+            pointer = (pointer + 1) % BRAINFUCK_TAPE
+        elif op == "<":
+            pointer = (pointer - 1) % BRAINFUCK_TAPE
+        elif op == "+":
+            tape[pointer] = (tape[pointer] + 1) & 0xFF
+        elif op == "-":
+            tape[pointer] = (tape[pointer] - 1) & 0xFF
+        elif op == ".":
+            output.append(tape[pointer])
+            if len(output) >= max_output:
+                break
+        elif op == ",":
+            tape[pointer] = 0  # no input is provided: EOF reads as 0
+        elif op == "[":
+            if tape[pointer] == 0:
+                counter = jump[counter]
+        elif op == "]":
+            if tape[pointer] != 0:
+                counter = jump[counter]
+        counter += 1
+    if not output:
+        raise DecodeError("brainfuck: the program printed nothing")
+    return bytes(output)
+
+
+BRAINFUCK_HELPER = '''def run_brainfuck(src, max_steps=5_000_000):
+    """A bounded brainfuck interpreter: 30000-cell tape, no input, byte output."""
+    ops = [c for c in src if c in "><+-.,[]"]
+    jump, stack = {}, []
+    for i, c in enumerate(ops):
+        if c == "[":
+            stack.append(i)
+        elif c == "]":
+            j = stack.pop(); jump[i] = j; jump[j] = i
+    tape, ptr, pc, steps, out = bytearray(30000), 0, 0, 0, bytearray()
+    while pc < len(ops):
+        steps += 1
+        if steps > max_steps:
+            break
+        c = ops[pc]
+        if c == ">": ptr = (ptr + 1) % 30000
+        elif c == "<": ptr = (ptr - 1) % 30000
+        elif c == "+": tape[ptr] = (tape[ptr] + 1) & 0xFF
+        elif c == "-": tape[ptr] = (tape[ptr] - 1) & 0xFF
+        elif c == ".": out.append(tape[ptr])
+        elif c == "[" and tape[ptr] == 0: pc = jump[pc]
+        elif c == "]" and tape[ptr] != 0: pc = jump[pc]
+        pc += 1
+    return bytes(out)'''
+
+
+# ---------------------------------------------------------------------------
 # Encoded data embedded in a bigger text (script, command line, JSON...)
 # ---------------------------------------------------------------------------
 
@@ -1711,6 +1920,37 @@ DECODERS: list[Decoder] = [
         imports=("re",),
         python='data = bytes(int(n) for n in re.split(r"[\\s,;]+", data.decode().strip()))',
         cyberchef="From_Decimal('Space',false)",
+    ),
+    Decoder(
+        name="dna",
+        label="DNA bases (ACGT) -> 2 bits each -> bytes",
+        decode=dna_decode,
+        applicable=dna_ok,
+        helper="# A/C/G/T each stand for two bits; ctfc tries the 24 base->pair\n"
+        "# mappings and keeps the one that reads best. The common one is below.",
+        python='bits = "".join({"A":"00","C":"01","G":"10","T":"11"}[b]\n'
+        '                for b in data.decode().upper().split())\n'
+        "data = int(bits, 2).to_bytes(len(bits) // 8, 'big')",
+    ),
+    Decoder(
+        name="two_symbol",
+        label="two symbols as binary (e.g. m->0, v->1)",
+        decode=two_symbol_decode,
+        applicable=two_symbol_ok,
+        helper="# the bits are written with two stand-in symbols; ctfc maps the\n"
+        "# two distinct characters to 0/1 (both ways) and keeps the readable one.",
+        python='body = "".join(data.decode().split())\n'
+        "low, high = sorted(set(body))\n"
+        'bits = "".join("0" if c == low else "1" for c in body)\n'
+        "data = int(bits, 2).to_bytes(len(bits) // 8, 'big')",
+    ),
+    Decoder(
+        name="brainfuck",
+        label="brainfuck program -> what it prints",
+        decode=brainfuck_decode,
+        applicable=brainfuck_ok,
+        helper=BRAINFUCK_HELPER,
+        python="data = run_brainfuck(data.decode('latin-1'))",
     ),
     Decoder(
         name="reverse",

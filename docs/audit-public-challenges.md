@@ -623,3 +623,44 @@ Suite de l'objectif « résoudre les buckets de la catégorie 1 » du dixième a
 **Mesure in-scope (lot R → lot S)** : **flag 36 → 43 (+7), 0 régression**,
 `flag+flag-+flag~` 51,3 % → 51,8 % du non-out. Diff challenge/challenge :
 10 améliorés, 0 régressé. 1884 tests, ruff clean.
+
+## Lot U — exécuter les outils stego, ajouter ADN / deux-symboles / brainfuck (2026-11-14)
+
+Deux demandes explicites : (1) pour la stego, ctfc doit **lancer** les outils
+qu'il nommait et interpréter leur sortie ; (2) résoudre les cas concrets de la
+catégorie 1, même hors scope.
+
+**1. ctfc lance les outils stego (`core/stegorun.py`).** Quand `solve --run-tools`
+(activé par défaut en CLI et web) voit une image / un son dont le lecteur n'a
+rien tiré des octets, il exécute les outils installés — liste d'arguments, jamais
+de shell, fichier analysé et non exécuté (règle 3), tout offline (règle 2) :
+- images : `exiftool`, `zsteg -a`, `zbarimg` (QR/code-barres), `steghide` (passe
+  vide), `stegseek` (wordlist) ;
+- audio : `exiftool`, `steghide`, et `multimon-ng` (Morse/DTMF/AFSK) après un
+  ré-échantillonnage `sox` en raw 22050 Hz.
+Un flag que zsteg sort des bits de poids faible, un QR décodé par zbarimg ou une
+charge steghide à passe vide **remonte comme un flag** ; sinon le texte décodé
+(QR, transcription Morse) devient un lead à suivre. Les outils absents sont
+ignorés en silence, chaque outil a son budget, la sortie est écrite dans un dossier
+temporaire supprimé à la fin. `--no-tools` revient au comportement « nommer
+seulement » (la harpe du corpus reste pur-Python : `run_tools=False` par défaut
+dans la bibliothèque).
+
+**2. Trois décodeurs généralisables (catégorie 1).**
+- **ADN** (`ACGT` → 2 bits → octets) : les 24 affectations base→paires sont
+  essayées et la plus lisible gagne. Flague hackini-2020 `misc__dna`
+  (`shellmates{…}`, dont le mapping n'était pas le standard).
+- **Deux symboles → binaire** (ex. `m→0 v→1`) : les deux sens sont essayés, le
+  lisible gagne. Premier maillon de x3ctf-2025 `misc__mvm`.
+- **Brainfuck** : machine à ruban bornée (pas, ruban, sortie tous plafonnés ;
+  aucune entrée, aucun appel hôte — du décodage, pas de l'exécution). Second
+  maillon de `misc__mvm` → `MVM{MVM_BRAIN_IS_FUCKED_MVM}`.
+
+**Bug corrigé en passant.** `FLAG_CHARS` excluait `|` (leet pour une lettre :
+`w|-|4t` = what), donc `looks_like_flag` rejetait tout flag l'utilisant et
+`shellmates{…w|-|4t…}` ne remontait jamais. `|` ajouté (et seulement lui : `"`,
+`(`, `)`, `;`… abondent dans le code dont les transpositions produisent de faux
+flags). Le vrai garde-fou reste le ratio 75 % alnum de `looks_like_flag`.
+
+Tests : +11 (`test_stegorun.py`, dont un bout-en-bout steghide réel), +10
+(ADN / deux-symboles / brainfuck). ruff clean.

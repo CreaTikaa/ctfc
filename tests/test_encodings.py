@@ -252,3 +252,80 @@ def test_base64_that_is_not_utf16_text_is_rejected():
 def test_the_decoder_raises_cleanly_when_there_is_nothing():
     with pytest.raises(encodings.DecodeError):
         encodings.powershell_enc_decode(b"no command in here at all")
+
+
+# ---------------------------------------------------------------- DNA + two-symbol
+
+
+def _to_dna(data: bytes) -> str:
+    """Encode bytes as ACGT with the common A=00 C=01 G=10 T=11 mapping."""
+    bits = "".join(f"{byte:08b}" for byte in data)
+    table = {"00": "A", "01": "C", "10": "G", "11": "T"}
+    return "".join(table[bits[i : i + 2]] for i in range(0, len(bits), 2))
+
+
+def test_dna_bases_decode_back_to_the_message():
+    message = b"CYBN{dna_is_two_bits_per_base}"
+    dna = _to_dna(message)
+    assert encodings.dna_ok(dna.encode())
+    assert encodings.dna_decode(dna.encode()) == message
+
+
+def test_dna_tolerates_whitespace_and_lowercase():
+    message = b"the quick brown fox jumps over"
+    dna = _to_dna(message).lower()
+    spaced = " ".join(dna[i : i + 8] for i in range(0, len(dna), 8))
+    assert encodings.dna_ok(spaced.encode())
+    assert encodings.dna_decode(spaced.encode()) == message
+
+
+def test_two_symbols_decode_as_binary_either_way_round():
+    message = b"CYBN{m_is_zero_v_is_one}"
+    bits = "".join(f"{byte:08b}" for byte in message)
+    mvm = "".join("m" if bit == "0" else "v" for bit in bits)
+    assert encodings.two_symbol_ok(mvm.encode())
+    assert encodings.two_symbol_decode(mvm.encode()) == message
+
+
+def test_plain_zero_one_is_left_to_the_binary_decoder():
+    """'0'/'1' is the `binary` decoder's job: two_symbol must not claim it."""
+    assert not encodings.two_symbol_ok(b"0100100001101001")
+
+
+def test_two_symbol_needs_a_byte_boundary():
+    assert not encodings.two_symbol_ok(b"mvmvmvm")  # 7 chars, not a multiple of 8
+
+
+# ---------------------------------------------------------------- brainfuck
+
+
+def test_brainfuck_prints_its_message():
+    # "Hi" = 72, 105.
+    program = "++++++++[>+++++++++<-]>.+++++++++++++++++++++++++++++++++."
+    assert encodings.brainfuck_ok(program.encode())
+    assert encodings.brainfuck_decode(program.encode()) == b"Hi"
+
+
+def test_brainfuck_detection_needs_a_dense_program():
+    # A real BF machine ignores non-op characters, but `brainfuck_ok` is
+    # conservative: a program drowned in prose drops below the 0.9 op ratio and
+    # is not claimed, so ctfc does not run every text file through a BF machine.
+    dense = "++++++++[>+++++++++<-]>."
+    assert encodings.brainfuck_ok(dense.encode())
+    sparse = dense + " this trailing english comment makes it mostly prose now"
+    assert not encodings.brainfuck_ok(sparse.encode())
+
+
+def test_brainfuck_rejects_prose_with_a_few_symbols():
+    assert not encodings.brainfuck_ok(b"this is plain text with a + and a . in it")
+
+
+def test_brainfuck_unbalanced_brackets_raise():
+    with pytest.raises(encodings.DecodeError):
+        encodings.brainfuck_decode(b"+++[>+<")
+
+
+def test_brainfuck_non_terminating_is_bounded():
+    # "+[]" loops forever on a non-zero cell: the step cap must stop it.
+    with pytest.raises(encodings.DecodeError):
+        encodings.brainfuck_decode(b"+[]", max_steps=1000)
