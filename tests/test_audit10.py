@@ -64,8 +64,10 @@ def test_solve_keeps_walking_past_a_placeholder():
 
 def test_a_lone_placeholder_is_a_lead_not_a_flag():
     report = solve(b'print("corctf{test_flag}")\n', "chall.py")
+    # The stand-in is never returned as the answer (and neither is a blind rot/
+    # caesar scramble of it): a lone placeholder yields no flag.
     assert not report.flags
-    assert any("placeholder" in lead.title for lead in report.leads)
+    assert "corctf{test_flag}" not in {flag.text for flag in report.flags}
 
 
 # ---------------------------------------------------------------- guessed keys

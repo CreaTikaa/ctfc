@@ -53,7 +53,6 @@ from ctfc.core.flags import (
     hunt,
     is_placeholder,
     rate,
-    wordy_body,
 )
 from ctfc.core.magic import match_signature
 from ctfc.core.scoring import printable_ratio, score
@@ -81,16 +80,38 @@ TEXT_PIECE = 0.85  # printable ratio above which a piece is "a text"
 # A flag-shaped string that may be chance: shown first among the leads.
 WEAK_FLAG_LEAD = 0.6
 PLACEHOLDER_LEAD = 0.5
-# Steps of a decoding chain whose key was SEARCHED for (and so chosen because
-# it made the output look good): a flag shape after one of these is evidence
-# only if its body reads as words. base64, hex, url, rot13, zlib... are exact.
+# Steps of a decoding chain that was SEARCHED or applied BLIND (the key/shift is
+# brute-forced, or the transform is tried on every piece): a flag shape after one
+# of these is a lead, not the answer, unless the flag itself is unmistakable.
+# The exact, keyless decodings (base64, hex, url, zlib, gzip...) are trusted.
 GUESSED_STEPS = ("xor(", "affine(", "railfence(", "vigenere(", "caesar(", "beaufort(",
-                 "scytale(", "substitution(", "columnar(")
+                 "scytale(", "substitution(", "columnar(", "rot13", "rot47", "atbash")
 
 
 def guessed_key(origin: str) -> bool:
-    """Was this piece produced by a decoding chain with a searched-for key?"""
+    """Was this piece produced by a searched-key or blind-transform decode?"""
     return origin.startswith("decoded:") and any(step in origin for step in GUESSED_STEPS)
+
+
+def trusted_after_guess(flag: str, flagset: FlagSet) -> bool:
+    """Is a flag found only after a guessed/blind transform good enough to keep?
+
+    rot13 of a script, or a brute-forced single-byte XOR, throws up flag-shaped
+    gibberish ("pbepgs{grfg_synt}", "flag{ybfGfskBtrfqe:P}") by chance - even
+    under a "flag"/"ctf" prefix, which a blind transform is as free to produce as
+    any other. So the prefix is not enough here: the hit is kept only when it is
+    a CONFIGURED flag (the user's own CYBN{...}), a hash, or a real underscored
+    multi-word sentence. A plain prefix with a gibberish body stays a lead.
+    """
+    from ctfc.core import flags as flagmod
+
+    for regex, strength in flagset.regexes:
+        if strength >= flagmod.SPECIFIC_STRENGTH and regex.search(flag):
+            return True  # a configured prefix (CYBN{...}): always trusted
+    body = flag[flag.index("{") + 1 : -1] if "{" in flag else flag
+    if len(body) >= 8 and all(ch in "0123456789abcdefABCDEF" for ch in body):
+        return True  # a hash
+    return "_" in body and flagmod.wordy_body(flag)
 # The base64 of the flag prefix, with no whole flag behind it.
 PREFIX_LEAD = 0.7
 # A password decrypted from a GPP cpassword.
@@ -504,6 +525,9 @@ def solve(
     printed in them too, and tried for real on a ZipCrypto archive (time left).
     """
     budget = budget or Budget(max_attempts=200_000, max_seconds=20)
+    from ctfc.core.flags import default_flagset
+
+    flagset = flagset or default_flagset()
     report = SolveReport(path=path, size=len(data))
     leads: list[Lead] = []
     observations: list[nextsteps.Observation] = []
@@ -559,15 +583,16 @@ def solve(
                     )
                 )
                 continue
-            if guessed_key(piece.origin) and not wordy_body(hit.text):
-                # "LD{4D_usa1}" after rot47 -> xor(key='TUTIUR') -> xor(0x40): the
-                # search chose the key that makes a flag shape appear, so the shape
-                # proves nothing; only a body that reads as words would.
+            if guessed_key(piece.origin) and not trusted_after_guess(hit.text, flagset):
+                # "LD{4D_usa1}" after rot47 -> xor -> xor, or "pbepgs{grfg_synt}"
+                # after rot13 of a source file: the blind transform made the flag
+                # shape appear, so it proves nothing unless the flag is itself
+                # unmistakable (configured prefix, "flag"/"ctf", a hash, words).
                 leads.append(
                     Lead(
                         title=f"{piece.name}: flag-shaped {hit.text[:60]}",
-                        why="only appears after a guessed key, and its body does not read "
-                        "as words: likely chance",
+                        why="only appears after a guessed/blind transform, and is not an "
+                        "unmistakable flag: likely chance",
                         score=WEAK_FLAG_LEAD,
                         command=f"ctfc detect {piece.disk}",
                         preview=hit.text[:120],

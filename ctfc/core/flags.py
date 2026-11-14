@@ -27,6 +27,35 @@ GARBLED_STRENGTH = 0.6
 # Characters seen inside real flags. Anything else ( ) ~ | ` ^ \ { suggests garbage.
 FLAG_CHARS = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-!?@.'$#&+:=,% ")
 CTF_PREFIX_RE = re.compile(r"^(?:[A-Z][A-Z0-9_]{1,14}|.*(?:flag|ctf|FLAG|CTF|Flag|Ctf).*)$")
+# Tokens that are a `{` away from a flag shape in ordinary code and markup, so a
+# `word{...}` built from them is not a flag: CSS selectors, HTML tags, keywords.
+NOT_A_PREFIX = frozenset(
+    "if for while switch function return else try catch do finally var let const def class "
+    "print echo lambda import from with yield async await public private static void img div "
+    "span body html head table thead tbody tr td th ul ol li nav header footer section article "
+    "style script main h1 h2 h3 h4 button input form label select option true false null none "
+    "self this new delete typeof instanceof arguments module exports require struct enum union "
+    "namespace template typedef interface extends implements".split()
+)
+
+
+def plausible_prefix(prefix: str) -> bool:
+    """Could `prefix` be a CTF tag (the word before the `{` of a flag)?
+
+    A real tag is a short run of letters/digits/underscore starting with a
+    letter (BZHCTF, flag, sun, dice, grey, shellmates, n00bz). What is rejected:
+    a hex value (a GUID chunk, a hash), and a code/markup keyword (`if{`,
+    `img{`). The old test only trusted an UPPERCASE tag or one containing
+    "flag"/"ctf", which wrongly demoted every lowercase prefix - 31% of real
+    flags in the public corpus (grey, dice, sun, gigem, idek...).
+    """
+    if HEX_VALUE_PREFIX_RE.fullmatch(prefix):
+        return False
+    if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]{1,19}", prefix):
+        return False
+    return prefix.lower() not in NOT_A_PREFIX
+
+
 SPECIFIC_STRENGTH = 0.97
 BASE64_STRENGTH = 0.9
 
@@ -148,8 +177,6 @@ def _chance_body(flag: str) -> bool:
     The configured prefix (CYBN) never goes through this check.
     """
     prefix, body = flag[: flag.index("{")], flag[flag.index("{") + 1 : -1]
-    if any(ch in SOUP_CHARS for ch in body):
-        return True
     if HEX_VALUE_PREFIX_RE.fullmatch(prefix):
         # "F2B3AF0D{...}": a hex value (a GUID chunk, a hash, a registry
         # value) followed by a brace, not a CTF's name. Seen on a SAM hive.
@@ -159,18 +186,24 @@ def _chance_body(flag: str) -> bool:
     hexdigits = set("0123456789abcdefABCDEF")
     if len(body) >= 8 and all(ch in hexdigits for ch in body):
         return False  # a hash is a real flag body
-    # Real flag bodies read like (leet) words, so they carry vowels. A decode
-    # artifact ("CmvGTKDTDvh2g", "PYXSTSSSRSQP", "vcxs_") is consonant soup.
+    # Consonant soup is checked FIRST, before the underscore/word signals: a
+    # decode artifact can carry underscores and still be gibberish
+    # ("CZYZBZNZ{ZeZvZ_Zb1Z}", a flag with a byte interleaved), so the vowel
+    # ratio must get a say before "has an underscore" trusts it.
     alnum = [ch for ch in body if ch.isalnum()]
     vowelish = sum(ch in VOWELISH for ch in alnum)
     if len(alnum) >= 3 and vowelish == 0:
-        return True
+        return True  # consonant soup ("CmvGTKDTDvh2g", "PYXSTSSSRSQP")
     if len(alnum) >= 6 and vowelish <= len(alnum) // 5:
         return True
-    if "_" in body and len(body) >= 8:
-        return False  # an underscored, vowel-bearing body is a real multi-word flag
-    # (a short underscored body under a generic prefix - "LD{4D_usa1}",
-    # "VV{uR_z}" - is what decoding chains make by chance: judged by length)
+    # A body that reads as (leet) words, or is a long underscored sentence, is a
+    # real flag even with punctuation in it ("y0u_g0t_m3!", "p@yl04d_4in't").
+    if ("_" in body and len(body) >= 8) or wordy_body(flag):
+        return False
+    if any(ch in SOUP_CHARS for ch in body):
+        return True  # punctuation with no word structure: "btBs&7p!G"
+    # (a short body with no word structure - "LD{4D_usa1}", "VV{uR_z}" - is what
+    # decoding chains make by chance: judged by length)
     return len(body) < SHORT_BODY
 
 
@@ -269,7 +302,7 @@ def plain_hits(text: str, flagset: FlagSet) -> list[tuple[str, float, str]]:
             if pattern_strength == GENERIC_STRENGTH:
                 if not looks_like_flag(flag):
                     continue
-                if not CTF_PREFIX_RE.match(flag[: flag.index("{")]):
+                if not plausible_prefix(flag[: flag.index("{")]):
                     strength = WEAK_GENERIC_STRENGTH
                 elif _chance_body(flag):
                     strength = WEAK_GENERIC_STRENGTH
