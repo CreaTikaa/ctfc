@@ -77,6 +77,12 @@ class Packet:
     # of a one-byte-per-packet exfiltration are decoys and which are the flag.
     evil: bool = False
     icmp_type: int = -1  # ICMP only: 8 = echo request, 0 = echo reply
+    # Header fields a covert channel can hide one byte per packet in (ICMP only):
+    # the echo identifier and sequence number, the IP identification and the TTL.
+    icmp_id: int = -1
+    icmp_seq: int = -1
+    ip_id: int = -1
+    ttl: int = -1
 
     @property
     def flow(self) -> tuple[str, str]:
@@ -403,6 +409,8 @@ def parse_packet(frame: bytes, link_type: int, number: int) -> Packet | None:
         source_ip = _ipv4_address(packet[12:16])
         destination_ip = _ipv4_address(packet[16:20])
         evil = bool(packet[6] & 0x80)  # the reserved IP flag bit (RFC 3514)
+        ip_id = struct.unpack(">H", packet[4:6])[0]
+        ttl = packet[8]
         body = packet[header_length:]
     elif version == 6:
         if len(packet) < 40:
@@ -414,6 +422,8 @@ def parse_packet(frame: bytes, link_type: int, number: int) -> Packet | None:
         if 0 < payload_length <= len(packet) - 40:  # 0 = jumbogram: keep it all
             packet = packet[: 40 + payload_length]  # same reason as IPv4 above
         evil = False  # IPv6 has no equivalent reserved flag bit
+        ip_id = -1  # IPv6 has no identification field in its fixed header
+        ttl = packet[7]  # the hop limit plays the TTL's part
         body = packet[40:]
     else:
         return None
@@ -453,6 +463,10 @@ def parse_packet(frame: bytes, link_type: int, number: int) -> Packet | None:
             payload=body[8:],
             evil=evil,
             icmp_type=body[0],
+            icmp_id=struct.unpack(">H", body[4:6])[0],
+            icmp_seq=struct.unpack(">H", body[6:8])[0],
+            ip_id=ip_id,
+            ttl=ttl,
         )
     return Packet(
         number=number,
@@ -1302,11 +1316,15 @@ def extract_icmp(packets: list[Packet], seen: set[bytes]) -> list[Extracted]:
         flows.setdefault((packet.source, packet.destination, packet.icmp_type), []).append(packet)
     found: list[Extracted] = []
     for (source, destination, icmp_type), flow in flows.items():
+        kind = "echo-request" if icmp_type in (8, 128) else "echo-reply"
+        name = f"icmp_{kind}_{source}-{destination}".replace(":", "_")
+        # The header fields first: a ping whose data is stock filler (or a decoy
+        # text) can still spell the flag one character per packet in its echo
+        # identifier, sequence number, IP identification or TTL.
+        found.extend(_icmp_header_channels(flow, kind, name, source, destination, seen))
         payloads = [packet.payload for packet in flow if not _is_stock_ping(packet.payload)]
         if not payloads:
             continue
-        kind = "echo-request" if icmp_type in (8, 128) else "echo-reply"
-        name = f"icmp_{kind}_{source}-{destination}".replace(":", "_")
         blob = b"".join(payloads)
         if len(blob) >= 4 and blob not in seen:
             seen.add(blob)
@@ -1340,6 +1358,68 @@ def extract_icmp(packets: list[Packet], seen: set[bytes]) -> list[Extracted]:
                         destination=destination,
                     )
                 )
+    return found
+
+
+# The header fields that can carry one byte per packet, as (label, getter).
+ICMP_HEADER_FIELDS = (
+    ("echo-identifier", lambda packet: packet.icmp_id),
+    ("echo-sequence", lambda packet: packet.icmp_seq),
+    ("ip-identification", lambda packet: packet.ip_id),
+    ("ttl", lambda packet: packet.ttl),
+)
+
+
+def _looks_like_text(data: bytes) -> bool:
+    """Mostly printable ASCII, and not a plain counter (1, 2, 3... is how a
+    normal ping numbers its packets, which is not a message)."""
+    if len(data) < 4 or len(set(data)) < 3:
+        return False
+    printable = sum(32 <= byte < 127 or byte in (9, 10, 13) for byte in data)
+    if printable < 0.9 * len(data):
+        return False
+    steps = {(data[i + 1] - data[i]) % 256 for i in range(len(data) - 1)}
+    return steps != {1}
+
+
+def _icmp_header_channels(
+    flow: list[Packet], kind: str, name: str, source: str, destination: str, seen: set[bytes]
+) -> list[Extracted]:
+    """One byte per packet, read from each ICMP/IP header field of a flow.
+
+    Covert-channel challenges ("smurf") leave the ping data alone and put each
+    character of the flag in the echo identifier (or the sequence number, the
+    IP identification, the TTL). Each field is read in packet order: its low
+    byte, and both bytes when the high bytes are text too (two characters per
+    packet). A field is kept only when it reads as text and is not a counter.
+    """
+    found: list[Extracted] = []
+    for label, getter in ICMP_HEADER_FIELDS:
+        values = [getter(packet) for packet in flow]
+        if len(values) < 4 or any(value < 0 for value in values):
+            continue
+        low = bytes(value & 0xFF for value in values)
+        views = [("low byte", low)]
+        high = bytes(value >> 8 for value in values)
+        if label != "ttl" and _looks_like_text(high):
+            views.append(("both bytes", b"".join(value.to_bytes(2, "big") for value in values)))
+        for view, data in views:
+            if not _looks_like_text(data) or data in seen:
+                continue
+            seen.add(data)
+            found.append(
+                Extracted(
+                    kind="icmp-header",
+                    name=f"{name}_{label}.bin" if view == "low byte" else f"{name}_{label}_2.bin",
+                    data=data,
+                    description=(
+                        f"ICMP {kind} {source} -> {destination}: the {label} field "
+                        f"({view}), one per packet, reads as text"
+                    ),
+                    source=source,
+                    destination=destination,
+                )
+            )
     return found
 
 

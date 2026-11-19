@@ -40,7 +40,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from ctfc.core import archive as archive_module
-from ctfc.core import gpp, keyhunt, secrets, zipinfo
+from ctfc.core import gpp, hints, keyhunt, secrets, zipinfo
 from ctfc.core.budget import Budget
 from ctfc.core.flags import FlagSet, find_flags, hunt_flags
 from ctfc.core.scan import list_files
@@ -65,6 +65,7 @@ DUMP_SUFFIXES = {".raw", ".dmp", ".mem", ".vmem", ".img", ".core", ".dd", ".e01"
 # How many of each pool are kept. The point is a cross product that finishes.
 MAX_SECRETS = 80
 MAX_KEYS = 40  # only for display: the hunt below re-finds them per ciphertext
+MAX_HINTS = 50_000  # password hints (core/hints.py): cheap to try, so many
 MAX_SOURCES = 20  # files whose bytes are searched for a key
 MAX_CIPHERTEXTS = 25
 
@@ -142,6 +143,9 @@ class WorkspaceReport:
     # (name, bytes) of every piece whose bytes are worth searching for a key.
     # Kept out of to_dict(): it is working memory, not a result.
     sources: list[tuple[str, bytes]] = field(default_factory=list, repr=False)
+    # (word, where) of every string worth trying as a ZIP password (core/hints.py).
+    # Working memory too: thousands of them, not something to list.
+    hints: list[tuple[bytes, str]] = field(default_factory=list, repr=False)
     ciphertexts: list[Ciphertext] = field(default_factory=list)
     hits: list[Hit] = field(default_factory=list)
     flags: list[str] = field(default_factory=list)
@@ -324,6 +328,31 @@ def _try_zip(target: Ciphertext, password: bytes) -> tuple[bytes, str] | None:
         return None
 
 
+def _zip_from_hints(target: Ciphertext, report: WorkspaceReport) -> tuple[str, str, bytes] | None:
+    """Every short string of the folder as the password: (password, where, content) or None.
+
+    `zipinfo.quick_crack` rules a word out from the 12-byte header (255 words
+    in 256), so tens of thousands of strings take a fraction of a second.
+    """
+    if not report.hints:
+        return None
+    try:
+        zip_report = zipinfo.analyse(target.data, target.path)
+    except zipinfo.ZipError:
+        return None
+    words = [word for word, _where in report.hints]
+    own = Budget(max_attempts=len(words) + 1, max_seconds=10)
+    password = zipinfo.quick_crack(target.data, zip_report, words, own)
+    report.tried += own.attempts
+    if password is None:
+        return None
+    result = _try_zip(target, password)
+    if result is None:
+        return None
+    where = next((place for word, place in report.hints if word == password), "the folder")
+    return password.decode("utf-8", "replace"), f"{where} (a string in it)", result[0]
+
+
 def _try_symmetric(
     target: Ciphertext,
     candidate: Found,
@@ -440,6 +469,7 @@ def _read_everything(
     deadline = budget.elapsed() + reading_seconds
     seen_secrets: set[str] = set()
     seen_keys: set[bytes] = set()
+    seen_hints: set[bytes] = set()
 
     for path, data in files:
         report.files += 1
@@ -483,6 +513,14 @@ def _read_everything(
                         continue
                     seen_secrets.add(found.value)
                     report.secrets.append(found)
+
+            # 1b. Password hints: every short string of the piece (a PNG text
+            #     chunk, a line of a note), tried later on the locked ZIPs.
+            if len(report.hints) < MAX_HINTS:
+                for word in hints.password_hints(piece.data, piece.name):
+                    if word not in seen_hints:
+                        seen_hints.add(word)
+                        report.hints.append((word, piece.name))
 
             # 2. Keys. Two different things happen here. For the report, the
             #    *named* candidates are listed - an AES key schedule, a hex or
@@ -530,30 +568,35 @@ def _try_pairs(report: WorkspaceReport, flagset: FlagSet | None, budget: Budget)
     # Phase 1: the ZIP entries. One attempt is a key schedule and twelve bytes,
     # so the whole pool goes through in the time one PBKDF2 call takes.
     for target in [item for item in testable if item.kind == "zip"]:
+        opened_with: tuple[str, str, bytes] | None = None  # (password, where, content)
         for candidate in report.secrets:
             if not budget.spend():
                 report.skipped.append(f"{target.name}: budget spent before every password")
                 return
             report.tried += 1
             result = _try_zip(target, candidate.raw)
-            if result is None:
-                continue
-            opened, _how = result
-            report.hits.append(
-                Hit(
-                    secret=candidate.value,
-                    secret_where=candidate.where,
-                    target=target.name,
-                    how="ZipCrypto (the CRC of the entry checks out)",
-                    preview=_preview(opened),
-                    flags=[hit.text for hit in find_flags(opened, flagset)],
-                    command=f"unzip -P {candidate.value!r} -d out {target.path}",
-                )
+            if result is not None:
+                opened_with = (candidate.value, candidate.where, result[0])
+                break  # this archive is open; move to the next one
+        if opened_with is None:
+            opened_with = _zip_from_hints(target, report)
+        if opened_with is None:
+            continue
+        password, where, opened = opened_with
+        report.hits.append(
+            Hit(
+                secret=password,
+                secret_where=where,
+                target=target.name,
+                how="ZipCrypto (the CRC of the entry checks out)",
+                preview=_preview(opened),
+                flags=[hit.text for hit in find_flags(opened, flagset)],
+                command=f"unzip -P {password!r} -d out {target.path}",
             )
-            for hit in find_flags(opened, flagset):
-                if hit.text not in report.flags:
-                    report.flags.append(hit.text)
-            break  # this archive is open; move to the next one
+        )
+        for hit in find_flags(opened, flagset):
+            if hit.text not in report.flags:
+                report.flags.append(hit.text)
 
     # Phase 2: the keys. For each blob, every file in the folder is searched
     # for a key that opens it - which is the point of the whole command: the

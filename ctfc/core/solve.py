@@ -39,7 +39,7 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from ctfc.core import gpp, nextsteps, readers, stegorun
+from ctfc.core import gpp, hints, nextsteps, readers, stegorun
 from ctfc.core.auto import auto_decode
 from ctfc.core.budget import Budget
 from ctfc.core.flags import (
@@ -331,6 +331,42 @@ def _zip_from_wordlist(piece, wordlist: str, budget: Budget, notes: list[str]) -
     ]
 
 
+# At most this many password hints are kept over one walk (see core/hints.py).
+MAX_HINTS = 50_000
+
+
+def _zip_from_hints(piece, words: list[bytes], where: dict[bytes, str], budget: Budget) -> list:
+    """Try the strings the challenge itself carries as the password of a ZipCrypto archive.
+
+    The words come from the pieces walked so far (a PNG text chunk, a README
+    line, a string of the file the ZIP was glued to: see core/hints.py). One
+    try is a 12-byte header check, so even thousands of words cost nothing.
+    A hit opens every member, which the walk then follows.
+    """
+    from ctfc.core import zipinfo
+
+    if not words:
+        return []
+    try:
+        report = zipinfo.analyse(piece.data)
+    except zipinfo.ZipError:
+        return []
+    if not any(entry.zipcrypto for entry in report.entries):
+        return []
+    own = Budget(max_attempts=len(words) + 1, max_seconds=5, cancel_event=budget.cancel_event)
+    password = zipinfo.quick_crack(piece.data, report, words, own)
+    if password is None:
+        return []
+    shown = password.decode("utf-8", "replace")
+    place = where.get(password, "the files")
+    origin = f"ZIP member, password {shown!r} (a string found in {place})"
+    command = f"unzip -j -P '{shown}' -d {{dir}} {{file}}"
+    return [
+        (readers.Child(name, origin, content), command, command)
+        for name, content in zipinfo.open_all(piece.data, password, readers.CHILD_MAX_SIZE)
+    ]
+
+
 def walk(
     data: bytes,
     path: str = "file",
@@ -366,6 +402,45 @@ def walk(
     queue: list[Piece] = [root]
     seen: set[bytes] = {hashlib.sha256(data).digest()}
     count = 0
+    # Password hints gathered from every piece so far, and the locked ZIPs
+    # still waiting for one (a note.txt read after the ZIP can still open it).
+    hint_words: list[bytes] = []
+    hint_where: dict[bytes, str] = {}
+    locked: list[Piece] = []
+
+    def enqueue(parent: Piece, children: list[tuple[readers.Child, str, str]]) -> None:
+        """Queue what came out of `parent`, once each, and remember how to get at it."""
+        if parent.depth >= max_depth:
+            return
+        out_dir = f"out{parent.depth + 1}"
+        for child, extract, shown in children:
+            digest = hashlib.sha256(child.data).digest()
+            if digest in seen:
+                continue
+            seen.add(digest)
+            if extract:
+                # It can be written to disk, so it gets the name it will land
+                # under, and the command that puts it there.
+                name = safe_name(child.name)
+                trail = [*parent.trail, extract.format(file=parent.disk, dir=out_dir)]
+                disk = f"{out_dir}/{name}"
+            else:
+                # Produced in memory (a decoding chain, a mail body): the command
+                # that shows it is the one that made it, and the piece keeps its
+                # parent's path so the next command still points somewhere real.
+                name = child.name
+                trail = [*parent.trail, shown.format(file=parent.disk)]
+                disk = parent.disk
+            queue.append(
+                Piece(
+                    name=f"{parent.name} > {name}",
+                    origin=child.origin,
+                    data=child.data,
+                    depth=parent.depth + 1,
+                    trail=trail,
+                    disk=disk,
+                )
+            )
 
     while queue:
         if count >= max_pieces:
@@ -392,8 +467,33 @@ def walk(
                 for child in visit.opened.children
             ]
             cracked = any("password" in child.origin for child in visit.opened.children)
+            if visit.reader == "zip" and not cracked:
+                opened_by_hint = _zip_from_hints(piece, hint_words, hint_where, budget)
+                children += opened_by_hint
+                cracked = bool(opened_by_hint)
+                if not cracked:
+                    locked.append(piece)
             if visit.reader == "zip" and wordlist and not cracked:
-                children += _zip_from_wordlist(piece, wordlist, budget, notes)
+                from_list = _zip_from_wordlist(piece, wordlist, budget, notes)
+                children += from_list
+                if from_list and locked and locked[-1] is piece:
+                    locked.pop()
+
+        # This piece's strings become password hints, and are tried at once on
+        # the ZIPs that are still locked (the hint is often read after the ZIP).
+        fresh_hints = []
+        if len(hint_words) < MAX_HINTS:
+            for word in hints.password_hints(piece.data, piece.name):
+                if word not in hint_where:
+                    hint_where[word] = piece.name
+                    hint_words.append(word)
+                    fresh_hints.append(word)
+        if fresh_hints:
+            for waiting in [item for item in locked if item is not piece]:
+                opened_late = _zip_from_hints(waiting, fresh_hints, hint_where, budget)
+                if opened_late:
+                    locked.remove(waiting)
+                    enqueue(waiting, opened_late)
 
         # The carver, for what hides after the end of a file. It runs on the
         # formats that are routinely used as a wrapper too, not only on the
@@ -462,38 +562,7 @@ def walk(
 
         yield visit
 
-        # Queue what came out, once each, and remember how to get at it.
-        if piece.depth >= max_depth:
-            continue
-        out_dir = f"out{piece.depth + 1}"
-        for child, extract, shown in children:
-            digest = hashlib.sha256(child.data).digest()
-            if digest in seen:
-                continue
-            seen.add(digest)
-            if extract:
-                # It can be written to disk, so it gets the name it will land
-                # under, and the command that puts it there.
-                name = safe_name(child.name)
-                trail = [*piece.trail, extract.format(file=piece.disk, dir=out_dir)]
-                disk = f"{out_dir}/{name}"
-            else:
-                # Produced in memory (a decoding chain, a mail body): the command
-                # that shows it is the one that made it, and the piece keeps its
-                # parent's path so the next command still points somewhere real.
-                name = child.name
-                trail = [*piece.trail, shown.format(file=piece.disk)]
-                disk = piece.disk
-            queue.append(
-                Piece(
-                    name=f"{piece.name} > {name}",
-                    origin=child.origin,
-                    data=child.data,
-                    depth=piece.depth + 1,
-                    trail=trail,
-                    disk=disk,
-                )
-            )
+        enqueue(piece, children)
 
 
 def embedded_blobs(data: bytes) -> list[tuple[str, bytes]]:

@@ -313,6 +313,14 @@ def analyse(data: bytes, path: str = "archive.zip", budget: Budget | None = None
                 f"{entry.name!r} escapes the extraction folder: extract it with "
                 "`unzip -j` or into a throwaway directory"
             )
+        if entry.name.endswith("/") and entry.uncompressed_size > 0:
+            # unzip makes the folder and throws these bytes away.
+            report.notes.append(
+                f"{entry.name} is a folder entry that holds {entry.uncompressed_size} bytes: "
+                "unzip drops them, ctfc solve reads them "
+                f'(python3 -c "import zipfile; '
+                f"print(zipfile.ZipFile('{path}').read('{entry.name}'))\")"
+            )
         if entry.ratio > BOMB_RATIO:
             report.notes.append(
                 f"{entry.name} expands {entry.ratio:.0f}x "

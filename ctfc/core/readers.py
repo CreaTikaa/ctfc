@@ -168,7 +168,15 @@ def _rank(child: Child) -> int:
     return len(NAME_RANKS)
 
 
-def _likeliest(children: list[Child]) -> tuple[list[Child], list[str]]:
+# How many bytes of the pieces past CHILD_LIMIT are still searched for a flag
+# in clear (each piece's head). Searching is cheap; following is not.
+SWEEP_MAX_BYTES = 64 * 1024 * 1024
+SWEEP_PIECE_BYTES = 1024 * 1024
+
+
+def _likeliest(
+    children: list[Child], flagset: FlagSet | None = None
+) -> tuple[list[Child], list[str]]:
     """At most CHILD_LIMIT pieces, the likeliest first - and a note for the rest.
 
     Under the limit nothing moves: the readers' own order means something (a
@@ -176,15 +184,36 @@ def _likeliest(children: list[Child]) -> tuple[list[Child], list[str]]:
     used to be cut at 120 in ZIP order, and `res/color/flag.txt` (picoCTF Mob
     psycho) never got looked at. So the names that say "flag", "secret", ".txt"
     go first, then the rest in the reader's order.
+
+    The pieces past the limit are not followed, but each one is still searched
+    for a flag in clear (a quick sweep, no decoding): one JPEG out of 1024 with
+    the flag in its EXIF description (tamu "modified") is then moved to the
+    front instead of being dropped unseen.
     """
     if len(children) <= CHILD_LIMIT:
         return children, []
     ranked = sorted(children, key=_rank)  # stable: the reader's order within a rank
-    note = (
+    kept, rest = ranked[:CHILD_LIMIT], ranked[CHILD_LIMIT:]
+    swept, hits = 0, []
+    for child in rest:
+        if swept >= SWEEP_MAX_BYTES:
+            break
+        head = child.data[:SWEEP_PIECE_BYTES]
+        swept += len(head)
+        if find_flags(head, flagset):
+            hits.append(child)
+    notes = [
         f"{len(children)} pieces inside, only {CHILD_LIMIT} followed (names that look "
-        "like a flag, a secret or a document first): extract it to see them all"
-    )
-    return ranked[:CHILD_LIMIT], [note]
+        "like a flag, a secret or a document first; the rest were only searched for a "
+        "flag in clear): extract it to see them all"
+    ]
+    if hits:
+        names = ", ".join(child.name for child in hits[:5])
+        notes.append(f"a flag-shaped string is in clear in {names}: followed first")
+        hit_ids = {id(child) for child in hits}
+        others = [child for child in kept if id(child) not in hit_ids]
+        kept = hits + others[: CHILD_LIMIT - len(hits)]
+    return kept, notes
 
 
 def _too_big(children: list[Child]) -> tuple[list[Child], list[str]]:
@@ -200,17 +229,28 @@ def _too_big(children: list[Child]) -> tuple[list[Child], list[str]]:
 
 
 def _zip_members(data: bytes, origin: str) -> list[Child]:
-    """Every member a plain `zipfile` can read (so: not the encrypted ones)."""
+    """Every member a plain `zipfile` can read (so: not the encrypted ones).
+
+    A folder entry ("flag/") normally holds nothing, so `unzip` creates the
+    folder and drops whatever bytes the entry carries. A challenge hides the
+    flag exactly there (tjctf sneaky zipper: 100 decoy files and a "flag/" of
+    58 bytes), so a folder entry with a size is read like a file.
+    """
     children: list[Child] = []
     try:
         with zipfile.ZipFile(io.BytesIO(data)) as zf:
             for info in zf.infolist():
-                if info.is_dir() or info.flag_bits & 0x0001:
+                if info.flag_bits & 0x0001:
+                    continue
+                if info.is_dir() and info.file_size == 0:
                     continue
                 if info.file_size > CHILD_MAX_SIZE:
                     continue
+                name = info.filename
+                if info.is_dir():
+                    name = name.rstrip("/") + "_folder-entry-content"
                 try:
-                    children.append(Child(info.filename, origin, zf.read(info)))
+                    children.append(Child(name, origin, zf.read(info)))
                 except Exception:  # noqa: BLE001 - one bad member must not lose the rest
                     continue
     except Exception:  # noqa: BLE001 - a damaged ZIP is a note, not a crash
@@ -1212,7 +1252,7 @@ def open_with(
     except Exception as exc:  # noqa: BLE001 - a file that will not parse is a note
         opened = Opened(error=f"{type(exc).__name__}: {exc}")
     opened.children, skipped = _too_big(opened.children)
-    opened.children, cut = _likeliest(opened.children)
+    opened.children, cut = _likeliest(opened.children, flagset)
     opened.notes += skipped + cut
     opened.reader = reader.name
     opened.label = reader.label
