@@ -18,7 +18,9 @@
 #                                it is NOT installed. Gives john, zip2john,
 #                                rar2john, keepass2john, 7z2john.pl, pdf2john.pl,
 #                                office2john.py and every other *2john.
-#   bkcrack 1.8.1                ZipCrypto known-plaintext attack (GitHub release)
+#   bkcrack 1.8.1                ZipCrypto known-plaintext attack, built from source
+#                                (pinned commit): the release binary needs glibc 2.38,
+#                                Debian 12 has 2.36 ("GLIBC_2.38 not found")
 #   jadx 1.5.6                   Android DEX/APK decompiler (GitHub release)
 #   sstv (colaclanth)            SSTV audio -> image, in its own venv (pinned commit;
 #                                the "sstv" on PyPI is a different project)
@@ -46,8 +48,8 @@ JOHN_REPO="https://github.com/openwall/john.git"
 JOHN_COMMIT="5184bc0b8c105f8c5978b112e723d65b2de3e63e"   # bleeding-jumbo, 2026-10-11
 
 BKCRACK_VERSION="1.8.1"
-BKCRACK_URL="https://github.com/kimci86/bkcrack/releases/download/v${BKCRACK_VERSION}/bkcrack-${BKCRACK_VERSION}-Linux-x86_64.tar.gz"
-BKCRACK_SHA256="45dc7d81adbaaad5c0aa2d8615ea920fd08b732fda1ea945504e0a3e8dc1d2ab"
+BKCRACK_REPO="https://github.com/kimci86/bkcrack.git"
+BKCRACK_COMMIT="e55dabd923ac8b54ee0573c1324783477850d75d"   # the v1.8.1 tag
 
 JADX_VERSION="1.5.6"
 JADX_URL="https://github.com/skylot/jadx/releases/download/v${JADX_VERSION}/jadx-${JADX_VERSION}.zip"
@@ -68,7 +70,7 @@ APT_TOOLS=(outguess stegsnow hcxtools)
 APT_GUI=(audacity sonic-visualiser)
 APT_DEPS=(
     ca-certificates curl git unzip tar coreutils
-    build-essential pkg-config libssl-dev zlib1g-dev yasm libgmp-dev libpcap-dev libbz2-dev
+    build-essential cmake pkg-config libssl-dev zlib1g-dev yasm libgmp-dev libpcap-dev libbz2-dev
     libcompress-raw-lzma-perl     # 7z2john.pl
     python3 python3-venv          # the sstv venv, the *2john.py scripts
     libsndfile1                   # sstv reads audio through it
@@ -205,12 +207,26 @@ ok "john + $(ls "$JOHN_DIR"/run/*2john* | wc -l) *2john tools"
 # 3. bkcrack
 # ---------------------------------------------------------------------------
 
-say "bkcrack $BKCRACK_VERSION"
-fetch "$BKCRACK_URL" "$BKCRACK_SHA256" "bkcrack-$BKCRACK_VERSION.tar.gz"
-rm -rf "$PREFIX/bkcrack-$BKCRACK_VERSION"
-mkdir -p "$PREFIX/bkcrack-$BKCRACK_VERSION"
-tar -xzf "$DOWNLOADS/bkcrack-$BKCRACK_VERSION.tar.gz" -C "$PREFIX/bkcrack-$BKCRACK_VERSION" --strip-components=1
-launcher bkcrack "$PREFIX/bkcrack-$BKCRACK_VERSION/bkcrack"
+say "bkcrack $BKCRACK_VERSION (built from source, about a minute)"
+BKCRACK_DIR="$PREFIX/bkcrack-$BKCRACK_VERSION"
+if [[ -x "$BKCRACK_DIR/bkcrack" ]] && "$BKCRACK_DIR/bkcrack" --help > /dev/null 2>&1; then
+    ok "already built"
+else
+    # (an earlier version of this script unpacked the release binary here,
+    # which does not start on Debian 12: it is replaced.)
+    source_dir="$PREFIX/.bkcrack-src"
+    rm -rf "$BKCRACK_DIR" "$source_dir"
+    git clone --quiet --filter=blob:none --no-checkout "$BKCRACK_REPO" "$source_dir"
+    git -C "$source_dir" checkout --quiet "$BKCRACK_COMMIT"
+    cmake -S "$source_dir" -B "$source_dir/build" -DCMAKE_BUILD_TYPE=Release \
+        > "$PREFIX/.bkcrack-build.log" 2>&1 || { tail -30 "$PREFIX/.bkcrack-build.log"; exit 1; }
+    cmake --build "$source_dir/build" -j"$(nproc)" \
+        >> "$PREFIX/.bkcrack-build.log" 2>&1 || { tail -30 "$PREFIX/.bkcrack-build.log"; exit 1; }
+    mkdir -p "$BKCRACK_DIR"
+    cp "$source_dir/build/src/bkcrack" "$BKCRACK_DIR/bkcrack"
+    rm -rf "$source_dir"
+fi
+launcher bkcrack "$BKCRACK_DIR/bkcrack"
 ok "$("$BIN/bkcrack" --help 2>&1 | head -1)"
 
 # ---------------------------------------------------------------------------
