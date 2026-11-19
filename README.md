@@ -19,6 +19,8 @@ Or without installing: `python -m ctfc ...` from this folder.
 
 ## Use
 
+Every command, with a working example: [`use.md`](use.md).
+
 ```sh
 ctfc --help              # list commands (each has an example in its --help)
 ctfc solve <file>        # no idea what it is? read it, follow what comes out, print the flag
