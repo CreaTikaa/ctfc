@@ -187,6 +187,7 @@ def build_parser() -> argparse.ArgumentParser:
     p = add("pdf")
     p.add_argument("input", help=t("arg_input"))
     p.add_argument("--extract", help=t("opt_pdf_extract"))
+    p.add_argument("--password", action="append", default=[], help=t("opt_pdf_password"))
 
     p = add("stego")
     p.add_argument("input", help=t("arg_image"))
@@ -927,7 +928,9 @@ def cmd_pdf(args: argparse.Namespace, config: Config, console: Console) -> int:
 
     inp = parse_input(args.input, decode_bare=False)
     flagset = flagset_from(config)
-    report = pdf_module.analyse(inp.data, flagset)
+    # The empty password is always tried first: it opens most encrypted PDFs.
+    passwords = (b"", *(word.encode("utf-8") for word in args.password))
+    report = pdf_module.analyse(inp.data, flagset, passwords=passwords, common_passwords=True)
     # The JavaScript is a script like any other: Code Lens already reads it.
     source = "\n\n".join(code for _, code in report.javascript)
     lens = analyse_script(source.encode(), filename="pdf.js", flagset=flagset) if source else None

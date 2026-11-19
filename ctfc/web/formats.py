@@ -320,7 +320,7 @@ def _msi(data: bytes, flagset: FlagSet | None) -> dict:
 
 
 def _pdf(data: bytes, flagset: FlagSet | None) -> dict:
-    report = pdf.analyse(data, flagset)
+    report = pdf.analyse(data, flagset, common_passwords=True)
     sections = [
         facts(
             "PDF",
@@ -329,10 +329,14 @@ def _pdf(data: bytes, flagset: FlagSet | None) -> dict:
                 ("objects", len(report.objects)),
                 ("revisions", report.revisions),
                 ("encrypted", "yes" if report.encrypted else ""),
+                ("decrypted", report.crypt.describe() if report.crypt else ""),
                 ("embedded files", len(report.embedded)),
             ],
         )
     ]
+    if report.text:
+        page_text = "\n\n".join(page for _number, page in report.text)
+        sections.append(text("page text", page_text[:20_000]))
     if report.indicators:
         sections.append(table("what it would do", ["indicator"], [[i] for i in report.indicators]))
     if report.embedded:

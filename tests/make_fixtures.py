@@ -4075,6 +4075,68 @@ def main() -> None:
     write_plaintext_flag_fixture()
     write_ztxt_fixture()
     write_disk_fixture()
+    write_encrypted_pdf_fixtures()
+
+
+# PDFs encrypted by qpdf itself (an external tool: the ground truth for
+# core/pdfcrypt.py), one per revision of the Standard handler. The page says
+# the flag, a /JS action and a /Title string hold more: all three are
+# encrypted in the file. Without qpdf installed, the committed files are kept.
+ENCRYPTED_PDFS = (
+    ("pdf_encrypted_r2_empty.pdf", "", ["40"]),
+    ("pdf_encrypted_r3_rc4_empty.pdf", "", ["128", "--use-aes=n"]),
+    ("pdf_encrypted_r4_aes_empty.pdf", "", ["128", "--use-aes=y"]),
+    ("pdf_encrypted_r6_empty.pdf", "", ["256"]),
+    ("pdf_encrypted_r4_user_s3cret.pdf", "s3cret", ["128", "--use-aes=y"]),
+)
+ENCRYPTED_PDF_FLAG = "CYBN{empty_password_still_encrypts}"
+
+
+def _plain_pdf_for_encryption() -> bytes:
+    content = zlib.compress(b"BT /F1 12 Tf 72 720 Td (" + ENCRYPTED_PDF_FLAG.encode() + b") Tj ET")
+    objects = [
+        b"<< /Type /Catalog /Pages 2 0 R /OpenAction 5 0 R >>",
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R "
+        b"/Resources << /Font << /F1 6 0 R >> >> >>",
+        b"<< /Length %d /Filter /FlateDecode >>\nstream\n" % len(content)
+        + content
+        + b"\nendstream",
+        b"<< /Type /Action /S /JavaScript /JS (app.alert('CYBN{js_in_an_encrypted_pdf}');) >>",
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+        b"<< /Title (CYBN{title_in_an_encrypted_pdf}) >>",
+    ]
+    body = b"%PDF-1.4\n"
+    offsets = []
+    for number, obj in enumerate(objects, 1):
+        offsets.append(len(body))
+        body += b"%d 0 obj\n" % number + obj + b"\nendobj\n"
+    xref = len(body)
+    body += b"xref\n0 %d\n0000000000 65535 f \n" % (len(objects) + 1)
+    body += b"".join(b"%010d 00000 n \n" % offset for offset in offsets)
+    body += b"trailer\n<< /Root 1 0 R /Info 7 0 R /Size %d >>\n" % (len(objects) + 1)
+    body += b"startxref\n%d\n%%%%EOF\n" % xref
+    return body
+
+
+def write_encrypted_pdf_fixtures() -> None:
+    import shutil
+    import subprocess
+    import tempfile
+
+    if shutil.which("qpdf") is None:
+        print("qpdf not installed: the committed encrypted PDF fixtures are kept")
+        return
+    with tempfile.TemporaryDirectory() as tmp:
+        plain = Path(tmp) / "plain.pdf"
+        plain.write_bytes(_plain_pdf_for_encryption())
+        for name, user, args in ENCRYPTED_PDFS:
+            out = FIXTURES / name
+            subprocess.run(
+                ["qpdf", "--static-id", "--allow-weak-crypto", "--encrypt", user, "own3r", *args,
+                 "--", str(plain), str(out)],
+                check=False, capture_output=True,
+            )  # fmt: skip
 
 
 if __name__ == "__main__":

@@ -31,6 +31,7 @@ import re
 import zlib
 from dataclasses import dataclass, field
 
+from ctfc.core import pdfcrypt, pdftext
 from ctfc.core.errors import FormatError
 
 HEADER = re.compile(rb"%PDF-(\d+\.\d+)")
@@ -232,11 +233,32 @@ class PdfObject:
         return b"/ObjStm" in self.dictionary
 
 
-def parse_objects(data: bytes) -> list[PdfObject]:
+DIRECT_LENGTH = re.compile(rb"/Length\s+(\d{1,10})(?!\s+\d+\s+R)")
+
+
+def _encrypted_extent(raw: bytes, dictionary: bytes) -> bytes:
+    """The ciphertext of an encrypted stream, without the EOL before `endstream`.
+
+    Ciphertext may itself end in a newline byte, so stripping every trailing
+    newline (as for a clear stream) could cut it: /Length is used when it is a
+    plain number, else exactly one EOL is removed.
+    """
+    match = DIRECT_LENGTH.search(dictionary)
+    if match and int(match.group(1)) <= len(raw):
+        return raw[: int(match.group(1))]
+    if raw.endswith(b"\r\n"):
+        return raw[:-2]
+    return raw[:-1] if raw.endswith((b"\n", b"\r")) else raw
+
+
+def parse_objects(data: bytes, crypt=None) -> list[PdfObject]:
     """Every object found by scanning, ignoring the cross-reference table.
 
     A challenge PDF often has a wrong xref, so scanning is both simpler and more
     reliable. `/Length` is likewise not trusted: the stream runs to `endstream`.
+
+    `crypt` (a `pdfcrypt.PdfCrypt`) decrypts each object's strings and stream
+    first, for an encrypted file whose password is known (often the empty one).
     """
     objects: list[PdfObject] = []
     for match in OBJECT.finditer(data):
@@ -247,17 +269,35 @@ def parse_objects(data: bytes) -> list[PdfObject]:
         body = data[start : end if end != -1 else min(start + MAX_STREAM, len(data))]
         stream_match = STREAM_START.search(body)
         dictionary = body[: stream_match.start()] if stream_match else body
+        number, generation = int(match.group(1)), int(match.group(2))
+        # Not decrypted: the /Encrypt dictionary itself, and a cross-reference
+        # stream (the spec leaves both in clear, or nothing could be read).
+        decrypt = (
+            crypt is not None
+            and number != crypt.encrypt_object
+            and b"/XRef" not in dictionary
+            and not (not crypt.encrypt_metadata and b"/Metadata" in dictionary)
+        )
+        if decrypt:
+            dictionary = pdfcrypt.decrypt_strings(dictionary, crypt, number, generation)
         obj = PdfObject(
-            number=int(match.group(1)),
-            generation=int(match.group(2)),
+            number=number,
+            generation=generation,
             offset=match.start(),
             dictionary=dictionary,
         )
         if stream_match:
             stream_end = body.find(b"endstream", stream_match.end())
             raw = body[stream_match.end() : stream_end if stream_end != -1 else len(body)]
-            # A stream often ends with the EOL that precedes `endstream`.
-            raw = raw.rstrip(b"\r\n") if stream_end != -1 else raw
+            # A stream often ends with the EOL that precedes `endstream`. For an
+            # encrypted stream, only the EOL itself: ciphertext may end in \r or \n.
+            if stream_end != -1:
+                if decrypt:
+                    raw = _encrypted_extent(raw, dictionary)
+                else:
+                    raw = raw.rstrip(b"\r\n")
+            if decrypt:
+                raw = crypt.decrypt(raw, number, generation)
             decoded, applied, note = decode_stream(raw, dictionary)
             obj.stream = decoded
             obj.filters = applied
@@ -371,9 +411,12 @@ class PdfReport:
     objects: list[PdfObject] = field(default_factory=list)
     revisions: int = 1
     encrypted: bool = False
+    crypt: pdfcrypt.PdfCrypt | None = None  # set when the file could be decrypted
     indicators: list[str] = field(default_factory=list)
     javascript: list[tuple[int, str]] = field(default_factory=list)
     embedded: list[tuple[str, bytes]] = field(default_factory=list)
+    # The text the pages show (core/pdftext.py), one entry per content stream.
+    text: list[tuple[int, str]] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
     flags: list[tuple[int, str]] = field(default_factory=list)
 
@@ -383,6 +426,7 @@ class PdfReport:
             "object_count": len(self.objects),
             "revisions": self.revisions,
             "encrypted": self.encrypted,
+            "decrypted": self.crypt.describe() if self.crypt else "",
             "indicators": list(self.indicators),
             "javascript": [{"object": number, "code": code} for number, code in self.javascript],
             "embedded": [
@@ -390,18 +434,46 @@ class PdfReport:
                 for name, blob in self.embedded
             ],
             "streams_decoded": sum(1 for obj in self.objects if obj.filters),
+            "text": [{"object": number, "text": text[:4000]} for number, text in self.text],
             "flags": [{"object": number, "text": text} for number, text in self.flags],
             "notes": list(self.notes),
         }
 
 
-def analyse(data: bytes, flagset=None) -> PdfReport:
+# Seconds spent on ctfc's 10 000 common passwords when the empty one fails
+# (RC4/AES-128 files: ~3000 a second; AES-256 revision 6 is far slower).
+COMMON_PASSWORD_SECONDS = 5.0
+
+
+def analyse(
+    data: bytes,
+    flagset=None,
+    passwords: tuple[bytes, ...] = (b"",),
+    common_passwords: bool = False,
+) -> PdfReport:
     """Read the PDF and report what it would do and what it carries."""
     header = HEADER.search(data[:1024])
     if header is None:
         raise PdfError("no %PDF- header in the first 1024 bytes: this is not a PDF")
     report = PdfReport(version=header.group(1).decode())
-    report.objects = parse_objects(data)
+    # Encrypted with an empty (or a known) password: rebuild the key first, so
+    # that every stream and string below is read in clear. See core/pdfcrypt.py.
+    try:
+        report.crypt = pdfcrypt.open_pdf(data, passwords)
+        if report.crypt is None and common_passwords and pdfcrypt.find_encrypt(data):
+            from ctfc.core.datafiles import load_passwords
+
+            report.crypt = pdfcrypt.open_pdf(
+                data, load_passwords(), seconds=COMMON_PASSWORD_SECONDS
+            )
+            if report.crypt is not None:
+                report.notes.append(
+                    f"the password is {report.crypt.password!r}: one of ctfc's 10 000 "
+                    "common passwords"
+                )
+    except pdfcrypt.PdfCryptError as exc:
+        report.notes.append(f"encrypted, and not openable here: {exc}")
+    report.objects = parse_objects(data, report.crypt)
     if not report.objects:
         report.notes.append("no object found: the file is truncated or not really a PDF")
 
@@ -434,10 +506,16 @@ def analyse(data: bytes, flagset=None) -> PdfReport:
     report.encrypted = any(b"/Encrypt" in obj.dictionary for obj in report.objects) or (
         b"/Encrypt" in data[-2048:]
     )
-    if report.encrypted:
+    if report.encrypted and report.crypt is not None:
         report.notes.append(
-            "encrypted (/Encrypt): pdf2john.pl <file> > h, then `ctfc hash` on that line. "
-            "An empty user password still allows reading in most viewers"
+            f"encrypted ({report.crypt.describe()}): every stream and string decrypted. "
+            "The same file in clear: qpdf --decrypt <file> clear.pdf"
+        )
+    elif report.encrypted:
+        report.notes.append(
+            "encrypted (/Encrypt), and neither the empty password nor the ones tried open "
+            "it: pdf2john.pl <file> > h, then john --wordlist=rockyou.txt h (or hashcat "
+            "-m 10400 / 10500 / 10700 by revision), then `ctfc pdf <file> --password <it>`"
         )
 
     searchable = b"".join(obj.dictionary for obj in report.objects)
@@ -464,11 +542,33 @@ def analyse(data: bytes, flagset=None) -> PdfReport:
         report.notes.append(
             f"{len(report.embedded)} embedded file(s): extract them and run `ctfc scan`"
         )
+    # The text the pages show: string operands joined in order, read through
+    # each /ToUnicode CMap (a subset font draws "A" as glyph <0013>).
+    cmaps = pdftext.file_cmaps([obj.stream for obj in report.objects if obj.stream])
+    whole_file_fonts, page_fonts = pdftext.font_maps(report.objects)
+    readings: list[tuple[int, str]] = []
+    for obj in report.objects:
+        if obj.stream:
+            fonts = page_fonts.get(obj.number)
+            precise = fonts is not None
+            for text in pdftext.content_text(
+                obj.stream, cmaps, fonts if precise else whole_file_fonts, precise
+            ):
+                readings.append((obj.number, text))
+    report.text = _best_readings(readings)
     # A flag sitting in a decoded stream (page text, an old revision's content)
     # would otherwise need a second command to find, so say it here.
     report.flags = _flags_in_streams(report.objects, flagset)
+    from ctfc.core.flags import default_flagset, find_flags
+
+    seen = {text for _number, text in report.flags}
+    for number, text in readings:
+        for hit in find_flags(text.encode("utf-8"), flagset or default_flagset()):
+            if hit.text not in seen:
+                seen.add(hit.text)
+                report.flags.append((number, hit.text))
     for number, hit in report.flags:
-        report.notes.append(f"flag pattern in the stream of object {number}: {hit}")
+        report.notes.append(f"flag pattern in object {number}: {hit}")
 
     broken = [obj.note for obj in report.objects if obj.note and "unpacked" not in obj.note]
     for note in dict.fromkeys(broken):
@@ -476,18 +576,30 @@ def analyse(data: bytes, flagset=None) -> PdfReport:
     return report
 
 
+def _best_readings(readings: list[tuple[int, str]]) -> list[tuple[int, str]]:
+    """Per content stream, the reading with the fewest unknown glyphs ("?")."""
+    best: dict[int, tuple[float, str]] = {}
+    for number, text in readings:
+        badness = pdftext.unknown_ratio(text)
+        if number not in best or badness < best[number][0]:
+            best[number] = (badness, text)
+    return [(number, text) for number, (_badness, text) in best.items() if text.strip()]
+
+
 def _flags_in_streams(objects: list[PdfObject], flagset) -> list[tuple[int, str]]:
-    """Flag matches inside the decoded streams, with the object they came from."""
+    """Flag matches inside the decoded streams and the dictionaries (an /Info
+    /Title, a form value), with the object they came from."""
     from ctfc.core.flags import default_flagset, find_flags
 
     flagset = flagset or default_flagset()
     found: list[tuple[int, str]] = []
     seen: set[str] = set()
     for obj in objects:
-        if not obj.stream:
-            continue
-        for hit in find_flags(obj.stream, flagset):
-            if hit.text not in seen:
-                seen.add(hit.text)
-                found.append((obj.number, hit.text))
+        for blob in (obj.stream, _unescape(obj.dictionary) if b"(" in obj.dictionary else b""):
+            if not blob:
+                continue
+            for hit in find_flags(blob, flagset):
+                if hit.text not in seen:
+                    seen.add(hit.text)
+                    found.append((obj.number, hit.text))
     return found

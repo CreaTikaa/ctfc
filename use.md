@@ -79,7 +79,7 @@ Long searches take `--seconds N` (default 30).
 | `office` | VBA macros of .doc/.xls/.docm/.xlsm read by Code Lens; `--extract` embedded objects | `ctfc office audit_macro.docm --save-macros ./macros` |
 | `pe` | Windows .exe/.dll: sections, imports, packing, overlay, .NET strings | `ctfc pe sample.exe --extract ./out` |
 | `exe` | ELF, Java .class/.jar, Android .dex, Go/Rust literals | `ctfc exe executable_secret.jar` |
-| `pdf` | actions, JavaScript, embedded files, earlier revisions | `ctfc pdf audit_malicious.pdf --extract ./out` |
+| `pdf` | actions, JavaScript, embedded files, earlier revisions, the page text; decrypts an encrypted PDF (empty password, `--password`, or the 10 000 common ones) | `ctfc pdf audit_malicious.pdf --extract ./out` · `ctfc pdf pdf_encrypted_r6_empty.pdf` · `ctfc pdf locked.pdf --password s3cret` |
 
 ## 6. Forensic files
 

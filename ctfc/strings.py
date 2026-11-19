@@ -443,6 +443,8 @@ EN: dict[str, str] = {
         "`ctfc watch <folder>` (triage each new file as it lands), "
         "`ctfc git <folder>` (what a .git still holds that the files do not show), "
         "`ctfc serve` itself and `ctfc cheatsheet` (the Cheatsheet tab). "
+        "An encrypted PDF is opened here with the empty password; one with a real "
+        "password needs `ctfc pdf <file> --password <it>`. "
         "`ctfc replay` writes a session out as one runnable script - the button is in the "
         "session panel. Programs with a window (Audacity, Wireshark, Stegsolve, GIMP) are "
         "named with their command but cannot be started from the page."
@@ -575,6 +577,10 @@ EN: dict[str, str] = {
     "opt_pdf_extract": (
         "save the embedded files into this folder (plus the first revision, when the "
         "PDF was updated incrementally)"
+    ),
+    "opt_pdf_password": (
+        "a password to open an encrypted PDF with (repeatable; the empty one is always "
+        "tried first, and opens most of them)"
     ),
     "cmd_radius": "recover a RADIUS PAP password (RFC 2865) from the captured attribute",
     "cmd_radius_ex": (

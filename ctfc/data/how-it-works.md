@@ -2870,3 +2870,37 @@ explained module.
   real word pairs: on 590 MB of system binaries the looser rule found 19
   chance "flag{zdl3uqzc}", this one none. So `CYBN{x0r_with_a_sh0rt_key}` is
   found under a 3-byte key, `CYBN{a8f3k2}` is not.
+
+## 55. Encrypted PDFs and the text a page shows (`core/pdfcrypt.py`, `core/pdftext.py`)
+
+**Encryption.** A PDF has two passwords: the *user* one opens the file, the
+*owner* one only restricts printing or copying. Very often the user password
+is **empty**: every viewer opens the file without asking, yet every stream and
+every string inside is encrypted, so `strings` and a plain search see nothing.
+ctfc rebuilds the file key exactly as the specification says and decrypts
+each object:
+
+- revisions 2-4 (RC4 40/128-bit, AES-128): key = MD5(password padded to 32
+  bytes + /O + /P + the file /ID), hashed 50 more times from revision 3; each
+  object gets its own key, MD5(file key + object number + generation);
+- revisions 5-6 (AES-256): the password is checked with SHA-256 (R5) or the
+  SHA-256/384/512 loop of ISO 32000-2 (R6), and the file key is stored
+  encrypted in /UE, one key for every object.
+
+Tried in order: the empty password, the ones given with
+`ctfc pdf <file> --password <it>`, then ctfc's 10 000 common passwords for at
+most 5 seconds (about 3000 a second on RC4/AES-128; revision 6 is made slow on
+purpose). A password is tried as the user one and as the owner one. Checked
+against `qpdf --decrypt` on 120 files qpdf encrypted (every revision, empty
+and real passwords, with and without object streams): identical streams.
+
+**Page text.** A page stores drawing operators, not text: the characters are
+the string operands of `Tj` / `TJ` inside `BT ... ET`. Two things hide a flag
+from a plain search: a TJ array cuts a line into pieces (`[(CYB) -20 (N{...)]
+TJ`), and a subset font draws glyph numbers (`<0013> Tj`) that only its
+/ToUnicode CMap turns into letters. ctfc joins the operands in drawing order,
+follows `Tf` to know the font of each string, maps each page's font names
+through that page's /Resources, and reads them through the right CMap. On the
+56 PDFs of the corpus it finds 98% of the words `pdftotext` finds, and every
+flag. The text is handed to `solve` as a piece (`page_text.txt`), so a base64
+line written on a page is decoded like any other.

@@ -641,8 +641,13 @@ def _open_zip(data: bytes, flagset: FlagSet | None, path: str) -> Opened:
 
 
 def _open_pdf(data: bytes, flagset: FlagSet | None, path: str) -> Opened:
-    report = pdf.analyse(data, flagset)
+    report = pdf.analyse(data, flagset, common_passwords=True)
     children = [Child(name, "PDF embedded file", blob) for name, blob in report.embedded]
+    if report.text:
+        # What the pages show, as one text piece: the walk decodes it like any
+        # other (a base64 line in the page, a cipher written as text).
+        page_text = "\n\n".join(text for _number, text in report.text)
+        children.append(Child("page_text.txt", "PDF page text", page_text.encode("utf-8")))
     for number, code in report.javascript:
         children.append(Child(f"object{number}.js", "PDF JavaScript", code.encode()))
     for obj in report.objects:

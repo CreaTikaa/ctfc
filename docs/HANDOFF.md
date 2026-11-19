@@ -1101,9 +1101,21 @@ Left out on purpose: solvers that execute content or contact a target
 (pyjail, trace oracles, local docker services, nc), and over-fitted ones
 (Minecraft block font). Still solved-only: htb-uni-2023 hard-shadow (it read
 the solution source), tamuctf-2024 smp (that font), uoftctf-2024
-secret-message (**next candidate**: a PDF encrypted with an empty user
-password - implement the standard security handler, RC4/AES, with
-pycryptodome, and check against qpdf/pdftotext).
+secret-message - now done, see below.
+
+**Then (same day): encrypted PDFs + page text** (`core/pdfcrypt.py`,
+`core/pdftext.py`, how-it-works 55). Standard handler R2-R6 with the empty
+password, `ctfc pdf --password`, then the 10 000 embedded passwords for 5 s;
+120/120 identical to `qpdf --decrypt`. Page text through each page's fonts'
+/ToUnicode CMaps: 98% of pdftotext's words on the 56 corpus PDFs. Flags
+uoftctf-2024 secret-message (empty password) and su-ctf-2016 passwordpdf
+(`elephant`, in the embedded list). Bug met on the way: a cache keyed by
+`id(cmap)` outlived the CMaps and gave a later file a wrong code width - never
+key a cache on id() of something that can be freed. Fixtures
+`tests/fixtures/pdf_encrypted_*.pdf` are made by qpdf (make_fixtures keeps the
+committed ones when qpdf is missing). Still cracking-only (password not in the
+10k list): buckeye-2024 the_cia, tamuctf-2022 taxes, n00bz-2023 crack crack,
+tcp1p pemanasan - pdf2john + john/hashcat with rockyou.
 
 Known, pre-existing: `make regression` flags ictf-2024 dog-mom (27 s for a 15 s
 budget, same on main): the lot U stego tools have their own 45 s timeout.
