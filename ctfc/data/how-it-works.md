@@ -2863,6 +2863,10 @@ explained module.
   every byte", ROT-N, Atbash, hex and decimal codes. For XOR, the key cancels
   out between two bytes one period apart (data[i] ^ data[i+L] =
   prefix[i] ^ prefix[i+L]), so one pass per period finds the flag whatever the
-  key. A key longer than one byte needs a longer known prefix: with `CYBN{`
-  only single-byte XOR can be told apart from chance, with `shellmates{` a key
-  of up to 7 bytes.
+  key. The rest of the prefix then checks the key: with 4 bytes or more left
+  to check (single-byte XOR under `CYBN{`, a key of up to 7 bytes under
+  `shellmates{`) that is enough. With only 2 or 3 (a 2- or 3-byte key under
+  `CYBN{`) the body must also be 8+ flag characters with an underscore and
+  real word pairs: on 590 MB of system binaries the looser rule found 19
+  chance "flag{zdl3uqzc}", this one none. So `CYBN{x0r_with_a_sh0rt_key}` is
+  found under a 3-byte key, `CYBN{a8f3k2}` is not.

@@ -175,6 +175,7 @@ import lzma  # noqa: E402
 import os  # noqa: E402
 import shutil  # noqa: E402
 import subprocess  # noqa: E402
+from pathlib import Path  # noqa: E402
 
 import pytest  # noqa: E402
 
@@ -314,6 +315,22 @@ def test_a_longer_prefix_allows_a_repeating_xor_key():
     hits = crib.search(data, ["shellmates{"])
     assert [hit.flag for hit in hits] == [secret.decode()]
     assert hits[0].how == "xor key 133742 (3-byte key)"
+
+
+def test_a_short_xor_key_under_cybn_needs_a_wordy_body():
+    key = b"\x13\x37\x42"
+    real = b"CYBN{x0r_with_a_sh0rt_key}"
+    data = _buried(bytes(c ^ key[i % 3] for i, c in enumerate(real)))
+    assert [hit.flag for hit in crib.search(data, ["CYBN{"])] == [real.decode()]
+
+
+def test_the_crib_invents_nothing_in_real_binaries():
+    # 590 MB of system binaries gave 19 chance flags before the wordy-body rule.
+    binaries = [Path(p) for p in ("/bin/ls", "/bin/bash", "/usr/bin/python3") if Path(p).exists()]
+    if not binaries:
+        pytest.skip("no system binary to read")
+    for binary in binaries:
+        assert crib.search(binary.read_bytes()[:16_000_000], ["CYBN{", "flag{", "CTF{"]) == []
 
 
 def test_the_crib_does_not_invent_flags_in_noise():

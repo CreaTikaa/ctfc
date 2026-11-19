@@ -9,12 +9,13 @@ whole-file decoder never sees at the right offset.
 
 Disguises searched (each one for every configured prefix):
 
-* XOR with a repeating key of period 1 to len(prefix) - 4. The key is unknown,
+* XOR with a repeating key of period 1 to len(prefix) - 2. The key is unknown,
   but XOR cancels it out between two bytes one period apart:
   data[i] ^ data[i+L] == prefix[i] ^ prefix[i+L]. So one pass per period finds
-  the offset, whatever the key; the key is then read off the prefix. (Period 1
-  is single-byte XOR. With `CYBN{` (5 characters) only period 1 is possible: a
-  longer key needs a longer known prefix to be told apart from chance.)
+  the offset, whatever the key; the key is then read off the prefix, and the
+  rest of the prefix checks it. With 4 bytes or more left to check, that is
+  enough; with only 2 or 3 (a 2- or 3-byte key under `CYBN{`), the body must
+  also be a clean flag body of 8+ characters, which a wrong key never gives.
 * adding a constant to every byte (a "Caesar" over bytes: c = p + k mod 256),
   found the same way with differences instead of XOR;
 * ROT-N of the letters (1..25) and Atbash, plain in the bytes;
@@ -76,9 +77,29 @@ def _until_brace(decoded: bytes, prefix: bytes) -> str | None:
     return decoded[: end + 1].decode("ascii")
 
 
+# A flag body, for the "short check" XOR periods below: what a real flag holds.
+_STRICT_BODY = re.compile(rb"[A-Za-z0-9_\-!?@.$#]{8,}")
+# Bytes of the prefix that must check out after the key is read off it: 4 is
+# enough on its own (2^-32 per offset); with only 2 or 3, the body must also be
+# a strict flag body (8+ flag characters), which a wrong key does not produce.
+SAFE_CHECK = 4
+MIN_CHECK = 2
+
+
+def _believable_body(flag: str, prefix: bytes) -> bool:
+    """A body a wrong key does not produce: 8+ flag characters, an underscore,
+    and letter pairs that read like words (checked on 590 MB of real binaries:
+    without the last two rules, 19 chance "flag{zdl3uqzc}" turned up)."""
+    from ctfc.core.flags import wordy_body
+
+    body = flag[len(prefix) : -1]
+    return bool(_STRICT_BODY.fullmatch(body.encode())) and "_" in body and wordy_body(flag)
+
+
 def _xor_hits(data: bytes, prefix: bytes) -> list[CribHit]:
     hits: list[CribHit] = []
-    for period in range(1, max(1, len(prefix) - 4) + 1):
+    for period in range(1, max(1, len(prefix) - MIN_CHECK) + 1):
+        strict = len(prefix) - period < SAFE_CHECK
         if len(data) <= period + len(prefix):
             break
         crib = bytes(prefix[i] ^ prefix[i + period] for i in range(len(prefix) - period))
@@ -90,6 +111,8 @@ def _xor_hits(data: bytes, prefix: bytes) -> list[CribHit]:
             window = data[offset : offset + len(prefix) + MAX_BODY + 1]
             decoded = bytes(byte ^ key[i % period] for i, byte in enumerate(window))
             flag = _until_brace(decoded, prefix)
+            if flag and strict and not _believable_body(flag, prefix):
+                flag = None  # a short check: only a clean, wordy flag body is believed
             if flag:
                 kind = "single byte" if period == 1 else f"{period}-byte key"
                 hits.append(CribHit(flag, f"xor key {key.hex()} ({kind})", offset))
