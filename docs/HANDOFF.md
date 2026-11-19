@@ -1077,6 +1077,37 @@ sysdig cannot read the file. Those challenges are Q/R investigation anyway.
 
 Tests: 1859 pass (+13). `make fuzz`/`make fuzz-web` clean.
 
+## 5quaterdecies. Lot W: ideas from solved-noai (2026-11-19)
+
+`~/apps/solved-noai` is the user's other LLM-free solver (read-only for us).
+It had been benchmarked on 296 of our corpus challenges
+(`~/apps/solved-noai/workspace/forensic-bench/full2.jsonl`): 43 flags. Same
+296, same handout selection, each with its own flag prefix configured
+(`corpus/bench296-*.jsonl`, harness re-written in the session scratchpad):
+**main 52 -> branch 57, 0 lost**; union with solved-noai 60.
+
+Ported (each a small module, nothing executed): ICMP header channels
+(`pcap._icmp_header_channels`), ZIP folder entries with bytes, a flag sweep of
+the pieces past `CHILD_LIMIT`, the challenge's own strings as ZipCrypto
+passwords (`core/hints.py`, in solve and workspace), deep matryoshka peel
+(`core/matryoshka.py`), text hex dumps (`core/textdump.py`, checked against
+xxd/hexdump/od), Unicode tags and kcpassword decoders, the known-prefix crib
+(`core/crib.py`: XOR any key by the differential trick, +k, ROT-N, Atbash,
+hex, decimal; a 2-3 byte key under CYBN{ only with a wordy body - the looser
+rule made 19 chance flags on 590 MB of system binaries). how-it-works section
+54, tests in `tests/test_solved_ideas.py`.
+
+Left out on purpose: solvers that execute content or contact a target
+(pyjail, trace oracles, local docker services, nc), and over-fitted ones
+(Minecraft block font). Still solved-only: htb-uni-2023 hard-shadow (it read
+the solution source), tamuctf-2024 smp (that font), uoftctf-2024
+secret-message (**next candidate**: a PDF encrypted with an empty user
+password - implement the standard security handler, RC4/AES, with
+pycryptodome, and check against qpdf/pdftotext).
+
+Known, pre-existing: `make regression` flags ictf-2024 dog-mom (27 s for a 15 s
+budget, same on main): the lot U stego tools have their own 45 s timeout.
+
 ## 7. Quick verification commands
 
 **`make demo` now runs this list and checks it** (`tests/demo.py`): 60 commands, each with the
