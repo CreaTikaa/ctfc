@@ -29,6 +29,7 @@ import zlib
 from collections.abc import Callable
 from dataclasses import dataclass
 
+from ctfc.core import textdump
 from ctfc.core.inputs import clean_hex, looks_like_hex
 
 MAX_OUTPUT = 64 * 1024 * 1024  # decompression stops here (protects against zip bombs)
@@ -930,6 +931,62 @@ def zero_width_decode_a(data: bytes) -> bytes:
 
 def zero_width_decode_b(data: bytes) -> bytes:
     return _zero_width_bits(data, low_is_one=True)
+
+
+# Unicode "tag" characters (U+E0020..U+E007E) are invisible copies of ASCII:
+# tag N is the character N - 0xE0000. Meant for flag emoji, abused to hide a
+# whole sentence inside an innocent-looking line ("ASCII smuggling").
+TAG_FIRST, TAG_LAST = 0xE0020, 0xE007E
+
+
+def unicode_tags_ok(data: bytes) -> bool:
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError:
+        return False
+    return sum(TAG_FIRST <= ord(char) <= TAG_LAST for char in text) >= 4
+
+
+def unicode_tags_decode(data: bytes) -> bytes:
+    text = data.decode("utf-8")
+    hidden = [chr(ord(char) - 0xE0000) for char in text if TAG_FIRST <= ord(char) <= TAG_LAST]
+    if not hidden:
+        raise DecodeError("no Unicode tag characters")
+    return "".join(hidden).encode("ascii")
+
+
+def hexdump_ok(data: bytes) -> bool:
+    return textdump.looks_like_dump(data)
+
+
+def hexdump_decode(data: bytes) -> bytes:
+    result = textdump.revert(data)
+    if result is None:
+        raise DecodeError("not a complete xxd / hexdump / od dump")
+    return result[0]
+
+
+# macOS keeps the auto-login password in /etc/kcpassword: the password XORed
+# with this fixed 11-byte key, ended by a NUL and padded to a multiple of 12.
+KCPASSWORD_KEY = bytes([0x7D, 0x89, 0x52, 0x23, 0xD2, 0xBC, 0xDD, 0xEA, 0xA3, 0xB9, 0x1F])
+
+
+def _kcpassword_plain(data: bytes) -> bytes:
+    plain = bytes(byte ^ KCPASSWORD_KEY[i % len(KCPASSWORD_KEY)] for i, byte in enumerate(data))
+    return plain.split(b"\x00", 1)[0]
+
+
+def kcpassword_ok(data: bytes) -> bool:
+    if not (12 <= len(data) <= 512) or len(data) % 12:
+        return False
+    plain = _kcpassword_plain(data)
+    return len(plain) >= 1 and all(32 <= byte < 127 for byte in plain)
+
+
+def kcpassword_decode(data: bytes) -> bytes:
+    if not kcpassword_ok(data):
+        raise DecodeError("not a kcpassword file")
+    return _kcpassword_plain(data)
 
 
 # ---------------------------------------------------------------------------
@@ -2038,6 +2095,35 @@ DECODERS: list[Decoder] = [
         applicable=zero_width_ok,
         python="data = zero_width_bits(data, low_is_one=True)",
         helper=ZW_HELPER,
+    ),
+    Decoder(
+        name="unicode_tags",
+        label="Unicode tag characters (invisible U+E00xx copies of ASCII)",
+        decode=unicode_tags_decode,
+        applicable=unicode_tags_ok,
+        python=(
+            'text = data.decode("utf-8")\n'
+            'data = "".join(chr(ord(c) - 0xE0000) for c in text '
+            'if 0xE0020 <= ord(c) <= 0xE007E).encode()'
+        ),
+    ),
+    Decoder(
+        name="hexdump",
+        label="text hex dump back to bytes (xxd / hexdump -C / od)",
+        decode=hexdump_decode,
+        applicable=hexdump_ok,
+        python="from ctfc.core.textdump import revert\ndata = revert(data)[0]",
+        helper="# or, in a shell: xxd -r dump.txt > file.bin   (xxd format only)",
+    ),
+    Decoder(
+        name="kcpassword",
+        label="macOS /etc/kcpassword (XOR with Apple's fixed 11-byte key)",
+        decode=kcpassword_decode,
+        applicable=kcpassword_ok,
+        python=(
+            "key = bytes.fromhex('7d895223d2bcddeaa3b91f')\n"
+            "data = bytes(b ^ key[i % 11] for i, b in enumerate(data)).split(b'\\x00')[0]"
+        ),
     ),
     Decoder(
         name="zlib",

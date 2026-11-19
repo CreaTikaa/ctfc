@@ -2820,3 +2820,49 @@ because it holds real public-CTF flags), and on later runs fails if a flag is
 lost or a file runs far past its budget. It is not part of `make test` - it needs
 the local corpus - but it is the check to run before trusting a change on the day
 of the CTF.
+
+## 54. Ideas borrowed from solved-noai (lot W)
+
+solved-noai is another LLM-free CTF solver. It was benchmarked on the same 296
+corpus challenges as ctfc; the cases it flagged and ctfc missed, plus the
+general techniques it had and ctfc lacked, are now in ctfc. Nothing of it is
+copied as is and nothing runs a tool or a script: each one is a small,
+explained module.
+
+- **ICMP header channels** (`core/pcap.py`). A covert channel can leave the
+  ping data alone and put one character per packet in a header field: the
+  echo identifier, the sequence number, the IP identification or the TTL.
+  Each field of each flow is read in packet order; it is kept when it reads
+  as text and is not a counter (1, 2, 3... is how a normal ping numbers its
+  packets).
+- **A ZIP folder entry with bytes** (`core/readers.py`). `unzip` creates the
+  folder `flag/` and drops what the entry carries. ctfc reads it like a file,
+  and `ctfc zip` names it.
+- **Past the 120 followed pieces** (`core/readers.py`). An archive of 1024
+  images is not walked whole, but each piece past the limit is still searched
+  for a flag in clear, and one that has it goes first.
+- **The challenge's own strings as ZIP passwords** (`core/hints.py`). The
+  password is often in the handout: a PNG text chunk (tEXt, zTXt, iTXt), a
+  note, a string of the file the ZIP is glued to, sometimes base64- or
+  hex-encoded. ZipCrypto rules a wrong word out from a 12-byte header, so
+  every such string is tried, in `solve` (even on a ZIP read before its hint)
+  and in `workspace` (the hint in another file).
+- **Matryoshka** (`core/matryoshka.py`). Hundreds of single-member layers
+  (bzip2 in zip in xz in gzip...) are peeled in memory by their magic bytes;
+  the walk goes on from the core. A `.tar.gz` (two layers) is still read layer
+  by layer.
+- **Text hex dumps** (`core/textdump.py`). `xxd`, `hexdump -C`, `od -t x1`
+  and plain `hexdump` (16-bit little-endian words) are turned back into the
+  bytes, checked against the real tools.
+- **Unicode tags and kcpassword** (`core/encodings.py`). Tag characters
+  U+E0020..E007E are invisible copies of ASCII; macOS `/etc/kcpassword` is the
+  auto-login password XORed with a fixed 11-byte key.
+- **The known prefix under a disguise** (`core/crib.py`). The decoders go
+  forward; this goes backward: `CYBN{` (and the prefix set with
+  `ctfc config --flag`) is searched for in the raw bytes under XOR, "+k on
+  every byte", ROT-N, Atbash, hex and decimal codes. For XOR, the key cancels
+  out between two bytes one period apart (data[i] ^ data[i+L] =
+  prefix[i] ^ prefix[i+L]), so one pass per period finds the flag whatever the
+  key. A key longer than one byte needs a longer known prefix: with `CYBN{`
+  only single-byte XOR can be told apart from chance, with `shellmates{` a key
+  of up to 7 bytes.

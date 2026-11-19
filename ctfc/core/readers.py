@@ -26,6 +26,7 @@ import bz2
 import io
 import lzma
 import re
+import time
 import zipfile
 import zlib
 from collections.abc import Callable
@@ -44,6 +45,7 @@ from ctfc.core import (
     hive,
     iso,
     mail,
+    matryoshka,
     msg,
     msi,
     office,
@@ -214,6 +216,45 @@ def _likeliest(
         others = [child for child in kept if id(child) not in hit_ids]
         kept = hits + others[: CHILD_LIMIT - len(hits)]
     return kept, notes
+
+
+# A piece is replaced by what is under its layers only from this depth on: a
+# .tar.gz (2 layers) is still read layer by layer, so its tar listing is shown.
+MATRYOSHKA_MIN_DEPTH = 3
+MATRYOSHKA_SECONDS = 10.0
+
+
+def _peel_matryoshkas(children: list[Child]) -> list[Child]:
+    """Replace a deeply nested piece (bzip2 in zip in xz in ... x300) by its core.
+
+    The walk follows one layer per step and stops at depth 5; a matryoshka of
+    hundreds of single-member layers is peeled here in memory instead (see
+    core/matryoshka.py), and the walk goes on from the innermost bytes.
+    """
+    deadline = time.monotonic() + MATRYOSHKA_SECONDS
+    out: list[Child] = []
+    for child in children:
+        seconds = deadline - time.monotonic()
+        if seconds <= 0 or not matryoshka.is_layer(child.data):
+            out.append(child)
+            continue
+        peeled = matryoshka.peel(child.data, seconds)
+        if peeled.depth < MATRYOSHKA_MIN_DEPTH:
+            out.append(child)
+            continue
+        stopped = f"; stopped: {peeled.stopped}" if peeled.stopped else ""
+        out.append(
+            Child(
+                name=child.name,
+                origin=(
+                    f"{child.origin}, then {peeled.depth} nested layers peeled in memory "
+                    f"({peeled.chain()}{stopped}; `ctfc solve` on it peels them again)"
+                ),
+                data=peeled.data,
+                extract=child.extract,
+            )
+        )
+    return out
 
 
 def _too_big(children: list[Child]) -> tuple[list[Child], list[str]]:
@@ -1252,6 +1293,7 @@ def open_with(
     except Exception as exc:  # noqa: BLE001 - a file that will not parse is a note
         opened = Opened(error=f"{type(exc).__name__}: {exc}")
     opened.children, skipped = _too_big(opened.children)
+    opened.children = _peel_matryoshkas(opened.children)
     opened.children, cut = _likeliest(opened.children, flagset)
     opened.notes += skipped + cut
     opened.reader = reader.name

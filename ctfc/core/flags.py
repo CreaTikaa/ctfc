@@ -759,6 +759,19 @@ def hunt(data: bytes, flagset: FlagSet | None = None) -> Hunt:
             if strength > WEAK_GENERIC_STRENGTH:
                 keep(FlagHit(flag, "reversed", strength, pattern, match.group(0)))
 
+    # The known prefix under a cheap disguise (XOR, +k, ROT-N, hex, decimal),
+    # buried at any offset: see core/crib.py. Only the configured prefixes
+    # (CYBN{, and the CTF's own): they are what makes the search reliable.
+    if deep:
+        from ctfc.core import crib  # here, not at the top: crib is optional work
+
+        prefixes = sorted({prefix for _regex, prefix in flagset.b64_prefixes})
+        for found_hit in crib.search(data, prefixes):
+            for flag, strength, pattern in plain_hits(found_hit.flag, flagset):
+                if flag == found_hit.flag and strength > WEAK_GENERIC_STRENGTH:
+                    how = f"{found_hit.how}, found by the known prefix at offset {found_hit.offset}"
+                    keep(FlagHit(flag, how, strength, pattern, ""))
+
     found = _drop_shifted(list(hits.values()))
     result.flags = sorted(found, key=lambda hit: hit.strength, reverse=True)
 
