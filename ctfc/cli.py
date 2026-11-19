@@ -2139,9 +2139,10 @@ def cmd_doctor(args: argparse.Namespace, config: Config, console: Console) -> in
     if missing:
         console.print()
         console.print(
-            "[dim]Some tools above are missing. If one is in fact installed behind a shell "
-            r"alias (stegsolve, vol), ctfc cannot see it - declare it in config.toml under "
-            r"\[tool_paths], e.g. vol = \['python3', '/path/to/vol.py'].[/]"
+            "[dim]Some tools above are missing: `sudo scripts/install_tools.sh` (in the ctfc "
+            "folder) installs them all, pinned and checksummed. If one is in fact installed "
+            r"behind a shell alias (stegsolve, vol), ctfc cannot see it - declare it in "
+            r"config.toml under \[tool_paths], e.g. vol = \['python3', '/path/to/vol.py'].[/]"
         )
     return 0
 

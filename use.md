@@ -13,6 +13,16 @@ ctfc config --wordlist ~/Documents/rockyou.txt
 ctfc doctor                        # green/red check: flag format, wordlist, CyberChef, tools
 ```
 
+Missing tools (john jumbo + every `*2john`, bkcrack, jadx, sstv, outguess,
+stegsnow, hcxtools, Audacity, Sonic Visualiser, Ghidra): once, with internet,
+
+```sh
+sudo scripts/install_tools.sh              # everything, ~2 GB, into /opt/ctfc-tools
+sudo scripts/install_tools.sh --no-ghidra  # the same without Ghidra and its JDK
+```
+
+Versions and SHA-256 are pinned in the script; launchers go to `/usr/local/bin`.
+
 Without installing anything: `.venv/bin/ctfc ...` or `.venv/bin/python -m ctfc ...`
 from the repo folder (the system `python3` does not have `rich`).
 

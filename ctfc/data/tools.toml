@@ -114,7 +114,7 @@ kind = "local"
 command_template = ["john", "--format={john_format}", "{input}"]
 suggest_when = ["hash.*"]
 offline_safe = true
-install = "apt install john"
+install = "sudo scripts/install_tools.sh (builds John jumbo: Debian's apt john is the core build, without zip2john/pdf2john)"
 notes = "handles formats hashcat does not, and the *2john extractors come with it"
 
 [[tool]]
@@ -228,7 +228,7 @@ kind = "local"
 command_template = ["zip2john", "{input}"]
 suggest_when = ["magic.zip"]
 offline_safe = true
-install = "comes with john the ripper (apt install john, the 'jumbo' build)"
+install = "comes with John the Ripper jumbo: sudo scripts/install_tools.sh"
 notes = "password-protected ZIP: prints a $zip2$/$pkzip$ hash. Paste it into `ctfc hash`, then hashcat -m 13600/17200. Known-plaintext instead? see bkcrack"
 
 [[tool]]
@@ -312,7 +312,7 @@ kind = "local"
 command_template = ["bkcrack", "-C", "{input}", "-c", "{zip_entry}", "-x", "{bkcrack_offset}", "{bkcrack_plaintext}"]
 suggest_when = ["zip.known_plaintext"]
 offline_safe = true
-install = "https://github.com/kimci86/bkcrack/releases"
+install = "sudo scripts/install_tools.sh, or https://github.com/kimci86/bkcrack/releases"
 notes = "traditional ZipCrypto only (not WinZip AES). Once it prints the keys: bkcrack -C file.zip -c entry -k <keys> -d out.bin"
 
 # --- Tools that only the "next steps" table points at (data/leads.toml): when
@@ -368,7 +368,7 @@ kind = "local"
 command_template = ["sstv", "-d", "{input}", "-o", "{input}.sstv.png"]
 suggest_when = []
 offline_safe = true
-install = "pipx install sstv"
+install = "sudo scripts/install_tools.sh (colaclanth/sstv: the 'sstv' on PyPI is a different project)"
 notes = "slow-scan TV: an image sent as a warbling sound (ISS, Robot36, Martin, Scottie). qsstv does the same with a window"
 
 [[tool]]
@@ -684,7 +684,7 @@ kind = "local"
 command_template = ["jadx", "-d", "{input}.jadx", "{input}"]
 suggest_when = []
 offline_safe = true
-install = "https://github.com/skylot/jadx/releases"
+install = "sudo scripts/install_tools.sh, or https://github.com/skylot/jadx/releases"
 notes = "decompiles the DEX back to Java source: read the class that builds the flag; then `ctfc lens` on it"
 
 [[tool]]
@@ -716,7 +716,7 @@ gui = true
 command_template = ["ghidraRun"]
 suggest_when = []
 offline_safe = true
-install = "https://github.com/NationalSecurityAgency/ghidra/releases"
+install = "sudo scripts/install_tools.sh (Ghidra 12 + its JDK 25), or https://github.com/NationalSecurityAgency/ghidra/releases"
 notes = "a binary that builds or checks the flag itself is reverse engineering: decompile the function that compares the input"
 
 [[tool]]
